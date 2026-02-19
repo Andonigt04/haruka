@@ -12,7 +12,7 @@ glm::vec3 Camera::getFront() const {
 }
 
 glm::vec3 Camera::getUp() const {
-    return glm::normalize(orientation * glm::dvec3(0.0f, 1.0f, 0.0f));
+    return glm::normalize(orientation * glm::dvec3(0.0f, -1.0f, 0.0f));
 }
 
 glm::mat4 Camera::getViewMatrix() const {
@@ -38,11 +38,14 @@ void Camera::processInput(GLFWwindow* window, float deltaTime) {
     double velocity = (double)speed * (double)deltaTime;
     glm::vec3 front = getFront();
     glm::vec3 right = glm::normalize(glm::cross(front, getUp()));
+    glm::vec3 up = glm::vec3(0.0f, 1.0f, 0.0f); // Siempre hacia arriba en mundo
     
-    if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) position += Haruka::WorldPos(front) * (double)velocity;
-    if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) position -= Haruka::WorldPos(front) * (double)velocity;
-    if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) position -= Haruka::WorldPos(glm::normalize(Haruka::WorldPos(right))) * (double)velocity;
-    if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) position += Haruka::WorldPos(glm::normalize(Haruka::WorldPos(right))) * (double)velocity;
+    if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) position += Haruka::WorldPos(front) * velocity;
+    if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) position -= Haruka::WorldPos(front) * velocity;
+    if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) position -= Haruka::WorldPos(right) * velocity;
+    if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) position += Haruka::WorldPos(right) * velocity;
+    if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS) position += Haruka::WorldPos(up) * velocity;
+    if (glfwGetKey(window, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS) position -= Haruka::WorldPos(up) * velocity;
 }
 
 void Camera::ProcessMouseScroll(float yoffset) {

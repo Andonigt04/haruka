@@ -1,0 +1,15 @@
+{
+  "name": "Untitled",
+  "objects": [
+    {
+      "name": "GameObject",
+      "type": "Empty",
+      "position": [4.9, 0, 0],
+      "rotation": [0, 0, 0],
+      "scale": [1, 1, 1],
+      "modelPath": "",
+      "color": [1, 1, 1],
+      "intensity": 1
+    }
+  ]
+}

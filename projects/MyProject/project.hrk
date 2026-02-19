@@ -1,0 +1,10 @@
+{
+  "name": "MyProject",
+  "version": "0.1",
+  "engineVersion": "",
+  "startScene": "main",
+  "scenes": [
+  ],
+  "assetsPath": "",
+  "outputPath": ""
+}
