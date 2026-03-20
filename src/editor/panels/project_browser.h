@@ -1,45 +1,75 @@
 #pragma once
 
 #include "core/project.h"
+#include "core/scene.h"
 #include <imgui.h>
 #include <memory>
 #include <string>
 #include <vector>
+#include <functional>
+#include <chrono>
 
-struct AssetItem {
+namespace Haruka {
+    class SceneManagerPanel;
+    class PrefabsPanel;
+}
+
+struct FileItem {
     std::string name;
     std::string path;
+    std::string extension;
     bool isDirectory;
 };
 
 class ProjectBrowserPanel {
 public:
-    ProjectBrowserPanel() = default;
-    
+    ProjectBrowserPanel();
+    ~ProjectBrowserPanel() = default;
+
     void setProject(Haruka::Project* project);
+    void setScene(Haruka::Scene* scene);
     void onImGuiRender();
 
-    // Scene selection
-    bool isSceneSelected() const { return sceneSelected; }
-    const std::string& getSelectedScenePath() const { return selectedScenePath; }
-    void resetSceneSelection() { sceneSelected = false; }
+    void setOnSceneLoad(std::function<void(const std::string&)> cb);
+    void setOnSceneSave(std::function<void(const std::string&)> cb);
+    void setOnSceneNew(std::function<void(const std::string&)> cb);
 
 private:
-    void showAssetBrowser();
-    void refreshAssets();
-    void renderDirectoryTree(const std::string& path, const std::string& displayName);
-    void renderFileList();
-    void renderSceneSelector();
-    std::vector<AssetItem> scanDirectory(const std::string& path);
-
     Haruka::Project* currentProject = nullptr;
+    Haruka::Scene* currentScene = nullptr;
 
-    std::string currentAssetPath = "assets/";
-    std::vector<AssetItem> currentItems;
-    std::string selectedAsset = "";
-    int selectedIndex = -1;
+    std::unique_ptr<Haruka::SceneManagerPanel> sceneManager;
+    std::unique_ptr<Haruka::PrefabsPanel> prefabsPanel;
 
-    // Scene selection
-    bool sceneSelected = false;
-    std::string selectedScenePath;
+    std::string selectedPath;
+    std::string selectedExtension;
+    std::string draggedPath;
+    std::string contextMenuPath;
+    bool showNewFileDialog = false;
+    bool showNewFolderDialog = false;
+    char newItemName[256] = "";
+    std::string newItemParentPath;
+
+    // File system watching
+    std::chrono::steady_clock::time_point lastRefreshTime;
+    std::chrono::steady_clock::duration refreshInterval = std::chrono::milliseconds(500);
+    bool needsRefresh = false;
+    std::string lastProjectPath;
+
+    std::vector<FileItem> scanDirectory(const std::string& path);
+    std::string getFileExtension(const std::string& filename);
+    std::string getFileIcon(const std::string& extension, bool isDirectory);
+    void renderFileTree(const std::string& path, const std::string& displayName, int depth = 0);
+    void renderFileContextMenu(const FileItem& item);
+    void handleFileClick(const FileItem& item);
+    void showFilePreview(const FileItem& item);
+    void checkForChanges();
+    void refreshFileSystem();
+    
+    // Operaciones de archivo
+    void createNewFile(const std::string& parentPath, const std::string& fileName);
+    void createNewFolder(const std::string& parentPath, const std::string& folderName);
+    void deleteFile(const std::string& path);
+    void moveFile(const std::string& source, const std::string& destination);
+    void renderNewItemDialog();
 };

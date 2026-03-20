@@ -1,0 +1,27 @@
+{
+    "name": "Player",
+    "components": [
+        {
+            "type": "Transform",
+            "position": [6471000, 0, 0],
+            "rotation": [0, 0, 0],
+            "scale": [1, 1, 1]
+        },
+        {
+            "type": "Character",
+            "userId": ""
+        },
+        {
+            "type": "RigidBody",
+            "mass": 80,
+            "useGravity": true,
+            "gravityMode": "radial"
+        },
+        {
+            "type": "PlayerController",
+            "moveSpeed": 5.0,
+            "jumpForce": 5.0,
+            "mouseSensitivity": 1.0
+        }
+    ]
+}

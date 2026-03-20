@@ -1,31 +1,77 @@
 #include "project_browser.h"
+#include "scene_manager.h"
+#include "prefabs_panel.h"
 #include <iostream>
-#include <cstring>
 #include <filesystem>
 #include <algorithm>
+#include <cctype>
+#include <fstream>
+#include <chrono>
 
 namespace fs = std::filesystem;
+using namespace std::chrono;
+
+ProjectBrowserPanel::ProjectBrowserPanel() {
+    sceneManager = std::make_unique<Haruka::SceneManagerPanel>();
+    prefabsPanel = std::make_unique<Haruka::PrefabsPanel>();
+    lastRefreshTime = steady_clock::now();
+}
 
 void ProjectBrowserPanel::setProject(Haruka::Project* project) {
     currentProject = project;
-    refreshAssets();
+    lastProjectPath = project ? project->getPath() : "";
+    needsRefresh = true;
+    if (sceneManager) sceneManager->setProject(project);
+    if (prefabsPanel) prefabsPanel->setProject(project);
 }
 
-std::vector<AssetItem> ProjectBrowserPanel::scanDirectory(const std::string& path) {
-    std::vector<AssetItem> items;
+void ProjectBrowserPanel::setScene(Haruka::Scene* scene) {
+    currentScene = scene;
+    if (sceneManager) sceneManager->setScene(scene);
+    if (prefabsPanel) prefabsPanel->setScene(scene);
+}
+
+std::string ProjectBrowserPanel::getFileExtension(const std::string& filename) {
+    size_t dotPos = filename.find_last_of('.');
+    if (dotPos != std::string::npos && dotPos < filename.length() - 1) {
+        std::string ext = filename.substr(dotPos + 1);
+        std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+        return ext;
+    }
+    return "";
+}
+
+std::string ProjectBrowserPanel::getFileIcon(const std::string& extension, bool isDirectory) {
+    if (isDirectory) return "📁";
+    
+    if (extension == "cpp" || extension == "h" || extension == "hpp") return "📝";
+    if (extension == "scene") return "🎬";
+    if (extension == "prefab") return "🔲";
+    if (extension == "hrk") return "⚙️";
+    if (extension == "png" || extension == "jpg" || extension == "jpeg") return "🖼️";
+    if (extension == "obj" || extension == "gltf" || extension == "glb" || extension == "fbx") return "🗿";
+    if (extension == "txt" || extension == "md") return "📄";
+    if (extension == "json") return "🔧";
+    if (extension == "cmake" || extension == "txt") return "🔨";
+    
+    return "📦";
+}
+
+std::vector<FileItem> ProjectBrowserPanel::scanDirectory(const std::string& path) {
+    std::vector<FileItem> items;
     
     try {
         if (fs::exists(path) && fs::is_directory(path)) {
             for (const auto& entry : fs::directory_iterator(path)) {
-                AssetItem item;
+                FileItem item;
                 item.name = entry.path().filename().string();
                 item.path = entry.path().string();
                 item.isDirectory = entry.is_directory();
+                item.extension = getFileExtension(item.name);
                 items.push_back(item);
             }
             
-            // Ordenar: directorios primero, luego archivos alfabéticamente
-            std::sort(items.begin(), items.end(), [](const AssetItem& a, const AssetItem& b) {
+            std::sort(items.begin(), items.end(), [](const FileItem& a, const FileItem& b) {
                 if (a.isDirectory != b.isDirectory) return a.isDirectory > b.isDirectory;
                 return a.name < b.name;
             });
@@ -37,194 +83,298 @@ std::vector<AssetItem> ProjectBrowserPanel::scanDirectory(const std::string& pat
     return items;
 }
 
-void ProjectBrowserPanel::refreshAssets() {
-    if (currentProject && !currentProject->getPath().empty()) {
-        std::string fullPath = currentProject->getPath() + "/" + currentAssetPath;
-        currentItems = scanDirectory(fullPath);
-        std::cout << "Refreshed: " << fullPath << " (" << currentItems.size() << " items)" << std::endl;
-    } else {
-        currentItems.clear();
+void ProjectBrowserPanel::checkForChanges() {
+    auto now = steady_clock::now();
+    
+    if (now - lastRefreshTime >= refreshInterval) {
+        // Verificar cambios en el sistema de archivos
+        if (!currentProject || currentProject->getPath().empty()) return;
+        
+        try {
+            static std::map<std::string, fs::file_time_type> fileTimestamps;
+            bool hasChanges = false;
+            
+            for (const auto& entry : fs::recursive_directory_iterator(currentProject->getPath())) {
+                if (fs::is_regular_file(entry)) {
+                    auto lastWriteTime = fs::last_write_time(entry);
+                    
+                    if (fileTimestamps.find(entry.path().string()) == fileTimestamps.end()) {
+                        hasChanges = true;
+                    } else if (fileTimestamps[entry.path().string()] != lastWriteTime) {
+                        hasChanges = true;
+                    }
+                    
+                    fileTimestamps[entry.path().string()] = lastWriteTime;
+                }
+            }
+            
+            if (hasChanges) {
+                needsRefresh = true;
+                std::cout << "File system changes detected, refreshing..." << std::endl;
+            }
+        } catch (const std::exception& e) {
+            std::cerr << "Error checking for changes: " << e.what() << std::endl;
+        }
+        
+        lastRefreshTime = now;
     }
 }
 
-void ProjectBrowserPanel::renderDirectoryTree(const std::string& path, const std::string& displayName) {
+void ProjectBrowserPanel::refreshFileSystem() {
+    needsRefresh = false;
+    // El refresh automático ocurre al re-renderizar el árbol
+}
+
+void ProjectBrowserPanel::createNewFile(const std::string& parentPath, const std::string& fileName) {
+    try {
+        std::string filePath = parentPath + "/" + fileName;
+        std::ofstream file(filePath);
+        if (file.is_open()) {
+            file.close();
+            std::cout << "File created: " << filePath << std::endl;
+            needsRefresh = true;
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "Error creating file: " << e.what() << std::endl;
+    }
+}
+
+void ProjectBrowserPanel::createNewFolder(const std::string& parentPath, const std::string& folderName) {
+    try {
+        std::string folderPath = parentPath + "/" + folderName;
+        fs::create_directory(folderPath);
+        std::cout << "Folder created: " << folderPath << std::endl;
+        needsRefresh = true;
+    } catch (const std::exception& e) {
+        std::cerr << "Error creating folder: " << e.what() << std::endl;
+    }
+}
+
+void ProjectBrowserPanel::deleteFile(const std::string& path) {
+    try {
+        if (fs::exists(path)) {
+            fs::remove_all(path);
+            std::cout << "Deleted: " << path << std::endl;
+            if (selectedPath == path) selectedPath = "";
+            needsRefresh = true;
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "Error deleting: " << e.what() << std::endl;
+    }
+}
+
+void ProjectBrowserPanel::moveFile(const std::string& source, const std::string& destination) {
+    try {
+        if (fs::exists(source) && fs::is_directory(destination)) {
+            std::string newPath = destination + "/" + fs::path(source).filename().string();
+            fs::rename(source, newPath);
+            std::cout << "Moved: " << source << " -> " << newPath << std::endl;
+            needsRefresh = true;
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "Error moving file: " << e.what() << std::endl;
+    }
+}
+
+void ProjectBrowserPanel::renderFileContextMenu(const FileItem& item) {
+    if (ImGui::BeginPopupContextItem()) {
+        if (item.isDirectory) {
+            if (ImGui::MenuItem("New File")) {
+                showNewFileDialog = true;
+                newItemParentPath = item.path;
+            }
+            if (ImGui::MenuItem("New Folder")) {
+                showNewFolderDialog = true;
+                newItemParentPath = item.path;
+            }
+        }
+        
+        ImGui::Separator();
+        
+        if (ImGui::MenuItem("Delete")) {
+            deleteFile(item.path);
+        }
+        if (ImGui::MenuItem("Rename")) {
+            // TODO: Implementar rename
+        }
+        
+        ImGui::EndPopup();
+    }
+}
+
+void ProjectBrowserPanel::renderNewItemDialog() {
+    if (showNewFileDialog) {
+        ImGui::OpenPopup("New File");
+        showNewFileDialog = false;
+    }
+    if (showNewFolderDialog) {
+        ImGui::OpenPopup("New Folder");
+        showNewFolderDialog = false;
+    }
+
+    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    
+    if (ImGui::BeginPopupModal("New File", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::InputText("File Name##newfile", newItemName, sizeof(newItemName));
+        
+        if (ImGui::Button("Create", ImVec2(120, 0))) {
+            if (strlen(newItemName) > 0) {
+                createNewFile(newItemParentPath, newItemName);
+                strcpy(newItemName, "");
+                ImGui::CloseCurrentPopup();
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+            strcpy(newItemName, "");
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+
+    if (ImGui::BeginPopupModal("New Folder", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::InputText("Folder Name##newfolder", newItemName, sizeof(newItemName));
+        
+        if (ImGui::Button("Create", ImVec2(120, 0))) {
+            if (strlen(newItemName) > 0) {
+                createNewFolder(newItemParentPath, newItemName);
+                strcpy(newItemName, "");
+                ImGui::CloseCurrentPopup();
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+            strcpy(newItemName, "");
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+}
+
+void ProjectBrowserPanel::renderFileTree(const std::string& path, const std::string& displayName, int depth) {
     auto items = scanDirectory(path);
     
     ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick;
+    if (depth == 0) flags |= ImGuiTreeNodeFlags_DefaultOpen;
     
-    // Comparar correctamente la ruta actual
-    std::string relativePath = path.substr(currentProject->getPath().length() + 1) + "/";
-    if (currentAssetPath == relativePath) {
-        flags |= ImGuiTreeNodeFlags_Selected;
+    // Si la carpeta está vacía, no mostrar flecha expandible
+    if (items.empty()) {
+        flags |= ImGuiTreeNodeFlags_Leaf;
     }
     
-    bool opened = ImGui::TreeNodeEx(displayName.c_str(), flags);
+    std::string icon = getFileIcon("", true);
+    std::string label = icon + " " + displayName;
     
-    if (ImGui::IsItemClicked()) {
-        currentAssetPath = relativePath;
-        refreshAssets();
+    bool opened = ImGui::TreeNodeEx(label.c_str(), flags);
+    
+    if (ImGui::BeginDragDropTarget()) {
+        if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("FILE_MOVE")) {
+            const char* sourcePath = (const char*)payload->Data;
+            moveFile(sourcePath, path);
+        }
+        ImGui::EndDragDropTarget();
     }
     
     if (opened) {
         for (const auto& item : items) {
+            std::string itemLabel = getFileIcon(item.extension, item.isDirectory) + " " + item.name;
+            
             if (item.isDirectory) {
-                renderDirectoryTree(item.path, item.name);
+                renderFileTree(item.path, item.name, depth + 1);
+            } else {
+                ImGuiTreeNodeFlags leafFlags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
+                if (item.path == selectedPath) leafFlags |= ImGuiTreeNodeFlags_Selected;
+                
+                ImGui::TreeNodeEx(itemLabel.c_str(), leafFlags);
+                
+                if (ImGui::IsItemClicked()) {
+                    selectedPath = item.path;
+                    selectedExtension = item.extension;
+                }
+                
+                renderFileContextMenu(item);
+                
+                if (ImGui::BeginDragDropSource()) {
+                    ImGui::SetDragDropPayload("FILE_MOVE", item.path.c_str(), item.path.size() + 1);
+                    ImGui::Text("%s %s", getFileIcon(item.extension, false).c_str(), item.name.c_str());
+                    ImGui::EndDragDropSource();
+                }
             }
         }
         ImGui::TreePop();
     }
 }
 
-void ProjectBrowserPanel::renderFileList() {
-    ImGui::BeginChild("FileList", ImVec2(0, 300), true);
-    
-    ImGui::Text("Location: %s", currentAssetPath.c_str());
-    ImGui::Text("Items: %zu", currentItems.size());
-    ImGui::Separator();
-    
-    // Botón Up
-    if (currentAssetPath != "assets/") {
-        if (ImGui::Button("🔙 Up")) {
-            size_t lastSlash = currentAssetPath.find_last_of('/', currentAssetPath.length() - 2);
-            if (lastSlash != std::string::npos) {
-                currentAssetPath = currentAssetPath.substr(0, lastSlash + 1);
-            } else {
-                currentAssetPath = "assets/";
-            }
-            refreshAssets();
-        }
-        ImGui::Separator();
-    }
-    
-    // Lista de items
-    for (size_t i = 0; i < currentItems.size(); i++) {
-        const auto& item = currentItems[i];
-        
-        // Determinar ícono según extensión
-        std::string icon = "📄";
-        if (item.isDirectory) {
-            icon = "📁";
-        } else if (item.name.find(".obj") != std::string::npos || 
-                   item.name.find(".gltf") != std::string::npos || 
-                   item.name.find(".glb") != std::string::npos ||
-                   item.name.find(".fbx") != std::string::npos) {
-            icon = "🗿"; // model 3D
-        } else if (item.name.find(".png") != std::string::npos || 
-                   item.name.find(".jpg") != std::string::npos) {
-            icon = "🖼️"; // images
-        }
-        
-        std::string label = icon + " " + item.name;
-        
-        if (ImGui::Selectable(label.c_str(), (int)i == selectedIndex, ImGuiSelectableFlags_AllowDoubleClick)) {
-            selectedIndex = i;
-            selectedAsset = item.name;
-            
-            if (item.isDirectory && ImGui::IsMouseDoubleClicked(0)) {
-                currentAssetPath += item.name + "/";
-                refreshAssets();
-                selectedIndex = -1;
-            }
-        }
-        
-        // Drag & drop para modelos
-        if (!item.isDirectory && 
-            (item.name.find(".obj") != std::string::npos || 
-             item.name.find(".gltf") != std::string::npos || 
-             item.name.find(".glb") != std::string::npos ||
-             item.name.find(".fbx") != std::string::npos)) {
-            
-            if (ImGui::BeginDragDropSource()) {
-                ImGui::SetDragDropPayload("ASSET_PATH", item.path.c_str(), item.path.size() + 1);
-                ImGui::Text("📦 %s", item.name.c_str());
-                ImGui::EndDragDropSource();
-            }
-        }
-    }
-    
-    ImGui::EndChild();
+void ProjectBrowserPanel::handleFileClick(const FileItem& item) {
+    std::cout << "Selected: " << item.path << " (" << item.extension << ")" << std::endl;
 }
 
-void ProjectBrowserPanel::showAssetBrowser() {
-    if (!currentProject || currentProject->getPath().empty()) {
-        ImGui::Text("No project loaded");
-        return;
-    }
-    
+void ProjectBrowserPanel::showFilePreview(const FileItem& item) {
     ImGui::Separator();
-    ImGui::Text("Asset Browser");
-    
-    if (ImGui::Button("🔄 Refresh")) {
-        refreshAssets();
-    }
-    
-    ImGui::Columns(2, "AssetColumns");
-    ImGui::SetColumnWidth(0, 200);
-    
-    // Columna izquierda: árbol de directorios
-    ImGui::BeginChild("DirectoryTree", ImVec2(0, 300), true);
-    std::string assetsPath = currentProject->getPath() + "/assets";
-    renderDirectoryTree(assetsPath, "assets");
-    ImGui::EndChild();
-    
-    ImGui::NextColumn();
-    
-    // Columna derecha: lista de archivos
-    renderFileList();
-    
-    ImGui::Columns(1);
-    
-    // Info del asset seleccionado
-    if (selectedIndex >= 0 && selectedIndex < (int)currentItems.size()) {
-        const auto& item = currentItems[selectedIndex];
-        ImGui::Separator();
-        ImGui::Text("Selected: %s", item.name.c_str());
-        ImGui::Text("Type: %s", item.isDirectory ? "Directory" : "File");
-        ImGui::Text("Path: %s", item.path.c_str());
-    }
+    ImGui::Text("Selected File");
+    ImGui::Text("Name: %s", item.name.c_str());
+    ImGui::Text("Type: %s", item.extension.empty() ? "Directory" : item.extension.c_str());
+    ImGui::Text("Path: %s", item.path.c_str());
 }
 
 void ProjectBrowserPanel::onImGuiRender() {
-    ImGui::Begin("Project Browser");
-    
-    if (ImGui::BeginTabBar("BrowserTabs")) {
-        if (ImGui::BeginTabItem("Assets")) {
-            showAssetBrowser();
-            ImGui::EndTabItem();
-        }
-        if (ImGui::BeginTabItem("Scenes")) {
-            renderSceneSelector();
-            ImGui::EndTabItem();
-        }
-        ImGui::EndTabBar();
+    // Verificar cambios en tiempo real
+    checkForChanges();
+
+    ImGui::SetNextWindowSize(ImVec2(500, 600), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("Project Browser")) {
+        ImGui::End();
+        return;
+    }
+
+    if (!currentProject || currentProject->getPath().empty()) {
+        ImGui::Text("No project loaded");
+        ImGui::End();
+        return;
+    }
+
+    ImGui::Text("Project: %s", currentProject->getPath().c_str());
+        
+    if (ImGui::Button("New File")) {
+        showNewFileDialog = true;
+        newItemParentPath = currentProject->getPath();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("New Folder")) {
+        showNewFolderDialog = true;
+        newItemParentPath = currentProject->getPath();
     }
     
+    ImGui::Separator();
+
+    ImGui::BeginChild("FileTree", ImVec2(0, -100), true);
+    std::string projectPath = currentProject->getPath();
+    renderFileTree(projectPath, "Project Root");
+    ImGui::EndChild();
+
+    if (!selectedPath.empty()) {
+        FileItem item;
+        item.name = fs::path(selectedPath).filename().string();
+        item.path = selectedPath;
+        item.extension = selectedExtension;
+        showFilePreview(item);
+    }
+
+    renderNewItemDialog();
+
     ImGui::End();
 }
 
-void ProjectBrowserPanel::renderSceneSelector() {
-    if (!currentProject) {
-        ImGui::Text("No project loaded");
-        return;
-    }
-    
-    std::string scenePath = currentProject->getPath() + "/scenes";
-    if (!std::filesystem::exists(scenePath)) {
-        ImGui::Text("No scenes folder found");
-        return;
-    }
-    
-    for (const auto& entry : std::filesystem::directory_iterator(scenePath)) {
-        if (entry.path().extension() == ".scene") {
-            std::string filename = entry.path().filename().string();
-            std::string fullPath = entry.path().string();
-            
-            if (ImGui::Selectable(filename.c_str(), false, ImGuiSelectableFlags_AllowDoubleClick)) {
-                if (ImGui::IsMouseDoubleClicked(0)) {
-                    selectedScenePath = fullPath;
-                    sceneSelected = true;
-                }
-            }
-        }
-    }
+void ProjectBrowserPanel::setOnSceneLoad(std::function<void(const std::string&)> cb) {
+    if (sceneManager) sceneManager->setOnSceneLoad(std::move(cb));
 }
+
+void ProjectBrowserPanel::setOnSceneSave(std::function<void(const std::string&)> cb) {
+    if (sceneManager) sceneManager->setOnSceneSave(std::move(cb));
+}
+
+void ProjectBrowserPanel::setOnSceneNew(std::function<void(const std::string&)> cb) {
+    if (sceneManager) sceneManager->setOnSceneNew(std::move(cb));
+}
+

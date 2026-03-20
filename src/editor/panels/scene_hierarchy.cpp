@@ -13,6 +13,75 @@ void SceneHierarchyPanel::setCommandHistory(CommandHistory* history) {
     commandHistory = history;
 }
 
+void SceneHierarchyPanel::onImGuiRender() {
+    if (ImGui::Begin("Scene Hierarchy")) {
+        if (currentScene) {
+            for (size_t i = 0; i < currentScene->getObjects().size(); ++i) {
+                if (currentScene->getObjects()[i].parentIndex == -1) {
+                    renderObjectNode(i);
+                }
+            }
+        }
+    }
+    ImGui::End();
+}
+
+void SceneHierarchyPanel::renderObjectNode(int index) {
+    auto& obj = currentScene->getObjects()[index];
+    
+    ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth;
+    if (index == selectedObjectIndex) flags |= ImGuiTreeNodeFlags_Selected;
+    if (obj.childrenIndices.empty()) flags |= ImGuiTreeNodeFlags_Leaf;
+    
+    bool nodeOpen = ImGui::TreeNodeEx((void*)(intptr_t)index, flags, "%s", obj.name.c_str());
+    
+    if (ImGui::IsItemClicked()) {
+        selectedObjectIndex = index;
+        if (onObjectSelectedByIndex) onObjectSelectedByIndex(index);
+        if (onObjectSelectedByName) onObjectSelectedByName(obj.name);
+    }
+    
+    if (ImGui::BeginDragDropSource()) {
+        ImGui::SetDragDropPayload("SCENE_OBJECT", &index, sizeof(int));
+        ImGui::Text("Move: %s", obj.name.c_str());
+        ImGui::EndDragDropSource();
+    }
+    
+    if (ImGui::BeginDragDropTarget()) {
+        if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("SCENE_OBJECT")) {
+            int draggedIndex = *(int*)payload->Data;
+            reparentObject(draggedIndex, index);
+        }
+        ImGui::EndDragDropTarget();
+    }
+    
+    showContextMenu(index);
+    
+    if (nodeOpen) {
+        for (int childIndex : obj.childrenIndices) {
+            renderObjectNode(childIndex);
+        }
+        ImGui::TreePop();
+    }
+}
+
+void SceneHierarchyPanel::reparentObject(int childIndex, int newParentIndex) {
+    if (!currentScene || childIndex == newParentIndex) return;
+    
+    auto& child = currentScene->getObjects()[childIndex];
+    
+    if (child.parentIndex >= 0) {
+        auto& oldParent = currentScene->getObjects()[child.parentIndex];
+        oldParent.childrenIndices.erase(
+            std::remove(oldParent.childrenIndices.begin(), oldParent.childrenIndices.end(), childIndex),
+            oldParent.childrenIndices.end()
+        );
+    }
+    
+    child.parentIndex = newParentIndex;
+    currentScene->getObjects()[newParentIndex].childrenIndices.push_back(childIndex);
+}
+
 void SceneHierarchyPanel::duplicateObject(int index) {
     if (!currentScene || index < 0 || index >= (int)currentScene->getObjects().size()) return;
     
@@ -46,87 +115,4 @@ void SceneHierarchyPanel::showContextMenu(int index) {
         
         ImGui::EndPopup();
     }
-}
-
-void SceneHierarchyPanel::onImGuiRender() {
-    ImGui::Begin("Scene Hierarchy");
-    
-    if (!currentScene) {
-        ImGui::Text("No scene loaded");
-        ImGui::End();
-        return;
-    }
-
-    ImGui::Text("Scene: %s", currentScene->getName().c_str());
-    ImGui::Separator();
-
-    if (ImGui::Button("Add Object")) {
-        ImGui::OpenPopup("AddObjectPopup");
-    }
-
-    if (ImGui::BeginPopup("AddObjectPopup")) {
-        if (ImGui::MenuItem("Empty Object")) {
-            Haruka::SceneObject obj;
-            obj.name = "GameObject";
-            obj.type = "Empty";
-            obj.position = glm::vec3(0.0f);
-            obj.rotation = glm::vec3(0.0f);
-            obj.scale = glm::vec3(1.0f);
-            
-            if (commandHistory) {
-                commandHistory->execute(std::make_unique<AddObjectCommand>(currentScene, obj));
-            } else {
-                currentScene->addObject(obj);
-            }
-        }
-        if (ImGui::MenuItem("Light")) {
-            Haruka::SceneObject light;
-            light.name = "Light";
-            light.type = "Light";
-            light.position = glm::vec3(0.0f, 5.0f, 0.0f);
-            light.color = glm::vec3(1.0f);
-            light.intensity = 1.0f;
-            light.scale = glm::vec3(1.0f);
-            
-            if (commandHistory) {
-                commandHistory->execute(std::make_unique<AddObjectCommand>(currentScene, light));
-            } else {
-                currentScene->addObject(light);
-            }
-        }
-        if (ImGui::MenuItem("Model")) {
-            Haruka::SceneObject model;
-            model.name = "Model";
-            model.type = "Model";
-            model.position = glm::vec3(0.0f);
-            model.scale = glm::vec3(1.0f);
-            
-            if (commandHistory) {
-                commandHistory->execute(std::make_unique<AddObjectCommand>(currentScene, model));
-            } else {
-                currentScene->addObject(model);
-            }
-        }
-        ImGui::EndPopup();
-    }
-
-    ImGui::Separator();
-
-    const auto& objects = currentScene->getObjects();
-    for (size_t i = 0; i < objects.size(); i++) {
-        ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
-        if (selectedObjectIndex == (int)i) {
-            flags |= ImGuiTreeNodeFlags_Selected;
-        }
-
-        ImGui::TreeNodeEx((void*)(intptr_t)i, flags, "%s", objects[i].name.c_str());
-        
-        if (ImGui::IsItemClicked()) {
-            selectedObjectIndex = i;
-        }
-        
-        showContextMenu(i);
-    }
-
-    ImGui::End();
 }

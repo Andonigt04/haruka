@@ -5,13 +5,13 @@
 
 namespace Haruka {
 
-Character::Character(const glm::vec3& position, const std::string& userId) 
-    : userId(userId), position(position), velocity(0.0f) {
+Character::Character(const glm::dvec3& position, const std::string& userId)
+    : userId(userId), position(position), velocity(0.0) {
     
     localPlayer = !userId.empty();
     
     if (localPlayer) {
-        camera = std::make_unique<Camera>(WorldPos(position.x, position.y + currentHeight * 0.9f, position.z));
+        camera = std::make_unique<Camera>(WorldPos(position.x, position.y + currentHeight * 0.9, position.z));
     }
     
     forward = glm::vec3(0, 0, -1);
@@ -31,8 +31,8 @@ Character::~Character() {}
 void Character::update(float deltaTime) {
     // Sincronizar con física si existe
     if (physicsBody) {
-        position = glm::vec3(physicsBody->position);
-        velocity = glm::vec3(physicsBody->velocity);
+        position = glm::dvec3(physicsBody->position);
+        velocity = glm::dvec3(physicsBody->velocity);
     }
     
     // Interpolación para jugadores remotos
@@ -103,7 +103,7 @@ void Character::moveForward(float amount) {
         physicsBody->velocity.x = move.x;
         physicsBody->velocity.z = move.z;
     } else {
-        position += forward * amount;
+        position += glm::dvec3(forward) * (double)amount;
     }
 }
 
@@ -113,7 +113,7 @@ void Character::moveRight(float amount) {
         physicsBody->velocity.x = move.x;
         physicsBody->velocity.z = move.z;
     } else {
-        position += right * amount;
+        position += glm::dvec3(right) * (double)amount;
     }
 }
 
@@ -153,7 +153,7 @@ void Character::rotate(float yawDelta, float pitchDelta) {
 void Character::updateCamera() {
     if (!camera) return;
     
-    glm::vec3 cameraPos = position + glm::vec3(0, currentHeight * 0.9f, 0);
+    glm::dvec3 cameraPos = position + glm::dvec3(0, currentHeight * 0.9, 0);
     camera->position = WorldPos(cameraPos.x, cameraPos.y, cameraPos.z);
     
     // Update camera orientation
@@ -183,10 +183,10 @@ void Character::checkGrounded() {
 }
 
 bool Character::shouldSyncToServer() {
-    float posDelta = glm::length(position - lastSyncPos);
+    float posDelta = glm::length(glm::dvec3(position) - lastSyncPos);
     float rotDelta = glm::length(glm::vec3(yaw, pitch, 0) - lastSyncRot);
     
-    return posDelta > 0.01f || rotDelta > 0.1f;
+    return posDelta > syncThreshold || rotDelta > syncThreshold;
 }
 
 void Character::syncToServer() {
@@ -205,19 +205,10 @@ void Character::syncToServer() {
 }
 
 void Character::applyServerUpdate(const glm::dvec3& serverPos, const glm::vec3& serverRot) {
-    if (localPlayer) {
-        // Para jugador local, corregir posición si hay gran discrepancia
-        float distance = glm::length(glm::vec3(serverPos) - position);
-        if (distance > 5.0f) { // Threshold de teleport
-            position = glm::vec3(serverPos);
-            if (physicsBody) {
-                physicsBody->position = serverPos;
-            }
-            std::cout << "[Character] Server correction applied" << std::endl;
-        }
-    } else {
-        // Para jugadores remotos, interpolar
-        targetPosition = glm::vec3(serverPos);
+    double distance = glm::length(serverPos - position);
+    
+    if (distance > 1.0) {
+        targetPosition = serverPos;
         targetRotation = serverRot;
     }
 }

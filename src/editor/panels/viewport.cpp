@@ -3,7 +3,9 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtx/intersect.hpp>
 #include <algorithm>
-#include "editor/commands/scene_commands.h" // NUEVO
+#include "editor/commands/scene_commands.h"
+#include <ImGuizmo.h>
+#include <glm/gtc/type_ptr.hpp>
 
 ViewportPanel::ViewportPanel() {}
 
@@ -44,10 +46,11 @@ int ViewportPanel::getHoveredObjectIndex(const glm::vec3& rayOrigin, const glm::
         const auto& obj = objects[i];
         
         // Bounding sphere (radio 0.5 * escala)
-        float radius = 0.5f * glm::length(obj.scale);
+        glm::vec3 center = glm::vec3(obj.position);
+        float radius = 0.5f * glm::length(glm::vec3(obj.scale));
         
         float distance;
-        if (glm::intersectRaySphere(rayOrigin, rayDir, obj.position, radius, distance)) {
+        if (glm::intersectRaySphere(rayOrigin, rayDir, center, radius, distance)) {
             if (distance < closestDist) {
                 closestDist = distance;
                 closestIdx = (int)i;
@@ -72,23 +75,40 @@ void ViewportPanel::handleGizmoInput() {
 
         selectedObjectIndex = getHoveredObjectIndex(rayOrigin, rayDir, proj, view);
 
-        if (selectedObjectIndex >= 0) {
-            isDragging = true;
-            const auto& obj = currentScene->getObjects()[selectedObjectIndex];
-            dragStartPos = obj.position;
-            dragStartRot = obj.rotation;
-            dragStartScale = obj.scale;
+        if (selectedObjectIndex >= 0 && currentScene) {
+            auto& obj = currentScene->getObjectsMutable()[selectedObjectIndex];
 
-            // Seleccionar eje
-            float tHit = 0.0f;
-            activeAxis = GizmoAxis::None;
+            // Convierte dvec3 a vec3 para ImGuizmo
+            glm::vec3 pos   = glm::vec3(obj.position);
+            glm::vec3 rot   = glm::vec3(obj.rotation);
+            glm::vec3 scale = glm::vec3(obj.scale);
 
-            if (rayIntersectsAxis(rayOrigin, rayDir, obj.position, glm::vec3(1,0,0), tHit))
-                activeAxis = GizmoAxis::X;
-            else if (rayIntersectsAxis(rayOrigin, rayDir, obj.position, glm::vec3(0,1,0), tHit))
-                activeAxis = GizmoAxis::Y;
-            else if (rayIntersectsAxis(rayOrigin, rayDir, obj.position, glm::vec3(0,0,1), tHit))
-                activeAxis = GizmoAxis::Z;
+            // Construye la matriz de transformación en float
+            glm::mat4 objTransform = glm::translate(glm::mat4(1.0f), pos)
+                * glm::rotate(glm::mat4(1.0f), glm::radians(rot.x), glm::vec3(1,0,0))
+                * glm::rotate(glm::mat4(1.0f), glm::radians(rot.y), glm::vec3(0,1,0))
+                * glm::rotate(glm::mat4(1.0f), glm::radians(rot.z), glm::vec3(0,0,1))
+                * glm::scale(glm::mat4(1.0f), scale);
+
+            ImGuizmo::SetDrawlist();
+            ImGuizmo::SetRect(viewportMin.x, viewportMin.y, viewportMax.x - viewportMin.x, viewportMax.y - viewportMin.y);
+
+            glm::mat4 view = camera->getViewMatrix();
+            glm::mat4 proj = glm::perspective(glm::radians(45.0f), (float)width / (float)height, 0.1f, 1000.0f);
+
+            ImGuizmo::Manipulate(
+                glm::value_ptr(view), glm::value_ptr(proj),
+                (ImGuizmo::OPERATION)currentGizmoOperation, ImGuizmo::LOCAL,
+                glm::value_ptr(objTransform)
+            );
+
+            if (ImGuizmo::IsUsing()) {
+                glm::vec3 newPos, newRot, newScale;
+                ImGuizmo::DecomposeMatrixToComponents(glm::value_ptr(objTransform), &newPos.x, &newRot.x, &newScale.x);
+                obj.position = glm::dvec3(newPos);
+                obj.rotation = glm::dvec3(newRot);
+                obj.scale    = glm::dvec3(newScale);
+            }
         }
     }
 
@@ -135,7 +155,8 @@ void ViewportPanel::handleGizmoInput() {
 
         auto* obj = currentScene->getObject(currentScene->getObjects()[selectedObjectIndex].name);
         if (obj && commandHistory) {
-            if (obj->position != dragStartPos || obj->rotation != dragStartRot || obj->scale != dragStartScale) {
+            if (obj->position != glm::dvec3(dragStartPos))
+            {
                 commandHistory->execute(std::make_unique<TransformObjectCommand>(
                     currentScene, obj->name, obj->position, obj->rotation, obj->scale
                 ));
@@ -181,8 +202,8 @@ void ViewportPanel::handleAssetDrop() {
 void ViewportPanel::renderScene() {
     if (!renderTarget || !camera) return;
 
-    renderVertexCount = 0;
-    renderDrawCalls = 0;
+    renderVertex_count = 0;
+    renderDraw_calls = 0;
 
     renderTarget->bindForWriting();
     glViewport(0, 0, width, height);
@@ -205,7 +226,7 @@ void ViewportPanel::renderScene() {
     glm::mat4 view = camera->getViewMatrix();
 
     renderGrid(view, proj);
-    renderDrawCalls++;
+    renderDraw_calls++;
 
     sceneShader->use();
     sceneShader->setMat4("projection", proj);
@@ -216,11 +237,11 @@ void ViewportPanel::renderScene() {
         for (size_t i = 0; i < objects.size(); i++) {
             const auto& obj = objects[i];
             
-            glm::mat4 model = glm::mat4(1.0f);
+            glm::dmat4 model = glm::dmat4(1.0f);
             model = glm::translate(model, obj.position);
-            model = glm::rotate(model, glm::radians(obj.rotation.x), glm::vec3(1, 0, 0));
-            model = glm::rotate(model, glm::radians(obj.rotation.y), glm::vec3(0, 1, 0));
-            model = glm::rotate(model, glm::radians(obj.rotation.z), glm::vec3(0, 0, 1));
+            model = glm::rotate(model, glm::radians(obj.rotation.x), glm::dvec3(1, 0, 0));
+            model = glm::rotate(model, glm::radians(obj.rotation.y), glm::dvec3(0, 1, 0));
+            model = glm::rotate(model, glm::radians(obj.rotation.z), glm::dvec3(0, 0, 1));
             model = glm::scale(model, obj.scale);
 
             sceneShader->setMat4("model", model);
@@ -235,28 +256,28 @@ void ViewportPanel::renderScene() {
                 Model* modelPtr = getOrLoadModel(obj.modelPath);
                 if (modelPtr) {
                     modelPtr->Draw(*sceneShader);
-                    renderVertexCount += 1000; 
+                    renderVertex_count += 1000; 
                 } else {
                     cubeMesh->draw();
-                    renderVertexCount += 24; // Cubo = 24 vértices
+                    renderVertex_count += 24; // Cubo = 24 vértices
                 }
             } else {
                 cubeMesh->draw();
-                renderVertexCount += 24;
+                renderVertex_count += 24;
             }
-            renderDrawCalls++;
+            renderDraw_calls++;
         }
     }
 
     renderGizmoAxes(view, proj);
-    renderDrawCalls += 3; // 3 ejes
+    renderDraw_calls += 3; // 3 ejes
     
     renderTarget->unbind();
     
     if (statsPanel) {
-        statsPanel->setVertexCount(renderVertexCount);
-        statsPanel->setDrawCalls(renderDrawCalls);
-        statsPanel->setTriangleCount(renderVertexCount / 3);
+        statsPanel->setVertexCount(renderVertex_count);
+        statsPanel->setDrawCalls(renderDraw_calls);
+        statsPanel->setTriangleCount(renderVertex_count / 3);
     }
 }
 
@@ -289,6 +310,13 @@ void ViewportPanel::updateCameraFromInput(float deltaTime) {
 
 void ViewportPanel::onImGuiRender() {
     ImGui::Begin("Viewport");
+
+    // Change viewport mode
+    if (ImGui::RadioButton("Mover", currentGizmoOperation == ImGuizmo::TRANSLATE)) currentGizmoOperation = ImGuizmo::TRANSLATE;
+    ImGui::SameLine();
+    if (ImGui::RadioButton("Rotar", currentGizmoOperation == ImGuizmo::ROTATE)) currentGizmoOperation = ImGuizmo::ROTATE;
+    ImGui::SameLine();
+    if (ImGui::RadioButton("Escalar", currentGizmoOperation == ImGuizmo::SCALE)) currentGizmoOperation = ImGuizmo::SCALE;
 
     if (playMode) {
         ImGui::TextColored(ImVec4(1, 0.2f, 0.2f, 1), "PLAY MODE (editing locked)");
@@ -406,7 +434,7 @@ void ViewportPanel::renderGizmoAxes(const glm::mat4& view, const glm::mat4& proj
         glBindVertexArray(0);
     }
 
-    glm::mat4 model = glm::translate(glm::mat4(1.0f), obj.position);
+    glm::dmat4 model = glm::translate(glm::dmat4(1.0f), obj.position);
 
     sceneShader->use();
     sceneShader->setMat4("projection", proj);
@@ -535,4 +563,43 @@ void ViewportPanel::renderGrid(const glm::mat4& view, const glm::mat4& proj) {
     glBindVertexArray(gridVAO);
     glDrawArrays(GL_LINES, 0, (1000000 * 2 + 1) * 4); // Cambiar de 20 a 200
     glBindVertexArray(0);
+}
+
+void ViewportPanel::renderGizmoImGuizmo()
+{
+    if (!currentScene || selectedObjectIndex < 0) return;
+
+    auto& obj = currentScene->getObjectsMutable()[selectedObjectIndex];
+
+    // Convierte dvec3 a vec3 para ImGuizmo
+    glm::vec3 pos   = glm::vec3(obj.position);
+    glm::vec3 rot   = glm::vec3(obj.rotation);
+    glm::vec3 scale = glm::vec3(obj.scale);
+
+    // Construye la matriz de transformación en float
+    glm::mat4 objTransform = glm::translate(glm::mat4(1.0f), pos)
+        * glm::rotate(glm::mat4(1.0f), glm::radians(rot.x), glm::vec3(1,0,0))
+        * glm::rotate(glm::mat4(1.0f), glm::radians(rot.y), glm::vec3(0,1,0))
+        * glm::rotate(glm::mat4(1.0f), glm::radians(rot.z), glm::vec3(0,0,1))
+        * glm::scale(glm::mat4(1.0f), scale);
+
+    ImGuizmo::SetDrawlist();
+    ImGuizmo::SetRect(viewportMin.x, viewportMin.y, viewportMax.x - viewportMin.x, viewportMax.y - viewportMin.y);
+
+    glm::mat4 view = camera->getViewMatrix();
+    glm::mat4 proj = glm::perspective(glm::radians(45.0f), (float)width / (float)height, 0.1f, 1000.0f);
+
+    ImGuizmo::Manipulate(
+        glm::value_ptr(view), glm::value_ptr(proj),
+        (ImGuizmo::OPERATION)currentGizmoOperation, ImGuizmo::LOCAL,
+        glm::value_ptr(objTransform)
+    );
+
+    if (ImGuizmo::IsUsing()) {
+        glm::vec3 newPos, newRot, newScale;
+        ImGuizmo::DecomposeMatrixToComponents(glm::value_ptr(objTransform), &newPos.x, &newRot.x, &newScale.x);
+        obj.position = glm::dvec3(newPos);
+        obj.rotation = glm::dvec3(newRot);
+        obj.scale    = glm::dvec3(newScale);
+    }
 }

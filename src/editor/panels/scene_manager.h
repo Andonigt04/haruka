@@ -12,41 +12,36 @@ class SceneManagerPanel {
 public:
     SceneManagerPanel();
     ~SceneManagerPanel();
-    
+
+    void setProject(Project* proj);
+    void setScene(Scene* scene);
+
     void render();
-    
-    void setProject(Project* proj) { project = proj; }
-    void setCurrentScene(Scene* scene) { currentScene = scene; }
-    void setScene(Scene* scene) { currentScene = scene; }
-    
-    void setOnSceneLoadCallback(std::function<void(const std::string&)> callback) {
-        onSceneLoad = callback;
-    }
-    void setOnSceneSaveCallback(std::function<void(const std::string&)> callback) {
-        onSceneSave = callback;
-    }
-    void setOnSceneNewCallback(std::function<void(const std::string&)> callback) {
-        onSceneNew = callback;
-    }
+    void renderEmbedded();
+    void onImGuiRender() { renderEmbedded(); }
+
+    void setOnSceneLoad(std::function<void(const std::string&)> cb) { onSceneLoad = std::move(cb); }
+    void setOnSceneSave(std::function<void(const std::string&)> cb) { onSceneSave = std::move(cb); }
+    void setOnSceneNew(std::function<void(const std::string&)> cb)  { onSceneNew  = std::move(cb); }
 
 private:
     Project* project = nullptr;
     Scene* currentScene = nullptr;
-    
+
     std::vector<std::string> sceneList;
     int selectedSceneIndex = -1;
-    
+
     char newSceneNameBuffer[256] = {0};
     char duplicateNameBuffer[256] = {0};
     bool showNewSceneDialog = false;
     bool showDuplicateDialog = false;
     bool showDeleteConfirm = false;
     std::string sceneToDelete;
-    
+
     std::function<void(const std::string&)> onSceneLoad;
     std::function<void(const std::string&)> onSceneSave;
     std::function<void(const std::string&)> onSceneNew;
-    
+
     void refreshSceneList();
     void createNewScene(const std::string& name);
     void duplicateScene(const std::string& originalName, const std::string& newName);

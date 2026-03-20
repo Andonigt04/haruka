@@ -1,9 +1,11 @@
 #pragma once
 
 #include "core/scene.h"
+#include "editor/panels/prefabs_panel.h"
 #include "editor/commands/command_history.h"
 #include <imgui.h>
 #include <glm/glm.hpp>
+#include <functional>
 
 class InspectorPanel {
 public:
@@ -12,19 +14,17 @@ public:
     void setScene(Haruka::Scene* scene);
     void setSelectedObjectIndex(int index);
     void setCommandHistory(CommandHistory* history);
+    void setPlayMode(bool mode) { playMode = mode; }
     void onImGuiRender();
+    void setOnSceneChanged(std::function<void()> cb) { onSceneChanged = std::move(cb); }
 
 private:
     Haruka::Scene* currentScene = nullptr;
-    CommandHistory* commandHistory = nullptr;
     int selectedObjectIndex = -1;
-
-    // Edit tracking
-    glm::vec3 editStartPosition{0.0f};
-    glm::vec3 editStartRotation{0.0f};
-    glm::vec3 editStartScale{1.0f};
-
-    bool editingPosition = false;
-    bool editingRotation = false;
-    bool editingScale = false;
+    CommandHistory* commandHistory = nullptr;
+    bool playMode = false;
+    
+    bool editingPosition = false, editingRotation = false, editingScale = false;
+    glm::dvec3 editStartPosition, editStartRotation, editStartScale;
+    std::function<void()> onSceneChanged;
 };

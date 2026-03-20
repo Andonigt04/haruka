@@ -13,6 +13,17 @@ set(STB_DIR "${THIRD_PARTY_DIR}/stb")
 set(IMGUI_DIR "${THIRD_PARTY_DIR}/imgui")
 set(WEBSOCKETPP_DIR "${THIRD_PARTY_DIR}/websocketpp")
 set(OPENAL_DIR "${THIRD_PARTY_DIR}/OpenAL")
+set(IMGUIZMO_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/ImGuizmo")
+set(JSON_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/json")
+set(NFD_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/nativefiledialog")
+
+set(NFD_SOURCES
+    ${NFD_DIR}/src/nfd_common.c
+    ${NFD_DIR}/src/nfd_gtk.c
+)
+
+set(NFD_INCLUDE_DIRS "${NFD_DIR}/src/include")
+set(GTK3_INCLUDE_DIRS ${GTK3_INCLUDE_DIRS})
 
 find_package(glfw3 REQUIRED)
 find_package(assimp REQUIRED)
@@ -20,6 +31,8 @@ find_package(OpenGL REQUIRED)
 find_package(OpenSSL REQUIRED)
 find_package(OpenAL REQUIRED)
 find_package(PostgreSQL REQUIRED)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(GTK3 REQUIRED gtk+-3.0)
 
 include_directories(
   src
@@ -32,6 +45,11 @@ include_directories(
   ${WEBSOCKETPP_DIR}
   ${OPENAL_INCLUDE_DIR}
   ${PostgreSQL_INCLUDE_DIRS}
+  ${IMGUIZMO_DIR}
+  ${NLOHMANN_DIR}
+  ${JSON_DIR}/include
+  ${NFD_DIR}/src/include
+  ${GTK3_INCLUDE_DIRS}
 )
 
 file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/shaders" DESTINATION "${CMAKE_CURRENT_BINARY_DIR}")
@@ -45,6 +63,11 @@ set(IMGUI_SOURCES
     ${IMGUI_DIR}/imgui_demo.cpp
     ${IMGUI_DIR}/backends/imgui_impl_glfw.cpp
     ${IMGUI_DIR}/backends/imgui_impl_opengl3.cpp
+)
+
+# ImGuiZmo sources
+set(IMGUIZMO_SOURCES
+    ${IMGUIZMO_DIR}/ImGuizmo.cpp
 )
 
 # Engine sources
@@ -73,6 +96,40 @@ file(GLOB_RECURSE EDITOR_SOURCES
 )
 
 set(GLAD_SOURCE "${GLAD_DIR}/src/glad.c")
+
+# ==== Librería compartida del Motor ====
+add_library(HarukaEngineLib SHARED
+    ${ENGINE_SOURCES}
+    ${GLAD_SOURCE}
+    ${IMGUI_SOURCES}
+)
+
+target_include_directories(HarukaEngineLib PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/src"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include"
+)
+
+target_link_libraries(HarukaEngineLib PUBLIC
+    glfw 
+    OpenGL::GL
+    assimp::assimp
+    OpenSSL::Crypto
+    ${OPENAL_LIBRARY}
+    ${CMAKE_DL_LIBS}
+)
+
+install(TARGETS HarukaEngineLib
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
+
+add_custom_command(TARGET HarukaEngineLib POST_BUILD
+    COMMAND mkdir -p "${CMAKE_BINARY_DIR}/lib"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    "$<TARGET_FILE:HarukaEngineLib>"
+    "${CMAKE_BINARY_DIR}/lib/$<TARGET_FILE_NAME:HarukaEngineLib>"
+    COMMENT "Copying HarukaEngineLib to lib directory"
+)
 
 # ==== Build options ====
 option(BUILD_EDITOR "Build HarukaEditor" ON)
@@ -108,6 +165,8 @@ if(BUILD_EDITOR)
       ${NETWORK_SOURCES}
       ${GLAD_SOURCE}
       ${IMGUI_SOURCES}
+      ${IMGUIZMO_SOURCES}
+      ${NFD_SOURCES}
   )
 
   target_link_libraries(HarukaEditor 
@@ -117,9 +176,11 @@ if(BUILD_EDITOR)
       OpenSSL::Crypto
       ${OPENAL_LIBRARY}
       ${CMAKE_DL_LIBS}
+      ${GTK3_LIBRARIES}
   )
 
-  target_compile_definitions(HarukaEditor PRIVATE HARUKA_EDITOR)
+  target_compile_options(HarukaEditor PRIVATE ${GTK3_CFLAGS_OTHER})
+  target_compile_definitions(HarukaEditor PRIVATE HARUKA_EDITOR HARUKA_HAS_NFD=1)
 endif()
 
 # Servidor dedicado (CON DB)
@@ -150,6 +211,8 @@ target_link_libraries(ChatTest
 
 # ==== Install rules ====
 include(GNUInstallDirs)
+
+install(TARGETS HarukaEngineLib LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR})
 
 if(BUILD_RUNTIME)
   install(TARGETS HarukaEngine RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})

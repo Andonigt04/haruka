@@ -13,6 +13,10 @@
 #include "renderer/model.h"
 #include "editor/panels/stats.h"
 #include <map>
+#include <unordered_map>
+#include <glm/gtc/type_ptr.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+#include <ImGuizmo.h>
 
 class ViewportPanel {
 public:
@@ -25,70 +29,68 @@ public:
     void setCommandHistory(CommandHistory* history) { commandHistory = history; }
     void onImGuiRender();
     void onUpdate(float deltaTime);
-    void setPlayMode(bool enabled) { playMode = enabled; }
-    void setGizmoMode(int mode) { gizmoMode = mode; } // 0=Move,1=Rotate,2=Scale
-    void setStatsPanel(StatsPanel* stats) { statsPanel = stats; }
-
-private:
-    bool playMode = false;
-
-    enum class GizmoAxis { None, X, Y, Z };
-    GizmoAxis activeAxis = GizmoAxis::None;
-
-    float axisPickRadius = 0.15f;
-
-    void recreateRenderTarget();
     void renderScene();
+    void renderGizmoImGuizmo();
+    void recreateRenderTarget();
     void updateCameraFromInput(float deltaTime);
-    void handleGizmoInput();
-    glm::vec3 getRayFromMouse(const glm::mat4& proj, const glm::mat4& view);
-    int getHoveredObjectIndex(const glm::vec3& rayOrigin, const glm::vec3& rayDir, const glm::mat4& proj, const glm::mat4& view);
+
     void renderGizmoAxes(const glm::mat4& view, const glm::mat4& proj);
     void renderGrid(const glm::mat4& view, const glm::mat4& proj);
+    void handleGizmoInput();
+    void handleAssetDrop();
+    glm::vec3 getRayFromMouse(const glm::mat4& proj, const glm::mat4& view);
+    int getHoveredObjectIndex(const glm::vec3& rayOrigin, const glm::vec3& rayDir, const glm::mat4& proj, const glm::mat4& view);
+    bool rayIntersectsAxis(const glm::vec3& rayOrigin, const glm::vec3& rayDir, const glm::vec3& axisOrigin, const glm::vec3& axisDir, float& tOut);
+    Model* getOrLoadModel(const std::string& path);
 
-    unsigned int gizmoVAO = 0;
-    unsigned int gizmoVBO = 0;
-    unsigned int gridVAO = 0;
-    unsigned int gridVBO = 0;
-    bool showGrid = true;
+    void setStatsPanel(StatsPanel* panel) { statsPanel = panel; }
+    void setPlayMode(bool play) { playMode = play; }
+    void setGizmoMode(int mode) { gizmoMode = mode; }
 
+private:
     Haruka::Scene* currentScene = nullptr;
     Camera* camera = nullptr;
-    GLFWwindow* glfwWindow = nullptr;
-    CommandHistory* commandHistory = nullptr;
 
-    int width = 1280;
-    int height = 720;
-
-    float camYaw = 0.0f;
-    float camPitch = -20.0f;
-    float moveSpeed = 5.0f;
-    float mouseSensitivity = 0.1f;
+    int width = 1280, height = 720;
+    ImVec2 viewportMin, viewportMax;
     bool isViewportHovered = false;
     bool isViewportFocused = false;
+    bool playMode = false;
+    bool showGrid = true;
 
     int selectedObjectIndex = -1;
-    bool isDragging = false;
-    glm::vec3 dragStartPos = glm::vec3(0);
-    glm::vec3 dragStartRot = glm::vec3(0);
-    glm::vec3 dragStartScale = glm::vec3(1);
+    int currentGizmoOperation = ImGuizmo::TRANSLATE;
 
+    // Para cámara
+    float camYaw = 0.0f, camPitch = 0.0f;
+    float moveSpeed = 5.0f, mouseSensitivity = 0.1f;
+
+    // Gizmo
+    enum class GizmoAxis { None, X, Y, Z };
+    GizmoAxis activeAxis = GizmoAxis::None;
+    bool isDragging = false;
+    glm::vec3 dragStartPos, dragStartRot, dragStartScale;
+    int gizmoMode = 0; // 0=move, 1=rotate, 2=scale
+    float axisPickRadius = 0.15f;
+
+    // OpenGL/ImGui resources
     std::unique_ptr<RenderTarget> renderTarget;
     std::unique_ptr<Shader> sceneShader;
     std::unique_ptr<SimpleMesh> cubeMesh;
+    std::unordered_map<std::string, std::unique_ptr<Model>> loadedModels;
 
-    bool rayIntersectsAxis(const glm::vec3& rayOrigin, const glm::vec3& rayDir, const glm::vec3& axisOrigin, const glm::vec3& axisDir, float& tOut);
-    int gizmoMode = 0;
+    // Grid/gizmo VAO/VBO
+    GLuint gridVAO = 0, gridVBO = 0;
+    GLuint gizmoVAO = 0, gizmoVBO = 0;
 
-    ImVec2 viewportMin{0,0};
-    ImVec2 viewportMax{0,0};
-
-    void handleAssetDrop();
-
-    std::map<std::string, std::unique_ptr<Model>> loadedModels;
-    Model* getOrLoadModel(const std::string& path);
-
+    // Stats panel
     StatsPanel* statsPanel = nullptr;
-    int renderVertexCount = 0;
-    int renderDrawCalls = 0;
+    int renderVertex_count = 0, renderDraw_calls = 0;
+
+    // Command history
+    CommandHistory* commandHistory = nullptr;
+
+    // GLFW window
+    GLFWwindow* glfwWindow = nullptr;
+
 };

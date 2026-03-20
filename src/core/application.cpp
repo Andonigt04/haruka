@@ -182,11 +182,11 @@ void Application::renderScene() {
     for (const auto& obj : _currentScene->getObjects()) {
         if (obj.type == "Model" && modelIndex < _sceneModels.size()) {
             glm::mat4 modelMatrix = glm::mat4(1.0f);
-            modelMatrix = glm::translate(modelMatrix, obj.position);
-            modelMatrix = glm::rotate(modelMatrix, glm::radians(obj.rotation.x), glm::vec3(1, 0, 0));
-            modelMatrix = glm::rotate(modelMatrix, glm::radians(obj.rotation.y), glm::vec3(0, 1, 0));
-            modelMatrix = glm::rotate(modelMatrix, glm::radians(obj.rotation.z), glm::vec3(0, 0, 1));
-            modelMatrix = glm::scale(modelMatrix, obj.scale);
+            modelMatrix = glm::translate(modelMatrix, glm::vec3(obj.position));
+            modelMatrix = glm::rotate(modelMatrix, glm::radians((float)obj.rotation.x), glm::vec3(1, 0, 0));
+            modelMatrix = glm::rotate(modelMatrix, glm::radians((float)obj.rotation.y), glm::vec3(0, 1, 0));
+            modelMatrix = glm::rotate(modelMatrix, glm::radians((float)obj.rotation.z), glm::vec3(0, 0, 1));
+            modelMatrix = glm::scale(modelMatrix, glm::vec3(obj.scale));
             
             _mainShader->use();
             _mainShader->setMat4("model", modelMatrix);

@@ -1,0 +1,47 @@
+{
+    "name": "main",
+    "initializer": "scripts/init.cpp",
+    "entities": [
+        {
+            "id": 1,
+            "name": "PlanetarySystem",
+            "active": true,
+            "components": [
+                {
+                    "type": "Transform",
+                    "position": [0, 0, 0],
+                    "rotation": [0, 0, 0],
+                    "scale": [1, 1, 1]
+                },
+                {
+                    "type": "PlanetarySystem",
+                    "planetCount": 1,
+                    "planets": [
+                        {
+                            "name": "Habitable",
+                            "position": [0, 0, 0],
+                            "radius": 6371000,
+                            "mass": 5.972e24,
+                            "atmosphereHeight": 100000,
+                            "color": [0.2, 0.6, 0.3]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "id": 2,
+            "name": "Player",
+            "active": true,
+            "prefab": "player.prefab"
+        }
+    ],
+    "lighting": {
+        "ambientLight": [1, 1, 1, 0.3],
+        "mainLight": {
+            "direction": [1, 1, 1],
+            "color": [1, 1, 1, 1],
+            "intensity": 1.0
+        }
+    }
+}
