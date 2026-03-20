@@ -5,6 +5,7 @@
 #include <fstream>
 #include <iostream>
 #include <nlohmann/json.hpp>
+#include <dlfcn.h>
 
 namespace Haruka {
 
@@ -87,7 +88,6 @@ bool Scene::load(const std::string& filepath) {
 
         if (j.contains("name")) sceneName = j["name"].get<std::string>();
         objects.clear();
-        initializerPath = "";
 
         // Descubrir inicializador
         if (j.contains("initializer")) {
@@ -124,6 +124,48 @@ bool Scene::load(const std::string& filepath) {
                 }
 
                 objects.push_back(obj);
+            }
+        }
+
+        // Ejecutar inicializador si existe
+        if (j.contains("initializer")) {
+            std::string initPath = j["initializer"].get<std::string>();
+            std::filesystem::path scenePath(filepath);
+            std::filesystem::path projectRoot = scenePath.parent_path().parent_path();
+            std::filesystem::path libPath = projectRoot / "build" / "libTestGameLogic.so";
+            
+            std::cout << "Loading initializer: " << libPath.string() << std::endl;
+            
+            void* handle = dlopen(libPath.c_str(), RTLD_LAZY);
+            if (handle) {
+                typedef void (*InitFunc)(Haruka::Scene*);
+                InitFunc initFunc = nullptr;
+                
+                const char* symbols[] = {
+                    "_ZN9GameLogic15GameInitializer14initializeGameEPN6Haruka5SceneE",
+                    "_ZN9GameLogic16GameInitializer16initializeGameEPN6Haruka5SceneE",
+                    "initializeGame",
+                    nullptr
+                };
+                
+                for (int i = 0; symbols[i] != nullptr; i++) {
+                    initFunc = (InitFunc)dlsym(handle, symbols[i]);
+                    if (initFunc) {
+                        std::cout << "Found symbol: " << symbols[i] << std::endl;
+                        break;
+                    }
+                }
+                
+                if (initFunc) {
+                    initFunc(this);
+                    std::cout << "Initializer executed successfully" << std::endl;
+                } else {
+                    std::cerr << "Initializer function not found" << std::endl;
+                }
+                
+                dlclose(handle);
+            } else {
+                std::cerr << "Could not load initializer library: " << dlerror() << std::endl;
             }
         }
 

@@ -472,7 +472,7 @@ void EditorApplication::loadScene(const std::string& path) {
 }
 
 void EditorApplication::enterPlayMode() {
-    if (isPlayMode || !currentProject || !currentScene) return;
+    if (isPlayMode || !currentProject) return;
     
     editorScene = currentScene.get();
     isPlayMode = true;
@@ -481,17 +481,35 @@ void EditorApplication::enterPlayMode() {
     viewportPanel.setPlayMode(true);
     inspectorPanel.setPlayMode(true);
 
-    if (currentScene) {
-        currentScene->save(playModeBackupPath);
+    // Cargar escena de inicio del proyecto
+    std::string projectPath = currentProject->getPath();
+    std::string projectConfigPath = projectPath + "/project.hrk";
+    
+    std::ifstream configFile(projectConfigPath);
+    if (configFile.is_open()) {
+        nlohmann::json projectConfig;
+        configFile >> projectConfig;
+        configFile.close();
+        
+        if (projectConfig.contains("startScene")) {
+            std::string startScenePath = projectConfig["startScene"].get<std::string>();
+            std::string fullScenePath = projectPath + "/" + startScenePath;
+            
+            if (currentScene) {
+                currentScene->save(playModeBackupPath);
+            }
+            
+            currentScene->load(fullScenePath);
+            std::cout << "▶ Play Mode started with scene: " << startScenePath << std::endl;
+        }
     }
 
+    // Obtener cámara del juego
     extern Camera* g_gameCamera;
     if (g_gameCamera) {
         viewportPanel.setCamera(g_gameCamera);
         std::cout << "Game camera set to viewport" << std::endl;
     }
-
-    std::cout << "▶ Play Mode started" << std::endl;
 }
 
 void EditorApplication::exitPlayMode() {

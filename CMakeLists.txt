@@ -136,46 +136,30 @@ option(BUILD_EDITOR "Build HarukaEditor" ON)
 option(BUILD_RUNTIME "Build HarukaEngine" ON)
 option(BUILD_SERVER "Build HarukaServer" ON)
 
-# Runtime ejecutable (CLIENTE)
+# Runtime ejecutable (CLIENTE) - USA LA LIBRERÍA
 if(BUILD_RUNTIME)
   add_executable(HarukaEngine 
       src/main.cpp
-      ${ENGINE_SOURCES}
       ${NETWORK_SOURCES}
-      ${GLAD_SOURCE}
-      ${IMGUI_SOURCES}
   )
 
   target_link_libraries(HarukaEngine 
-      glfw 
-      OpenGL::GL
-      assimp::assimp
-      OpenSSL::Crypto
-      ${OPENAL_LIBRARY}
-      ${CMAKE_DL_LIBS}
+      HarukaEngineLib
   )
 endif()
 
-# Editor ejecutable (CLIENTE)
+# Editor ejecutable (CLIENTE) - USA LA LIBRERÍA
 if(BUILD_EDITOR)
   add_executable(HarukaEditor
       src/main_editor.cpp
-      ${ENGINE_SOURCES}
       ${EDITOR_SOURCES}
       ${NETWORK_SOURCES}
-      ${GLAD_SOURCE}
-      ${IMGUI_SOURCES}
       ${IMGUIZMO_SOURCES}
       ${NFD_SOURCES}
   )
 
   target_link_libraries(HarukaEditor 
-      glfw 
-      OpenGL::GL
-      assimp::assimp
-      OpenSSL::Crypto
-      ${OPENAL_LIBRARY}
-      ${CMAKE_DL_LIBS}
+      HarukaEngineLib
       ${GTK3_LIBRARIES}
   )
 
