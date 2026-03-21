@@ -31,7 +31,7 @@ void SceneHierarchyPanel::renderObjectNode(int index) {
     
     ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth;
     if (index == selectedObjectIndex) flags |= ImGuiTreeNodeFlags_Selected;
-    if (obj.childrenIndices.empty()) flags |= ImGuiTreeNodeFlags_Leaf;
+    if (obj.childrenIndices.empty() && obj.children.empty()) flags |= ImGuiTreeNodeFlags_Leaf;
     
     bool nodeOpen = ImGui::TreeNodeEx((void*)(intptr_t)index, flags, "%s", obj.name.c_str());
     
@@ -61,7 +61,35 @@ void SceneHierarchyPanel::renderObjectNode(int index) {
         for (int childIndex : obj.childrenIndices) {
             renderObjectNode(childIndex);
         }
+        
+        // Renderizar children vector (hijos del prefab, etc)
+        for (size_t i = 0; i < obj.children.size(); ++i) {
+            renderChildObject(obj.children[i], i);
+        }
+        
         ImGui::TreePop();
+    }
+}
+
+// Nueva función para renderizar objetos hijos del vector children
+void SceneHierarchyPanel::renderChildObject(Haruka::SceneObject& child, size_t index) {
+    ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_Leaf;
+    
+    bool nodeOpen = ImGui::TreeNodeEx((void*)(intptr_t)(&child), flags, "%s (%s)", child.name.c_str(), child.type.c_str());
+    
+    showContextMenuChild(child);
+    
+    if (nodeOpen) {
+        ImGui::TreePop();
+    }
+}
+
+void SceneHierarchyPanel::showContextMenuChild(Haruka::SceneObject& child) {
+    if (ImGui::BeginPopupContextItem()) {
+        if (ImGui::MenuItem("Delete")) {
+            // TODO: Implementar borrar hijo
+        }
+        ImGui::EndPopup();
     }
 }
 
@@ -99,6 +127,24 @@ void SceneHierarchyPanel::duplicateObject(int index) {
 
 void SceneHierarchyPanel::showContextMenu(int index) {
     if (ImGui::BeginPopupContextItem()) {
+        auto& obj = currentScene->getObjects()[index];
+        
+        // Abrir escena si el tipo es "Scene"
+        if (obj.type == "Scene") {
+            if (ImGui::MenuItem("Enter Scene")) {
+                std::string scenePath = currentProjectPath + "/scenes/" + obj.name + ".scene";
+                currentScene->load(scenePath);
+            }
+        }
+        
+        // Abrir prefab si el tipo es "Prefab"
+        if (obj.type == "Prefab") {
+            if (ImGui::MenuItem("Enter Prefab")) {
+                std::string prefabPath = currentProjectPath + "/assets/prefabs/" + obj.name + ".prefab";
+                currentScene->load(prefabPath);
+            }
+        }
+        
         if (ImGui::MenuItem("Duplicate")) {
             duplicateObject(index);
         }

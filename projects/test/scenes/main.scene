@@ -1,47 +1,48 @@
 {
     "name": "main",
     "initializer": "scripts/init.cpp",
-    "entities": [
+    "objects": [
         {
-            "id": 1,
-            "name": "PlanetarySystem",
-            "active": true,
-            "components": [
-                {
-                    "type": "Transform",
-                    "position": [0, 0, 0],
-                    "rotation": [0, 0, 0],
-                    "scale": [1, 1, 1]
-                },
-                {
-                    "type": "PlanetarySystem",
-                    "planetCount": 1,
-                    "planets": [
-                        {
-                            "name": "Habitable",
-                            "position": [0, 0, 0],
-                            "radius": 6371000,
-                            "mass": 5.972e24,
-                            "atmosphereHeight": 100000,
-                            "color": [0.2, 0.6, 0.3]
-                        }
-                    ]
-                }
-            ]
+            "name": "Planet",
+            "type": "Planet",
+            "position": [0, -10, 0],
+            "rotation": [0, 0, 0],
+            "scale": [5, 5, 5],
+            "meshRenderer": {
+                "meshType": "sphere",
+                "radius": 1.0,
+                "segments": 32
+            },
+            "material": {
+                "albedo": [0.2, 0.6, 0.2],
+                "roughness": 0.7,
+                "metallic": 0.0
+            }
         },
         {
-            "id": 2,
+            "name": "Sun",
+            "type": "Light",
+            "position": [20, 20, 20],
+            "rotation": [0, 0, 0],
+            "scale": [2, 2, 2],
+            "meshRenderer": {
+                "meshType": "sphere",
+                "radius": 1.0,
+                "segments": 16
+            },
+            "material": {
+                "albedo": [1.0, 1.0, 0.0],
+                "roughness": 0.2,
+                "metallic": 0.5
+            }
+        },
+        {
             "name": "Player",
-            "active": true,
-            "prefab": "player.prefab"
+            "type": "Prefab",
+            "path": "prefabs/Player.prefab",
+            "position": [0, 5, 0],
+            "rotation": [0, 0, 0],
+            "scale": [1, 1, 1]
         }
-    ],
-    "lighting": {
-        "ambientLight": [1, 1, 1, 0.3],
-        "mainLight": {
-            "direction": [1, 1, 1],
-            "color": [1, 1, 1, 1],
-            "intensity": 1.0
-        }
-    }
+    ]
 }

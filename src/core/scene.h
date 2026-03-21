@@ -10,6 +10,7 @@
 #include "core/components/mesh_component.h"
 #include "core/components/model_component.h"
 #include "core/components/material_component.h"
+#include "components/mesh_renderer_component.h"
 
 namespace Haruka
 {
@@ -29,6 +30,10 @@ namespace Haruka
         std::vector<int> childrenIndices;
         
         std::shared_ptr<MaterialComponent> material;
+        std::shared_ptr<MeshRendererComponent> meshRenderer;
+        
+        nlohmann::json properties;
+        std::vector<SceneObject> children;
         
         glm::mat4 getWorldTransform(const Scene* scene) const;
         glm::dvec3 getWorldPosition(const Scene* scene) const;
@@ -65,5 +70,8 @@ namespace Haruka
         std::vector<SceneObject> objects;
         std::string initializerPath;
 
+        SceneObject parseSceneObject(const nlohmann::json& o);
+        void loadPrefabComponents(const std::string& prefabPath, SceneObject& obj);
+        void executeInitializer(const std::string& scenePath);
     };
 }

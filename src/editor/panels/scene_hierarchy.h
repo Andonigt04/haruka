@@ -14,6 +14,8 @@ public:
     void setScene(Haruka::Scene* scene);
     void setCommandHistory(CommandHistory* history);
     void onImGuiRender();
+
+    std::string currentProjectPath;
     
     // Callback cuando selecciona un objeto
     void setOnObjectSelectedByIndex(std::function<void(int)> cb) {
@@ -30,6 +32,8 @@ private:
     CommandHistory* commandHistory = nullptr;
     int selectedObjectIndex = -1;
     
+    void setProjectPath(const std::string& path) { currentProjectPath = path; }
+    
     void renderObjectNode(int index);
     void reparentObject(int childIndex, int newParentIndex);
     void duplicateObject(int index);
@@ -37,4 +41,7 @@ private:
     
     std::function<void(int)> onObjectSelectedByIndex;
     std::function<void(const std::string&)> onObjectSelectedByName;
+
+    void renderChildObject(Haruka::SceneObject& child, size_t index);
+    void showContextMenuChild(Haruka::SceneObject& child);
 };

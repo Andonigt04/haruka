@@ -208,18 +208,11 @@ void ViewportPanel::renderScene() {
     renderTarget->bindForWriting();
     glViewport(0, 0, width, height);
     glEnable(GL_DEPTH_TEST);
-    glClearColor(0.2f, 0.3f, 0.3f, 1.0f);
+    glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     if (!sceneShader) {
-        sceneShader = std::make_unique<Shader>("shaders/simple.vert", "shaders/light_cube.frag");
-    }
-
-    if (!cubeMesh) {
-        std::vector<glm::vec3> verts, norms;
-        std::vector<unsigned int> indices;
-        PrimitiveShapes::createCube(1.0f, verts, norms, indices);
-        cubeMesh = std::make_unique<SimpleMesh>(verts, norms, indices);
+        sceneShader = std::make_unique<Shader>("shaders/simple.vert", "shaders/pbr.frag");
     }
 
     glm::mat4 proj = glm::perspective(glm::radians(45.0f), (float)width / (float)height, 0.1f, 1000.0f);
@@ -231,6 +224,25 @@ void ViewportPanel::renderScene() {
     sceneShader->use();
     sceneShader->setMat4("projection", proj);
     sceneShader->setMat4("view", view);
+
+    // Configurar luces
+    std::vector<glm::vec3> lights = {
+        glm::vec3(10.0f, 10.0f, 10.0f),
+        glm::vec3(-10.0f, 5.0f, -10.0f)
+    };
+    std::vector<glm::vec3> lightColors = {
+        glm::vec3(300.0f, 300.0f, 300.0f),
+        glm::vec3(150.0f, 150.0f, 150.0f)
+    };
+
+    sceneShader->setVec3("viewPos", camera->position);
+    sceneShader->setInt("numLights", lights.size());
+
+    for (size_t i = 0; i < lights.size() && i < 4; i++) {
+        std::string prefix = "lights[" + std::to_string(i) + "]";
+        sceneShader->setVec3(prefix + ".position", lights[i]);
+        sceneShader->setVec3(prefix + ".color", lightColors[i]);
+    }
 
     if (currentScene) {
         const auto& objects = currentScene->getObjects();
@@ -246,22 +258,57 @@ void ViewportPanel::renderScene() {
 
             sceneShader->setMat4("model", model);
             
-            if ((int)i == selectedObjectIndex) {
-                sceneShader->setVec3("lightColor", glm::vec3(1.0f, 1.0f, 0.0f));
+            // Aplicar material si existe
+            if (obj.material) {
+                sceneShader->setVec3("material.albedo", obj.material->albedo);
+                sceneShader->setFloat("material.roughness", obj.material->roughness);
+                sceneShader->setFloat("material.metallic", obj.material->metallic);
             } else {
-                sceneShader->setVec3("lightColor", glm::vec3(0.8f, 0.8f, 0.8f));
+                sceneShader->setVec3("material.albedo", glm::vec3(0.8f, 0.8f, 0.8f));
+                sceneShader->setFloat("material.roughness", 0.5f);
+                sceneShader->setFloat("material.metallic", 0.0f);
             }
-
-            if (obj.type == "Model" && !obj.modelPath.empty()) {
+            
+            // Renderizar con meshRenderer si existe
+            if (obj.meshRenderer) {
+                // Si es una luz, hacerla emisiva
+                if (obj.type == "Light") {
+                    glm::vec3 emissiveColor = obj.material ? obj.material->albedo : glm::vec3(1.0f, 1.0f, 0.0f);
+                    sceneShader->setVec3("albedo", emissiveColor);
+                    sceneShader->setFloat("roughness", 0.1f);
+                    sceneShader->setFloat("metallic", 0.0f);
+                    
+                    // Renderizar con brillo
+                    glDisable(GL_DEPTH_TEST);
+                    obj.meshRenderer->render(*sceneShader);
+                    glEnable(GL_DEPTH_TEST);
+                } else {
+                    // Objeto normal
+                    obj.meshRenderer->render(*sceneShader);
+                }
+                renderVertex_count += 100;
+            } else if (obj.type == "Model" && !obj.modelPath.empty()) {
                 Model* modelPtr = getOrLoadModel(obj.modelPath);
                 if (modelPtr) {
                     modelPtr->Draw(*sceneShader);
-                    renderVertex_count += 1000; 
+                    renderVertex_count += 1000;
                 } else {
+                    if (!cubeMesh) {
+                        std::vector<glm::vec3> verts, norms;
+                        std::vector<unsigned int> indices;
+                        PrimitiveShapes::createCube(1.0f, verts, norms, indices);
+                        cubeMesh = std::make_unique<SimpleMesh>(verts, norms, indices);
+                    }
                     cubeMesh->draw();
-                    renderVertex_count += 24; // Cubo = 24 vértices
+                    renderVertex_count += 24;
                 }
             } else {
+                if (!cubeMesh) {
+                    std::vector<glm::vec3> verts, norms;
+                    std::vector<unsigned int> indices;
+                    PrimitiveShapes::createCube(1.0f, verts, norms, indices);
+                    cubeMesh = std::make_unique<SimpleMesh>(verts, norms, indices);
+                }
                 cubeMesh->draw();
                 renderVertex_count += 24;
             }
@@ -270,7 +317,7 @@ void ViewportPanel::renderScene() {
     }
 
     renderGizmoAxes(view, proj);
-    renderDraw_calls += 3; // 3 ejes
+    renderDraw_calls += 3;
     
     renderTarget->unbind();
     

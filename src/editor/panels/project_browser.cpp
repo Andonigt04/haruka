@@ -291,6 +291,7 @@ void ProjectBrowserPanel::renderFileTree(const std::string& path, const std::str
                 if (ImGui::IsItemClicked()) {
                     selectedPath = item.path;
                     selectedExtension = item.extension;
+                    handleFileClick(item);
                 }
                 
                 renderFileContextMenu(item);
@@ -308,6 +309,22 @@ void ProjectBrowserPanel::renderFileTree(const std::string& path, const std::str
 
 void ProjectBrowserPanel::handleFileClick(const FileItem& item) {
     std::cout << "Selected: " << item.path << " (" << item.extension << ")" << std::endl;
+    
+    // Doble click en escenas
+    if (item.extension == "scene" && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+        if (currentScene) {
+            currentScene->load(item.path);
+            std::cout << "Loaded scene: " << item.name << std::endl;
+        }
+    }
+    
+    // Doble click en prefabs
+    if (item.extension == "prefab" && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+        if (currentScene) {
+            currentScene->load(item.path);
+            std::cout << "Loaded prefab: " << item.name << std::endl;
+        }
+    }
 }
 
 void ProjectBrowserPanel::showFilePreview(const FileItem& item) {

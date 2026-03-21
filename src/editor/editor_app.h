@@ -102,4 +102,6 @@ private:
 
     void compileProject();
     bool isProjectCompiling = false;
+
+    void exportGame();
 };

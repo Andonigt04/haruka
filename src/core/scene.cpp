@@ -6,6 +6,7 @@
 #include <iostream>
 #include <nlohmann/json.hpp>
 #include <dlfcn.h>
+#include "renderer/primitive_shapes.h"
 
 namespace Haruka {
 
@@ -89,84 +90,42 @@ bool Scene::load(const std::string& filepath) {
         if (j.contains("name")) sceneName = j["name"].get<std::string>();
         objects.clear();
 
-        // Descubrir inicializador
-        if (j.contains("initializer")) {
-            std::string initPath = j["initializer"].get<std::string>();
-            std::filesystem::path scenePath(filepath);
-            std::filesystem::path projectRoot = scenePath.parent_path().parent_path();
-            std::filesystem::path fullInitPath = projectRoot / initPath;
-            
-            initializerPath = fullInitPath.string();
-            std::cout << "Scene initializer discovered: " << initializerPath << std::endl;
-        }
+        // Detectar si es un prefab por extensión
+        std::string ext = filepath.substr(filepath.find_last_of(".") + 1);
+        bool isPrefab = (ext == "prefab");
 
-        if (j.contains("objects") && j["objects"].is_array()) {
-            for (const auto& o : j["objects"]) {
-                SceneObject obj;
-                obj.name = o.value("name", "");
-                obj.type = o.value("type", "");
-                obj.modelPath = o.value("modelPath", "");
-                if (o.contains("position") && o["position"].size() == 3)
-                    obj.position = {o["position"][0], o["position"][1], o["position"][2]};
-                if (o.contains("rotation") && o["rotation"].size() == 3)
-                    obj.rotation = {o["rotation"][0], o["rotation"][1], o["rotation"][2]};
-                if (o.contains("scale") && o["scale"].size() == 3)
-                    obj.scale = {o["scale"][0], o["scale"][1], o["scale"][2]};
-                if (o.contains("color") && o["color"].size() == 3)
-                    obj.color = {o["color"][0], o["color"][1], o["color"][2]};
-                obj.intensity = o.value("intensity", 1.0);
-                obj.parentIndex = o.value("parentIndex", -1);
-                if (o.contains("childrenIndices")) obj.childrenIndices = o["childrenIndices"].get<std::vector<int>>();
+        if (isPrefab) {
+            // Cargar componentes del prefab como objetos principales
+            if (j.contains("components") && j["components"].is_array()) {
+                for (const auto& comp : j["components"]) {
+                    SceneObject obj;
+                    obj.name = comp.value("type", "");
+                    obj.type = comp.value("type", "");
+                    obj.properties = comp;
 
-                if (o.contains("material")) {
-                    obj.material = std::make_shared<MaterialComponent>();
-                    obj.material->fromJSON(o["material"]);
+                    if (comp.contains("position") && comp["position"].size() == 3)
+                        obj.position = {comp["position"][0], comp["position"][1], comp["position"][2]};
+                    if (comp.contains("rotation") && comp["rotation"].size() == 3)
+                        obj.rotation = {comp["rotation"][0], comp["rotation"][1], comp["rotation"][2]};
+                    if (comp.contains("scale") && comp["scale"].size() == 3)
+                        obj.scale = {comp["scale"][0], comp["scale"][1], comp["scale"][2]};
+
+                    objects.push_back(obj);
                 }
-
-                objects.push_back(obj);
+            }
+        } else {
+            // Cargar escena normal
+            if (j.contains("objects") && j["objects"].is_array()) {
+                for (const auto& o : j["objects"]) {
+                    SceneObject obj = parseSceneObject(o);
+                    objects.push_back(obj);
+                }
             }
         }
 
-        // Ejecutar inicializador si existe
-        if (j.contains("initializer")) {
-            std::string initPath = j["initializer"].get<std::string>();
-            std::filesystem::path scenePath(filepath);
-            std::filesystem::path projectRoot = scenePath.parent_path().parent_path();
-            std::filesystem::path libPath = projectRoot / "build" / "libTestGameLogic.so";
-            
-            std::cout << "Loading initializer: " << libPath.string() << std::endl;
-            
-            void* handle = dlopen(libPath.c_str(), RTLD_LAZY);
-            if (handle) {
-                typedef void (*InitFunc)(Haruka::Scene*);
-                InitFunc initFunc = nullptr;
-                
-                const char* symbols[] = {
-                    "_ZN9GameLogic15GameInitializer14initializeGameEPN6Haruka5SceneE",
-                    "_ZN9GameLogic16GameInitializer16initializeGameEPN6Haruka5SceneE",
-                    "initializeGame",
-                    nullptr
-                };
-                
-                for (int i = 0; symbols[i] != nullptr; i++) {
-                    initFunc = (InitFunc)dlsym(handle, symbols[i]);
-                    if (initFunc) {
-                        std::cout << "Found symbol: " << symbols[i] << std::endl;
-                        break;
-                    }
-                }
-                
-                if (initFunc) {
-                    initFunc(this);
-                    std::cout << "Initializer executed successfully" << std::endl;
-                } else {
-                    std::cerr << "Initializer function not found" << std::endl;
-                }
-                
-                dlclose(handle);
-            } else {
-                std::cerr << "Could not load initializer library: " << dlerror() << std::endl;
-            }
+        // Ejecutar inicializador solo en escenas
+        if (!isPrefab) {
+            executeInitializer(filepath);
         }
 
         in.close();
@@ -177,4 +136,163 @@ bool Scene::load(const std::string& filepath) {
     }
 }
 
-} // namespace Haruka
+SceneObject Scene::parseSceneObject(const nlohmann::json& o) {
+    SceneObject obj;
+    obj.name = o.value("name", "");
+    obj.type = o.value("type", "");
+    obj.modelPath = o.value("modelPath", "");
+    
+    if (o.contains("position") && o["position"].size() == 3)
+        obj.position = {o["position"][0], o["position"][1], o["position"][2]};
+    if (o.contains("rotation") && o["rotation"].size() == 3)
+        obj.rotation = {o["rotation"][0], o["rotation"][1], o["rotation"][2]};
+    if (o.contains("scale") && o["scale"].size() == 3)
+        obj.scale = {o["scale"][0], o["scale"][1], o["scale"][2]};
+    if (o.contains("color") && o["color"].size() == 3)
+        obj.color = {o["color"][0], o["color"][1], o["color"][2]};
+    
+    obj.intensity = o.value("intensity", 1.0);
+    obj.parentIndex = o.value("parentIndex", -1);
+    if (o.contains("childrenIndices")) 
+        obj.childrenIndices = o["childrenIndices"].get<std::vector<int>>();
+
+    // Cargar material
+    if (o.contains("material")) {
+        obj.material = std::make_shared<MaterialComponent>();
+        obj.material->fromJSON(o["material"]);
+    }
+
+    // Cargar meshRenderer
+    if (o.contains("meshRenderer")) {
+        obj.meshRenderer = std::make_shared<MeshRendererComponent>();
+        std::string meshType = o["meshRenderer"].value("meshType", "cube");
+        
+        std::vector<glm::vec3> verts, norms;
+        std::vector<unsigned int> indices;
+        
+        if (meshType == "sphere") {
+            float radius = o["meshRenderer"].value("radius", 1.0f);
+            int segments = o["meshRenderer"].value("segments", 32);
+            PrimitiveShapes::createSphere(radius, segments, segments, verts, norms, indices);
+        } 
+        else if (meshType == "cube") {
+            float size = o["meshRenderer"].value("size", 1.0f);
+            PrimitiveShapes::createCube(size, verts, norms, indices);
+        }
+        
+        if (!verts.empty()) {
+            obj.meshRenderer->setMesh(verts, norms, indices);
+        }
+    }
+
+    // Detectar tipo por extensión si tiene path (Prefab)
+    if (o.contains("path")) {
+        std::string filePath = o.value("path", "");
+        std::string fileExt = filePath.substr(filePath.find_last_of(".") + 1);
+        
+        if (fileExt == "prefab") {
+            obj.type = "Prefab";
+            loadPrefabComponents(filePath, obj);
+        } else if (fileExt == "scene") {
+            obj.type = "Scene";
+        }
+    }
+    // Si tipo es Prefab pero sin path, buscar por nombre
+    else if (obj.type == "Prefab") {
+        std::string prefabPath = "Assets/Prefabs/" + obj.name + ".prefab";
+        loadPrefabComponents(prefabPath, obj);
+    }
+
+    return obj;
+}
+
+void Scene::loadPrefabComponents(const std::string& prefabPath, SceneObject& obj) {
+    std::ifstream prefabFile(prefabPath);
+    if (!prefabFile.is_open()) return;
+
+    nlohmann::json prefabData;
+    prefabFile >> prefabData;
+    prefabFile.close();
+    
+    if (prefabData.contains("components")) {
+        for (const auto& comp : prefabData["components"]) {
+            SceneObject child;
+            child.name = comp.value("type", "");
+            child.type = comp.value("type", "");
+            child.properties = comp;
+            child.modelPath = "";
+            
+            // Heredar posición/rotación/escala del prefab padre
+            if (comp.contains("position") && comp["position"].size() == 3) {
+                child.position = {comp["position"][0], comp["position"][1], comp["position"][2]};
+            } else {
+                child.position = obj.position;
+            }
+            
+            if (comp.contains("rotation") && comp["rotation"].size() == 3) {
+                child.rotation = {comp["rotation"][0], comp["rotation"][1], comp["rotation"][2]};
+            } else {
+                child.rotation = obj.rotation;
+            }
+            
+            if (comp.contains("scale") && comp["scale"].size() == 3) {
+                child.scale = {comp["scale"][0], comp["scale"][1], comp["scale"][2]};
+            } else {
+                child.scale = obj.scale;
+            }
+            
+            obj.children.push_back(child);
+        }
+    }
+}
+
+void Scene::executeInitializer(const std::string& scenePath) {
+    std::ifstream in(scenePath);
+    if (!in.is_open()) return;
+    
+    nlohmann::json j;
+    in >> j;
+    in.close();
+
+    if (!j.contains("initializer")) return;
+
+    std::filesystem::path scenePath_fs(scenePath);
+    std::filesystem::path projectRoot = scenePath_fs.parent_path().parent_path();
+    std::filesystem::path libPath = projectRoot / "build" / "libTestGameLogic.so";
+    
+    std::cout << "Loading initializer: " << libPath.string() << std::endl;
+    
+    void* handle = dlopen(libPath.c_str(), RTLD_LAZY);
+    if (!handle) {
+        std::cerr << "Could not load initializer library: " << dlerror() << std::endl;
+        return;
+    }
+
+    typedef void (*InitFunc)(Haruka::Scene*);
+    InitFunc initFunc = nullptr;
+    
+    const char* symbols[] = {
+        "_ZN9GameLogic15GameInitializer14initializeGameEPN6Haruka5SceneE",
+        "_ZN9GameLogic16GameInitializer16initializeGameEPN6Haruka5SceneE",
+        "initializeGame",
+        nullptr
+    };
+    
+    for (int i = 0; symbols[i] != nullptr; i++) {
+        initFunc = (InitFunc)dlsym(handle, symbols[i]);
+        if (initFunc) {
+            std::cout << "Found symbol: " << symbols[i] << std::endl;
+            initFunc(this);
+            std::cout << "Initializer executed successfully" << std::endl;
+            break;
+        }
+    }
+
+    if (!initFunc) {
+        std::cerr << "Initializer function not found" << std::endl;
+    }
+    
+    dlclose(handle);
+}
+
+}

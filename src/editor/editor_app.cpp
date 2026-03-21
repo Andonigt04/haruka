@@ -2,6 +2,7 @@
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
 #include <nfd.h>
+#include <dlfcn.h>
 
 #include "editor_app.h"
 #include "core/camera.h"
@@ -188,7 +189,6 @@ void EditorApplication::render() {
     int display_w, display_h;
     glfwGetFramebufferSize(window, &display_w, &display_h);
     glViewport(0, 0, display_w, display_h);
-    glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
 
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
@@ -362,9 +362,15 @@ void EditorApplication::showMenuBar() {
                 saveScene(currentScenePath);
             }
 
+            ImGui::Separator();
+            
             if (ImGui::MenuItem("Save Scene As...")) {
                 std::snprintf(saveAsBuffer, sizeof(saveAsBuffer), "%s", currentScenePath.c_str());
                 showSaveAsPopup = true;
+            }
+
+            if (ImGui::MenuItem("Export Game")) {
+                exportGame();
             }
 
             ImGui::Separator();
@@ -474,14 +480,13 @@ void EditorApplication::loadScene(const std::string& path) {
 void EditorApplication::enterPlayMode() {
     if (isPlayMode || !currentProject) return;
     
-    editorScene = currentScene.get();
     isPlayMode = true;
     playModeTime = 0.0f;
     
     viewportPanel.setPlayMode(true);
     inspectorPanel.setPlayMode(true);
 
-    // Cargar escena de inicio del proyecto
+    // Cargar escena de inicio
     std::string projectPath = currentProject->getPath();
     std::string projectConfigPath = projectPath + "/project.hrk";
     
@@ -500,16 +505,40 @@ void EditorApplication::enterPlayMode() {
             }
             
             currentScene->load(fullScenePath);
-            std::cout << "▶ Play Mode started with scene: " << startScenePath << std::endl;
+            std::cout << "Scene loaded: " << startScenePath << std::endl;
         }
     }
 
-    // Obtener cámara del juego
-    extern Camera* g_gameCamera;
-    if (g_gameCamera) {
-        viewportPanel.setCamera(g_gameCamera);
-        std::cout << "Game camera set to viewport" << std::endl;
+    // Cargar la librería dinámicamente
+    std::string libPath = projectPath + "/build/libTestGameLogic.so";
+    void* handle = dlopen(libPath.c_str(), RTLD_LAZY);
+    
+    if (handle) {
+        // Obtener la función inicializadora
+        typedef void (*InitFunc)(Haruka::Scene*);
+        InitFunc initGame = (InitFunc)dlsym(handle, "_ZN9GameLogic15GameInitializer14initializeGameEPN6Haruka5SceneE");
+        
+        if (initGame) {
+            initGame(currentScene.get());
+            std::cout << "✓ Game initializer executed" << std::endl;
+        }
+        
+        // Obtener la cámara del juego
+        Camera** cameraPtr = (Camera**)dlsym(handle, "g_gameCamera");
+        if (cameraPtr && *cameraPtr) {
+            viewportPanel.setCamera(*cameraPtr);
+            std::cout << "✓ Game camera set from project library" << std::endl;
+        } else {
+            std::cout << "⚠ g_gameCamera not found, using editor camera" << std::endl;
+        }
+        
+        // No cerrar la librería, mantenerla cargada
+        // dlclose(handle);
+    } else {
+        std::cerr << "✗ Could not load project library: " << dlerror() << std::endl;
     }
+
+    std::cout << "▶ Play Mode started" << std::endl;
 }
 
 void EditorApplication::exitPlayMode() {
@@ -614,4 +643,41 @@ void EditorApplication::compileProject() {
     }
     
     isProjectCompiling = false;
+}
+
+void EditorApplication::exportGame() {
+    if (!currentProject) {
+        std::cerr << "No project loaded" << std::endl;
+        return;
+    }
+
+    std::string projectPath = currentProject->getPath();
+    std::string exportPath = projectPath + "/export";
+    
+    // Crear directorio export
+    std::filesystem::create_directories(exportPath);
+    std::filesystem::create_directories(exportPath + "/scenes");
+    std::filesystem::create_directories(exportPath + "/assets");
+    
+    // Copiar escenas
+    std::filesystem::copy(projectPath + "/scenes", exportPath + "/scenes", 
+        std::filesystem::copy_options::overwrite_existing | 
+        std::filesystem::copy_options::recursive);
+    
+    // Copiar assets
+    std::filesystem::copy(projectPath + "/assets", exportPath + "/assets", 
+        std::filesystem::copy_options::overwrite_existing | 
+        std::filesystem::copy_options::recursive);
+    
+    // Copiar librería
+    std::filesystem::copy(projectPath + "/build/libTestGameLogic.so", 
+        exportPath + "/libTestGameLogic.so", 
+        std::filesystem::copy_options::overwrite_existing);
+    
+    // Copiar configuración
+    std::filesystem::copy(projectPath + "/project.hrk", 
+        exportPath + "/project.hrk", 
+        std::filesystem::copy_options::overwrite_existing);
+    
+    std::cout << "✓ Game exported to: " << exportPath << std::endl;
 }
