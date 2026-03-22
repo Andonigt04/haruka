@@ -98,22 +98,32 @@ void Character::processInput(GLFWwindow* window, float deltaTime) {
 }
 
 void Character::moveForward(float amount) {
-    if (physicsBody) {
-        glm::dvec3 move = glm::dvec3(forward.x, 0, forward.z) * (double)amount;
-        physicsBody->velocity.x = move.x;
-        physicsBody->velocity.z = move.z;
-    } else {
+    if (flightMode) {
+        // En modo vuelo, movimiento directo sin restricciones
         position += glm::dvec3(forward) * (double)amount;
+    } else {
+        // En tierra, movimiento horizontal con fricción
+        glm::vec3 horizontalForward = glm::normalize(glm::vec3(forward.x, 0, forward.z));
+        if (glm::length(horizontalForward) > 0) {
+            glm::dvec3 move = glm::dvec3(horizontalForward) * (double)amount;
+            position.x += move.x;
+            position.z += move.z;
+        }
     }
 }
 
 void Character::moveRight(float amount) {
-    if (physicsBody) {
-        glm::dvec3 move = glm::dvec3(right.x, 0, right.z) * (double)amount;
-        physicsBody->velocity.x = move.x;
-        physicsBody->velocity.z = move.z;
-    } else {
+    if (flightMode) {
+        // En modo vuelo, movimiento directo sin restricciones
         position += glm::dvec3(right) * (double)amount;
+    } else {
+        // En tierra, movimiento horizontal con fricción
+        glm::vec3 horizontalRight = glm::normalize(glm::vec3(right.x, 0, right.z));
+        if (glm::length(horizontalRight) > 0) {
+            glm::dvec3 move = glm::dvec3(horizontalRight) * (double)amount;
+            position.x += move.x;
+            position.z += move.z;
+        }
     }
 }
 

@@ -4,6 +4,7 @@
 #include "core/project.h"
 #include "core/scene.h"
 #include "core/camera.h"
+#include "core/game_interface.h"
 #include "panels/scene_hierarchy.h"
 #include "panels/inspector.h"
 #include "panels/project_browser.h"
@@ -87,6 +88,10 @@ private:
     float playModeTime = 0.0f;
 
     std::string playModeBackupPath = "/tmp/haruka_playmode_backup.scene";
+    
+    // Dynamic game interface (single unified callback system)
+    void* gameLibHandle = nullptr;
+    Haruka::GameInterface* gameInterface = nullptr;
 
     CommandHistory commandHistory;
     

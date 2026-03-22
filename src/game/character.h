@@ -59,6 +59,9 @@ public:
     bool isSprinting() const { return sprinting; }
     bool isCrouching() const { return crouched; }
     bool isLocalPlayer() const { return localPlayer; }
+    bool isInFlightMode() const { return flightMode; }
+    
+    void setFlightMode(bool enabled) { flightMode = enabled; }
 
 private:
     std::string userId;
@@ -88,6 +91,7 @@ private:
     bool grounded = false;
     bool sprinting = false;
     bool crouched = false;
+    bool flightMode = false;
     
     float standingHeight = 1.8f;
     float crouchingHeight = 1.2f;

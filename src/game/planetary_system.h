@@ -35,6 +35,11 @@ public:
     void setTimeScale(double scale) { timeScale = scale; }
     double getTimeScale() const { return timeScale; }
     
+    // Física Planetaria
+    double calculateGravityAtPosition(const glm::dvec3& worldPos, glm::dvec3& gravityDirection);
+    void applyPlanetaryPhysics(double dt);
+    void setPlayerFlightMode(bool enabled);
+    
 private:
     Scene* scene = nullptr;
     WorldSystem* worldSystem = nullptr;

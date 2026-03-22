@@ -35,7 +35,7 @@
         {
             "name": "Player",
             "type": "Character",
-            "position": [0, 30000, 0],
+            "position": [0, 7000, 0],
             "rotation": [0, 0, 0],
             "scale": [10, 15, 10],
             "color": [0.2, 0.4, 0.8],

@@ -16,8 +16,8 @@
 #include <cstdlib>
 #include <filesystem>
 #include <chrono>
-
-Camera* g_gameCamera = nullptr;
+#include <iomanip>
+#include <sstream>
 
 EditorApplication::EditorApplication() : window(nullptr) {}
 
@@ -178,6 +178,11 @@ void EditorApplication::updatePlayMode(float deltaTime) {
     if (!isPlayMode) return;
     
     playModeTime += deltaTime;
+    
+    // Llamar al callback de actualización si existe
+    if (gameInterface && gameInterface->onUpdate) {
+        gameInterface->onUpdate(window, deltaTime);
+    }
 }
 
 void EditorApplication::render() {
@@ -494,29 +499,37 @@ void EditorApplication::enterPlayMode() {
 
     // Cargar la librería dinámicamente
     std::string libPath = projectPath + "/build/libTestGameLogic.so";
-    void* handle = dlopen(libPath.c_str(), RTLD_LAZY);
+    gameLibHandle = dlopen(libPath.c_str(), RTLD_LAZY);
     
-    if (handle) {
-        // Obtener la función inicializadora
-        typedef void (*InitFunc)(Haruka::Scene*);
-        InitFunc initGame = (InitFunc)dlsym(handle, "_ZN9GameLogic15GameInitializer14initializeGameEPN6Haruka5SceneE");
+    if (gameLibHandle) {
+        // Obtener el interfaz de juego (COMPLETAMENTE GENÉRICO)
+        typedef Haruka::GameInterface* (*GetGameInterfaceFunc)();
+        GetGameInterfaceFunc getGameInterface = (GetGameInterfaceFunc)dlsym(gameLibHandle, "getGameInterface");
         
-        if (initGame) {
-            initGame(currentScene.get());
-            std::cout << "✓ Game initializer executed" << std::endl;
-        }
-        
-        // Obtener la cámara del juego
-        Camera** cameraPtr = (Camera**)dlsym(handle, "g_gameCamera");
-        if (cameraPtr && *cameraPtr) {
-            viewportPanel.setCamera(*cameraPtr);
-            std::cout << "✓ Game camera set from project library" << std::endl;
+        if (getGameInterface) {
+            gameInterface = getGameInterface();
+            
+            if (gameInterface) {
+                std::cout << "✓ Game interface loaded: " << (gameInterface->name ? gameInterface->name : "Unknown") << std::endl;
+                
+                // Ejecutar inicialización
+                if (gameInterface->onInit) {
+                    gameInterface->onInit(currentScene.get());
+                    std::cout << "✓ Game initialized" << std::endl;
+                }
+                
+                // Establecer cámara
+                if (gameInterface->getCamera) {
+                    Camera* gameCamera = gameInterface->getCamera();
+                    if (gameCamera) {
+                        viewportPanel.setCamera(gameCamera);
+                        std::cout << "✓ Game camera set" << std::endl;
+                    }
+                }
+            }
         } else {
-            std::cout << "⚠ g_gameCamera not found, using editor camera" << std::endl;
+            std::cout << "⚠ getGameInterface not found, project may not implement it" << std::endl;
         }
-        
-        // No cerrar la librería, mantenerla cargada
-        // dlclose(handle);
     } else {
         std::cerr << "✗ Could not load project library: " << dlerror() << std::endl;
     }
@@ -528,6 +541,19 @@ void EditorApplication::exitPlayMode() {
     if (!isPlayMode) return;
     
     isPlayMode = false;
+    
+    // Ejecutar shutdown del juego si existe
+    if (gameInterface && gameInterface->onShutdown) {
+        gameInterface->onShutdown();
+    }
+    
+    gameInterface = nullptr;
+    
+    // Cerrar librería si está cargada
+    if (gameLibHandle) {
+        dlclose(gameLibHandle);
+        gameLibHandle = nullptr;
+    }
 
     if (std::filesystem::exists(playModeBackupPath)) {
         currentScene->load(playModeBackupPath);
@@ -550,21 +576,162 @@ void EditorApplication::createNewProject(const std::string& name, const std::str
     try {
         // Crear estructura del proyecto
         std::string projectPath = basePath + name;
-        std::filesystem::create_directories(projectPath);
+        std::filesystem::create_directories(projectPath + "/scripts");
         std::filesystem::create_directories(projectPath + "/scenes");
         std::filesystem::create_directories(projectPath + "/assets");
         std::filesystem::create_directories(projectPath + "/prefabs");
 
         // Crear archivo project.hrk (config JSON)
+        // Obtener fecha actual
+        auto now = std::chrono::system_clock::now();
+        auto time = std::chrono::system_clock::to_time_t(now);
+        std::stringstream dateStream;
+        dateStream << std::put_time(std::localtime(&time), "%Y-%m-%d %H:%M:%S");
+        
         nlohmann::json projectConfig;
         projectConfig["name"] = name;
-        projectConfig["version"] = "1.0.0";
-        projectConfig["created"] = "2026-03-11";
+        projectConfig["version"] = "0.1.0";
+        projectConfig["created"] = dateStream.str();
+        projectConfig["startScene"] = "scenes/main.scene";
 
         std::ofstream configFile(projectPath + "/project.hrk");
         if (configFile.is_open()) {
             configFile << projectConfig.dump(2);
             configFile.close();
+        }
+
+        // Crear CMakeLists.txt
+        std::string cmakelists = R"(cmake_minimum_required(VERSION 3.14)
+project()" + name + R"()
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# Rutas
+set(ENGINE_BUILD_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../build")
+set(ENGINE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../..")
+
+# Buscar librería del engine
+find_library(HarukaEngineLib_LIBRARY 
+    NAMES HarukaEngineLib
+    PATHS 
+        ${ENGINE_BUILD_DIR}
+        ${ENGINE_BUILD_DIR}/lib
+    NO_DEFAULT_PATH
+)
+
+if(NOT HarukaEngineLib_LIBRARY)
+    message(FATAL_ERROR "HarukaEngineLib not found. Compile the engine first.")
+endif()
+
+find_path(HarukaEngineLib_INCLUDE_DIR NAMES core/scene.h PATHS ${ENGINE_ROOT}/src NO_DEFAULT_PATH REQUIRED)
+
+include_directories(
+    ${HarukaEngineLib_INCLUDE_DIR}
+    ${ENGINE_ROOT}/third_party/glm
+    ${ENGINE_ROOT}/third_party/json/include
+)
+
+# Compilar scripts del proyecto
+file(GLOB_RECURSE PROJECT_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/scripts/*.cpp"
+)
+
+add_library()" + name + R"(Logic SHARED ${PROJECT_SOURCES})
+target_link_libraries()" + name + R"(Logic PRIVATE ${HarukaEngineLib_LIBRARY})
+)";
+
+        std::ofstream cmakeFile(projectPath + "/CMakeLists.txt");
+        if (cmakeFile.is_open()) {
+            cmakeFile << cmakelists;
+            cmakeFile.close();
+        }
+
+        // Crear init.h
+        std::string initH = R"(#pragma once
+
+#include "core/scene.h"
+#include "core/game_interface.h"
+#include <memory>
+
+namespace GameLogic {
+    // Definir el interfaz de juego
+    extern Haruka::GameInterface gameInterface;
+}
+)";
+
+        std::ofstream initHFile(projectPath + "/scripts/init.h");
+        if (initHFile.is_open()) {
+            initHFile << initH;
+            initHFile.close();
+        }
+
+        // Crear init.cpp base
+        std::string initCpp = R"(#include "init.h"
+#include <iostream>
+
+// Variables globales
+Haruka::Camera* g_gameCamera = nullptr;
+
+// Callbacks del juego
+void gameOnInit(Haruka::Scene* scene) {
+    if (!scene) return;
+    std::cout << "Game initialized" << std::endl;
+}
+
+void gameOnUpdate(GLFWwindow* window, float deltaTime) {
+    // Implementar lógica del juego aquí
+}
+
+Haruka::Camera* gameGetCamera() {
+    return g_gameCamera;
+}
+
+void gameOnShutdown() {
+    std::cout << "Game shutting down..." << std::endl;
+}
+
+// Interfaz de juego - EXPORT para que el editor lo cargue
+namespace GameLogic {
+    Haruka::GameInterface gameInterface = {
+        .onInit = gameOnInit,
+        .onUpdate = gameOnUpdate,
+        .onShutdown = gameOnShutdown,
+        .getCamera = gameGetCamera,
+        .getScene = nullptr,
+        .name = ")" + name + R"(",
+        .version = "1.0.0"
+    };
+}
+
+// Función que el editor carga dinámicamente
+extern "C" {
+    Haruka::GameInterface* getGameInterface() {
+        return &GameLogic::gameInterface;
+    }
+}
+)";
+
+        std::ofstream initCppFile(projectPath + "/scripts/init.cpp");
+        if (initCppFile.is_open()) {
+            initCppFile << initCpp;
+            initCppFile.close();
+        }
+
+        // Crear game_globals.h
+        std::string gameGlobals = R"(#pragma once
+
+#include "core/camera.h"
+#include "game/character.h"
+
+// Globales del juego
+extern Haruka::Camera* g_gameCamera;
+)";
+
+        std::ofstream globalsFile(projectPath + "/scripts/game_globals.h");
+        if (globalsFile.is_open()) {
+            globalsFile << gameGlobals;
+            globalsFile.close();
         }
 
         // Crear escena por defecto

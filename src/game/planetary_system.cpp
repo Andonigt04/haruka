@@ -84,6 +84,7 @@ void PlanetarySystem::update(double dt) {
     integrateOrbits(dt);
     updateWorldOrigin();
     syncSceneWithOrbits();
+    applyPlanetaryPhysics(dt);
     updatePlayerOnPlanet();
     
     if (player) {
@@ -189,8 +190,99 @@ void PlanetarySystem::updatePlayerOnPlanet() {
     }
 }
 
-void PlanetarySystem::render() {
-    // Renderizado a través de sincronización con escena
+// ========== PHYSICS SYSTEM ==========
+
+double PlanetarySystem::calculateGravityAtPosition(const glm::dvec3& worldPos, glm::dvec3& gravityDirection) {
+    double totalAcceleration = 0.0;
+    gravityDirection = glm::dvec3(0.0);
+    
+    // Calcular gravedad de cada cuerpo celeste
+    for (const auto& bodyName : bodyNames) {
+        auto body = findBody(bodyName);
+        if (!body) continue;
+        
+        glm::dvec3 bodyWorldPos = body->worldPos;
+        glm::dvec3 toBody = bodyWorldPos - worldPos;
+        double distance = glm::length(toBody);
+        
+        // No aplicar gravedad si estamos dentro del planeta
+        if (distance < body->radius * Units::KM) {
+            distance = body->radius * Units::KM;
+        }
+        
+        // F = G * M / r²
+        double acceleration = (G * body->mass) / (distance * distance);
+        
+        // Acumular dirección ponderada
+        if (distance > 0) {
+            gravityDirection += glm::normalize(toBody) * acceleration;
+            totalAcceleration += acceleration;
+        }
+    }
+    
+    return glm::length(gravityDirection);
+}
+
+void PlanetarySystem::applyPlanetaryPhysics(double dt) {
+    if (!player || !worldSystem) return;
+    
+    // Si el jugador está en modo vuelo/nave, desactivar gravedad
+    if (player->isInFlightMode()) {
+        return;
+    }
+    
+    glm::dvec3 playerPos = player->getPosition();
+    glm::dvec3 gravityDir;
+    double gravityMagnitude = calculateGravityAtPosition(playerPos, gravityDir);
+    
+    // Aplicar gravedad al jugador
+    glm::dvec3 currentVelocity = player->getVelocity();
+    
+    // Velocidad terminal (~50 m/s = 50 unidades km/s)
+    double terminalVelocity = 50.0 / Units::KM;
+    double currentSpeed = glm::length(currentVelocity);
+    
+    glm::dvec3 gravityAcceleration = gravityDir * gravityMagnitude * dt * timeScale;
+    
+    // Limitar a velocidad terminal
+    if (currentSpeed > terminalVelocity) {
+        gravityAcceleration = glm::normalize(currentVelocity) * terminalVelocity;
+    } else {
+        currentVelocity += gravityAcceleration;
+    }
+    
+    player->setVelocity(currentVelocity);
+    
+    // Raycast para detectar colisión con terreno
+    auto closestPlanet = getClosestPlanet();
+    if (closestPlanet) {
+        glm::dvec3 planetPos = glm::dvec3(closestPlanet->localPos.x, closestPlanet->localPos.y, closestPlanet->localPos.z);
+        glm::dvec3 planetToPlayer = playerPos - planetPos;
+        double distToPlanet = glm::length(planetToPlayer);
+        double surfaceDistance = closestPlanet->radius + 0.1; // 100 metros sobre la superficie
+        
+        // Si está por debajo de la superficie, "aterrar"
+        if (distToPlanet < surfaceDistance) {
+            glm::dvec3 surfacePos = planetPos + glm::normalize(planetToPlayer) * surfaceDistance;
+            player->setPosition(surfacePos);
+            
+            // Detener velocidad que entra en el planeta
+            glm::dvec3 velocityNormal = glm::normalize(currentVelocity);
+            glm::dvec3 surfaceNormal = glm::normalize(planetToPlayer);
+            double inwardVelocity = glm::dot(velocityNormal, -surfaceNormal);
+            
+            if (inwardVelocity > 0) {
+                currentVelocity -= velocityNormal * inwardVelocity * 0.8; // Friction
+                player->setVelocity(currentVelocity);
+            }
+        }
+    }
+}
+
+void PlanetarySystem::setPlayerFlightMode(bool enabled) {
+    if (player) {
+        player->setFlightMode(enabled);
+    }
 }
 
 }
