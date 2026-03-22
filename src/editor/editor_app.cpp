@@ -1,20 +1,22 @@
 #define IMGUI_IMPL_OPENGL_LOADER_GLAD
-#include <glad/glad.h>
-#include <GLFW/glfw3.h>
-#include <nfd.h>
-#include <dlfcn.h>
 
 #include "editor_app.h"
 #include "core/camera.h"
+
+#include <glad/glad.h>
+#include <GLFW/glfw3.h>
 #include <glm/glm.hpp>
 #include <imgui.h>
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
+#include <nfd.h>
+#include <dlfcn.h>
+
 #include <iostream>
 #include <cstdlib>
 #include <filesystem>
+#include <chrono>
 
-// Definición débil para evitar linker error
 Camera* g_gameCamera = nullptr;
 
 EditorApplication::EditorApplication() : window(nullptr) {}
@@ -24,6 +26,7 @@ EditorApplication::~EditorApplication() {
 }
 
 void EditorApplication::init() {
+    // ===== GLFW & GLAD Setup =====
     if (!glfwInit()) {
         throw std::runtime_error("Failed to initialize GLFW");
     }
@@ -44,6 +47,7 @@ void EditorApplication::init() {
         throw std::runtime_error("Failed to initialize GLAD");
     }
 
+    // ===== ImGui Setup =====
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
@@ -52,7 +56,6 @@ void EditorApplication::init() {
     io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
 
     ImGui::StyleColorsDark();
-
     ImGuiStyle& style = ImGui::GetStyle();
     if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
         style.WindowRounding = 0.0f;
@@ -62,22 +65,25 @@ void EditorApplication::init() {
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init("#version 460");
 
+    // ===== Scene & Project Setup =====
     currentScene = std::make_unique<Haruka::Scene>("Untitled");
     currentProject = std::make_unique<Haruka::Project>();
-    currentScenePath = "scenes/Untitled.scene";
+    currentFile.path = "scenes/Untitled.scene";
+    currentFile.name = "Untitled";
+    currentFile.isPrefab = false;
+
+    // ===== Panels Setup =====
     sceneHierarchyPanel.setScene(currentScene.get());
     sceneHierarchyPanel.setCommandHistory(&commandHistory);
     inspectorPanel.setScene(currentScene.get());
     inspectorPanel.setCommandHistory(&commandHistory);
-    inspectorPanel.setOnSceneChanged([this]() {
-        sceneDirty = true;
-    });
+    inspectorPanel.setOnSceneChanged([this]() { sceneDirty = true; });
     projectBrowserPanel.setProject(currentProject.get());
     projectBrowserPanel.setScene(currentScene.get());
     materialEditorPanel.setScene(currentScene.get());
     
+    // ===== Camera Setup =====
     viewportCamera = std::make_unique<Camera>(Haruka::WorldPos(0.0f, 5.0f, 15.0f));
-
     glm::quat initialOrientation = glm::angleAxis(glm::radians(0.0f), glm::vec3(0, 1, 0));
     viewportCamera->orientation = initialOrientation;
 
@@ -90,26 +96,14 @@ void EditorApplication::init() {
     editorCamRot = viewportCamera->orientation;
     viewportPanel.setPlayMode(false);
 
-    projectBrowserPanel.setOnSceneLoad([this](const std::string& sceneName) {
-        if (!currentProject) return;
-        const std::string path = currentProject->getPath() + "/scenes/" + sceneName + ".scene";
-
+    // ===== Callbacks Setup =====
+    projectBrowserPanel.setOnFileLoad([this](const std::string& path) {
         if (sceneDirty) {
             pendingSceneToLoad = path;
             showUnsavedChangesPopup = true;
-            return;
+        } else {
+            loadFile(path);
         }
-        loadScene(path);
-    });
-
-    projectBrowserPanel.setOnSceneSave([this](const std::string& sceneName) {
-        if (!currentProject) return;
-        currentScenePath = currentProject->getPath() + "/scenes/" + sceneName + ".scene";
-    });
-
-    projectBrowserPanel.setOnSceneNew([this](const std::string& sceneName) {
-        if (!currentProject) return;
-        currentScenePath = currentProject->getPath() + "/scenes/" + sceneName + ".scene";
     });
 
     sceneHierarchyPanel.setOnObjectSelectedByIndex([this](int index) {
@@ -120,12 +114,26 @@ void EditorApplication::init() {
         materialEditorPanel.setSelectedObject(name);
     });
 
-    // Capture cout & cerr
+    // ===== Stream Capture Setup =====
     coutCapture = std::make_unique<StreamCapture>(std::cout, &consolePanel, LogLevel::Info);
     cerrCapture = std::make_unique<StreamCapture>(std::cerr, &consolePanel, LogLevel::Error);
 
-    std::cout << "Haruka Editor initialized successfully" << std::endl;
-
+    // Initialize panels
+    settingsPanel.load();
+    
+    // Setup default scene object
+    if (currentScene) {
+        Haruka::SceneObject cube;
+        cube.name = "Cube_Default";
+        cube.type = "Cube";
+        cube.position = glm::dvec3(0, 0, 0);
+        cube.rotation = glm::dvec3(0, 0, 0);
+        cube.scale = glm::dvec3(1.0, 1.0, 1.0);
+        currentScene->addObject(cube);
+        std::cout << "✓ Default cube added to scene" << std::endl;
+    }
+    
+    std::cout << "✓ Haruka Editor initialized" << std::endl;
 }
 
 void EditorApplication::shutdown() {
@@ -133,11 +141,8 @@ void EditorApplication::shutdown() {
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();
 
-    if (window) {
-        glfwDestroyWindow(window);
-    }
+    if (window) glfwDestroyWindow(window);
     glfwTerminate();
-
 }
 
 void EditorApplication::run() {
@@ -154,10 +159,17 @@ void EditorApplication::update() {
     lastFrame = currentFrame;
 
     statsPanel.update(deltaTime);
-    
     glfwPollEvents();
-
     updatePlayMode(deltaTime);
+    
+    // Auto-save system
+    if (autoSaveEnabled && sceneDirty && !currentFile.path.empty()) {
+        timeSinceLastSave += deltaTime;
+        if (timeSinceLastSave >= autoSaveInterval) {
+            saveFile(currentFile.path, currentFile.isPrefab);
+            timeSinceLastSave = 0.0f;
+        }
+    }
     
     viewportPanel.onUpdate(deltaTime);
 }
@@ -169,30 +181,30 @@ void EditorApplication::updatePlayMode(float deltaTime) {
 }
 
 void EditorApplication::render() {
-    // Actualizar título de ventana con dirty flag
+    // Update window title with dirty flag
     std::string title = "Haruka Editor";
-    if (currentScene) {
-        title += " - " + currentScene->getName();
+    if (!currentFile.path.empty()) {
+        title += " - " + currentFile.name + " (" + getFileType(currentFile.path) + ")";
     }
-    if (sceneDirty) {
-        title += " *";
-    }
+    if (sceneDirty) title += " *";
     glfwSetWindowTitle(window, title.c_str());
 
+    // ImGui frame setup
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
 
     renderUI();
 
+    // Render
     ImGui::Render();
     int display_w, display_h;
     glfwGetFramebufferSize(window, &display_w, &display_h);
     glViewport(0, 0, display_w, display_h);
     glClear(GL_COLOR_BUFFER_BIT);
-
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 
+    // Handle multi-viewport
     ImGuiIO& io = ImGui::GetIO();
     if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
         GLFWwindow* backup_current_context = glfwGetCurrentContext();
@@ -253,14 +265,22 @@ void EditorApplication::renderUI() {
     if (showDemoWindow) {
         ImGui::ShowDemoWindow(&showDemoWindow);
     }
+    
+    // New panels
+    settingsPanel.onImGuiRender();
+    assetImporter.onImGuiRender();
+    searchPanel.onImGuiRender();
+    scriptingEditor.onImGuiRender();
+    uiBuilder.onImGuiRender();
 
     // Save As popup (fuera del menú)
-    if (showSaveAsPopup) ImGui::OpenPopup("Save Scene As");
-    if (ImGui::BeginPopupModal("Save Scene As", &showSaveAsPopup, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::InputText("Path", saveAsBuffer, sizeof(saveAsBuffer));
+    if (showSaveAsPopup) ImGui::OpenPopup("Save File As");
+    if (ImGui::BeginPopupModal("Save File As", &showSaveAsPopup, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::InputText("Path##save", saveAsBuffer, sizeof(saveAsBuffer));
+        bool isPrefab = std::string(saveAsBuffer).find(".prefab") != std::string::npos;
+        
         if (ImGui::Button("Save")) {
-            currentScenePath = saveAsBuffer;
-            saveScene(currentScenePath);
+            saveFile(saveAsBuffer, isPrefab);
             showSaveAsPopup = false;
             ImGui::CloseCurrentPopup();
         }
@@ -277,15 +297,15 @@ void EditorApplication::renderUI() {
     if (ImGui::BeginPopupModal("Unsaved Changes", &showUnsavedChangesPopup, ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::Text("Hay cambios sin guardar.");
         if (ImGui::Button("Guardar y continuar")) {
-            if (!currentScenePath.empty()) saveScene(currentScenePath);
-            if (!pendingSceneToLoad.empty()) loadScene(pendingSceneToLoad);
+            if (!currentFile.path.empty()) saveFile(currentFile.path, currentFile.isPrefab);
+            if (!pendingSceneToLoad.empty()) loadFile(pendingSceneToLoad);
             pendingSceneToLoad.clear();
             showUnsavedChangesPopup = false;
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
         if (ImGui::Button("Descartar")) {
-            if (!pendingSceneToLoad.empty()) loadScene(pendingSceneToLoad);
+            if (!pendingSceneToLoad.empty()) loadFile(pendingSceneToLoad);
             pendingSceneToLoad.clear();
             showUnsavedChangesPopup = false;
             ImGui::CloseCurrentPopup();
@@ -320,161 +340,124 @@ void EditorApplication::renderUI() {
 }
 
 void EditorApplication::showMenuBar() {
-    if (ImGui::BeginMainMenuBar()) {
-        if (ImGui::BeginMenu("File")) {
-            if (ImGui::MenuItem("New Project")) {
-                std::snprintf(newProjectNameBuffer, sizeof(newProjectNameBuffer), "NewProject");
-                std::snprintf(newProjectPathBuffer, sizeof(newProjectPathBuffer), 
-                             "/mnt/sdb1/haruka/projects/");
-                showNewProjectDialog = true;
+    if (!ImGui::BeginMainMenuBar()) return;
+    
+    if (ImGui::BeginMenu("File")) {
+        if (ImGui::MenuItem("New Project")) {
+            std::snprintf(newProjectNameBuffer, sizeof(newProjectNameBuffer), "NewProject");
+            std::snprintf(newProjectPathBuffer, sizeof(newProjectPathBuffer), "/mnt/sdb1/haruka/projects/");
+            showNewProjectDialog = true;
+        }
+
+        if (ImGui::MenuItem("Open Project", "Ctrl+O")) {
+            nfdchar_t* outPath = nullptr;
+            nfdresult_t result = NFD_PickFolder(nullptr, &outPath);
+
+            if (result == NFD_OKAY && currentProject) {
+                const std::string selectedPath(outPath);
+                currentProject->load(selectedPath);
+                projectBrowserPanel.setProject(currentProject.get());
+                projectBrowserPanel.setScene(currentScene.get());
+                std::cout << "Project loaded: " << selectedPath << std::endl;
+                free(outPath);
+            } else if (result == NFD_CANCEL) {
+                std::cout << "User cancelled folder selection" << std::endl;
             }
+        }
 
-            if (ImGui::MenuItem("Open Project", "Ctrl+O")) {
-                nfdchar_t* outPath = nullptr;
-                nfdresult_t result = NFD_PickFolder(nullptr, &outPath);
+        ImGui::Separator();
 
-                if (result == NFD_OKAY) {
-                    if (currentProject) {
-                        const std::string selectedPath(outPath);
-                        currentProject->load(selectedPath);
-                        projectBrowserPanel.setProject(currentProject.get());
-                        projectBrowserPanel.setScene(currentScene.get());
-                        std::cout << "Project loaded: " << selectedPath << std::endl;
-                    }
-                    free(outPath);
-                } else if (result == NFD_CANCEL) {
-                    std::cout << "User cancelled folder selection" << std::endl;
-                } else {
-                    std::cerr << "Error selecting folder: " << NFD_GetError() << std::endl;
-                }
-            }
-
-            ImGui::Separator();
-
-            if (ImGui::MenuItem("Save Scene", "Ctrl+S")) {
-                if (currentScenePath.empty()) {
-                    if (currentProject && !currentProject->getPath().empty() && currentScene) {
-                        currentScenePath = currentProject->getPath() + "/scenes/" + currentScene->getName() + ".scene";
-                    } else {
-                        currentScenePath = "scenes/current.scene";
-                    }
-                }
-                saveScene(currentScenePath);
-            }
-
-            ImGui::Separator();
-            
-            if (ImGui::MenuItem("Save Scene As...")) {
-                std::snprintf(saveAsBuffer, sizeof(saveAsBuffer), "%s", currentScenePath.c_str());
+        if (ImGui::MenuItem("Save", "Ctrl+S")) {
+            if (!currentFile.path.empty()) {
+                saveFile(currentFile.path, currentFile.isPrefab);
+            } else {
+                std::snprintf(saveAsBuffer, sizeof(saveAsBuffer), "scenes/Untitled.scene");
                 showSaveAsPopup = true;
             }
-
-            if (ImGui::MenuItem("Export Game")) {
-                exportGame();
-            }
-
-            ImGui::Separator();
-
-            if (ImGui::MenuItem("Exit", "Alt+F4")) {
-                glfwSetWindowShouldClose(window, true);
-            }
-
-            ImGui::EndMenu();
         }
 
-        if (ImGui::BeginMenu("Edit")) {
-            if (ImGui::MenuItem("Move Gizmo", "W", gizmoMode == 0)) {
-                gizmoMode = 0;
-            }
-            if (ImGui::MenuItem("Rotate Gizmo", "E", gizmoMode == 1)) {
-                gizmoMode = 1;
-            }
-            if (ImGui::MenuItem("Scale Gizmo", "R", gizmoMode == 2)) {
-                gizmoMode = 2;
-            }
-            ImGui::Separator();
-            if (ImGui::MenuItem("Undo", "Ctrl+Z", false, commandHistory.canUndo())) {
-                commandHistory.undo();
-            }
-            if (ImGui::MenuItem("Redo", "Ctrl+Y", false, commandHistory.canRedo())) {
-                commandHistory.redo();
-            }
-            ImGui::EndMenu();
+        if (ImGui::MenuItem("Save As...")) {
+            std::snprintf(saveAsBuffer, sizeof(saveAsBuffer), "%s", currentFile.path.c_str());
+            showSaveAsPopup = true;
         }
 
-        if (ImGui::BeginMenu("View")) {
-            ImGui::MenuItem("Scene Hierarchy", nullptr, true);
-            ImGui::MenuItem("Inspector", nullptr, true);
-            ImGui::MenuItem("Project Browser", nullptr, true);
-            ImGui::MenuItem("Console", nullptr, true);
-            ImGui::MenuItem("Performance Stats", nullptr, true);
-            ImGui::Separator();
-            ImGui::MenuItem("ImGui Demo", nullptr, &showDemoWindow);
-            ImGui::EndMenu();
-        }
+        ImGui::Separator();
 
-        if (ImGui::Button("Compile Project", ImVec2(150, 0))) {
-            compileProject();
-        }
-
-        if (isProjectCompiling) {
-            ImGui::SameLine();
-            ImGui::Text("Compiling...");
-        }
-
-        if (ImGui::MenuItem((!isPlayMode) ? "Start" : "Stop", "F5", isPlayMode)) {
-            if (!isPlayMode) {
-                enterPlayMode();
-            } else {
-                exitPlayMode();
+        if (ImGui::MenuItem("Open File", "Ctrl+O")) {
+            nfdchar_t* outPath = nullptr;
+            nfdresult_t result = NFD_OpenDialog("scene,prefab", nullptr, &outPath);
+            
+            if (result == NFD_OKAY) {
+                loadFile(outPath);
+                free(outPath);
             }
         }
 
-        if (ImGui::BeginMenu("Help")) {
-            if (ImGui::MenuItem("About")) {
-                std::cout << "Haruka Engine Editor v0.1" << std::endl;
-            }
-            ImGui::EndMenu();
+        ImGui::Separator();
+
+        if (ImGui::MenuItem("Export Game")) {
+            exportGame();
         }
 
-        ImGui::EndMainMenuBar();
+        if (ImGui::MenuItem("Exit", "Alt+F4")) {
+            glfwSetWindowShouldClose(window, true);
+        }
+
+        ImGui::EndMenu();
     }
-}
 
-void EditorApplication::saveScene(const std::string& path) {
-    if (currentScene) {
-        std::filesystem::path p(path);
-        if (p.has_parent_path()) {
-            std::filesystem::create_directories(p.parent_path());
+    if (ImGui::BeginMenu("Edit")) {
+        if (ImGui::MenuItem("Move Gizmo", "W", gizmoMode == 0)) gizmoMode = 0;
+        if (ImGui::MenuItem("Rotate Gizmo", "E", gizmoMode == 1)) gizmoMode = 1;
+        if (ImGui::MenuItem("Scale Gizmo", "R", gizmoMode == 2)) gizmoMode = 2;
+        
+        ImGui::Separator();
+        
+        if (ImGui::MenuItem("Undo", "Ctrl+Z", false, commandHistory.canUndo())) {
+            commandHistory.undo();
         }
+        if (ImGui::MenuItem("Redo", "Ctrl+Y", false, commandHistory.canRedo())) {
+            commandHistory.redo();
+        }
+        ImGui::EndMenu();
+    }
 
-        bool ok = currentScene->save(path);
-        if (ok) {
-            currentScenePath = path;
-            sceneDirty = false;
-            std::cout << "Scene saved to: " << path << std::endl;
+    if (ImGui::BeginMenu("View")) {
+        ImGui::MenuItem("Scene Hierarchy", nullptr, true);
+        ImGui::MenuItem("Inspector", nullptr, true);
+        ImGui::MenuItem("Project Browser", nullptr, true);
+        ImGui::MenuItem("Console", nullptr, true);
+        ImGui::MenuItem("Performance Stats", nullptr, true);
+        ImGui::Separator();
+        ImGui::MenuItem("ImGui Demo", nullptr, &showDemoWindow);
+        ImGui::EndMenu();
+    }
+
+    if (ImGui::Button("Compile Project", ImVec2(150, 0))) {
+        compileProject();
+    }
+
+    if (isProjectCompiling) {
+        ImGui::SameLine();
+        ImGui::Text("Compiling...");
+    }
+
+    if (ImGui::MenuItem((!isPlayMode) ? "Start" : "Stop", "F5", isPlayMode)) {
+        if (!isPlayMode) {
+            enterPlayMode();
         } else {
-            std::cerr << "Failed to save scene" << std::endl;
+            exitPlayMode();
         }
     }
-}
 
-void EditorApplication::loadScene(const std::string& path) {
-    if (!currentScene) {
-        currentScene = std::make_unique<Haruka::Scene>();
+    if (ImGui::BeginMenu("Help")) {
+        if (ImGui::MenuItem("About")) {
+            std::cout << "Haruka Engine Editor v0.1" << std::endl;
+        }
+        ImGui::EndMenu();
     }
 
-    if (currentScene->load(path)) {
-        currentScenePath = path;
-        sceneDirty = false;
-        std::cout << "Scene loaded: " << path << std::endl;
-        sceneHierarchyPanel.setScene(currentScene.get());
-        inspectorPanel.setScene(currentScene.get());
-        viewportPanel.setScene(currentScene.get());
-        projectBrowserPanel.setScene(currentScene.get());
-    } else {
-        std::cerr << "Failed to load scene: " << path << std::endl;
-    }
+    ImGui::EndMainMenuBar();
 }
 
 void EditorApplication::enterPlayMode() {
@@ -542,7 +525,7 @@ void EditorApplication::enterPlayMode() {
 }
 
 void EditorApplication::exitPlayMode() {
-    if (!isPlayMode || !editorScene) return;
+    if (!isPlayMode) return;
     
     isPlayMode = false;
 
@@ -601,7 +584,9 @@ void EditorApplication::createNewProject(const std::string& name, const std::str
         }
         currentProject->load(projectPath);
 
-        currentScenePath = scenePath;
+        currentFile.path = scenePath;
+        currentFile.name = "main";
+        currentFile.isPrefab = false;
         sceneDirty = false;
 
         // Sincronizar paneles
@@ -680,4 +665,154 @@ void EditorApplication::exportGame() {
         std::filesystem::copy_options::overwrite_existing);
     
     std::cout << "✓ Game exported to: " << exportPath << std::endl;
+}
+
+void EditorApplication::saveFile(const std::string& path, bool asPrefab) {
+    if (!currentScene || path.empty()) return;
+    
+    // Detectar tipo por extensión, no por parámetro
+    bool isPrefab = (path.find(".prefab") != std::string::npos);
+    
+    std::filesystem::path p(path);
+    if (p.has_parent_path()) {
+        std::filesystem::create_directories(p.parent_path());
+    }
+
+    // Crear backup si existe
+    if (std::filesystem::exists(path)) {
+        createFileBackup(path);
+    }
+
+    bool ok = currentScene->save(path);
+    if (ok) {
+        currentFile.path = path;
+        currentFile.name = p.stem().string();
+        currentFile.isPrefab = isPrefab;
+        currentFile.lastSaveTime = glfwGetTime();
+        sceneDirty = false;
+        timeSinceLastSave = 0.0f;
+        
+        std::string type = isPrefab ? "Prefab" : "Scene";
+        std::cout << "✓ " << type << " saved: " << path << std::endl;
+    } else {
+        std::cerr << "✗ Failed to save file: " << path << std::endl;
+    }
+}
+
+void EditorApplication::loadFile(const std::string& path) {
+    // Crear una nueva escena para cargar el archivo
+    currentScene = std::make_unique<Haruka::Scene>();
+
+    if (currentScene->load(path)) {
+        // Actualizar estado del archivo
+        currentFile.path = path;
+        currentFile.name = std::filesystem::path(path).stem().string();
+        currentFile.isPrefab = (path.find(".prefab") != std::string::npos);
+        currentFile.lastSaveTime = glfwGetTime();
+        
+        // Resetear estado de cambios
+        sceneDirty = false;
+        timeSinceLastSave = 0.0f;
+        
+        // Sincronizar panels
+        sceneHierarchyPanel.setScene(currentScene.get());
+        inspectorPanel.setScene(currentScene.get());
+        viewportPanel.setScene(currentScene.get());
+        
+        std::string type = currentFile.isPrefab ? "Prefab" : "Scene";
+        std::cout << "✓ " << type << " loaded: " << path << std::endl;
+    } else {
+        std::cerr << "✗ Failed to load file: " << path << std::endl;
+    }
+}
+
+void EditorApplication::createFileBackup(const std::string& filePath) {
+    std::filesystem::path p(filePath);
+    std::string backupDir = p.parent_path().string() + "/backups";
+    std::filesystem::create_directories(backupDir);
+    
+    // Para prefabs: eliminar TODOS los backups anteriores
+    bool isPrefab = (filePath.find(".prefab") != std::string::npos);
+    if (isPrefab) {
+        deleteAllBackups(filePath);
+    }
+    
+    auto now = std::chrono::system_clock::now();
+    auto time = std::chrono::system_clock::to_time_t(now);
+    char timestamp[20];
+    std::strftime(timestamp, sizeof(timestamp), "%Y%m%d_%H%M%S", std::localtime(&time));
+    
+    std::string ext = p.extension().string();
+    std::string backupPath = backupDir + "/" + p.stem().string() + "_" + timestamp + ext;
+    
+    try {
+        std::filesystem::copy_file(filePath, backupPath, 
+            std::filesystem::copy_options::overwrite_existing);
+        
+        // Para escenas: mantener solo los últimos N backups
+        if (!isPrefab) {
+            cleanOldBackups(filePath);
+        }
+        
+        std::cout << "✓ Backup created: " << backupPath << std::endl;
+    } catch (const std::exception& e) {
+        std::cerr << "✗ Backup failed: " << e.what() << std::endl;
+    }
+}
+
+void EditorApplication::cleanOldBackups(const std::string& filePath) {
+    std::filesystem::path p(filePath);
+    std::string backupDir = p.parent_path().string() + "/backups";
+    std::string fileName = p.stem().string();
+    std::string ext = p.extension().string();
+    
+    std::vector<std::filesystem::path> backups;
+    for (const auto& entry : std::filesystem::directory_iterator(backupDir)) {
+        if (entry.is_regular_file()) {
+            std::string name = entry.path().stem().string();
+            std::string entryExt = entry.path().extension().string();
+            if (name.find(fileName) != std::string::npos && entryExt == ext) {
+                backups.push_back(entry.path());
+            }
+        }
+    }
+    
+    std::sort(backups.begin(), backups.end(), 
+        [](const auto& a, const auto& b) {
+            return std::filesystem::last_write_time(a) > 
+                   std::filesystem::last_write_time(b);
+        });
+    
+    if (backups.size() > (size_t)maxBackups) {
+        for (size_t i = maxBackups; i < backups.size(); ++i) {
+            std::filesystem::remove(backups[i]);
+        }
+    }
+}
+
+void EditorApplication::deleteAllBackups(const std::string& filePath) {
+    std::filesystem::path p(filePath);
+    std::string backupDir = p.parent_path().string() + "/backups";
+    std::string fileName = p.stem().string();
+    std::string ext = p.extension().string();
+    
+    try {
+        if (!std::filesystem::exists(backupDir)) return;
+        
+        for (const auto& entry : std::filesystem::directory_iterator(backupDir)) {
+            if (entry.is_regular_file()) {
+                std::string name = entry.path().stem().string();
+                std::string entryExt = entry.path().extension().string();
+                if (name.find(fileName) != std::string::npos && entryExt == ext) {
+                    std::filesystem::remove(entry.path());
+                }
+            }
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "✗ Error deleting backups: " << e.what() << std::endl;
+    }
+}
+
+std::string EditorApplication::getFileType(const std::string& path) {
+    return (path.find(".prefab") != std::string::npos) ? "Prefab" : "Scene";
 }

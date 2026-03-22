@@ -10,7 +10,6 @@
 #include <chrono>
 
 namespace Haruka {
-    class SceneManagerPanel;
     class PrefabsPanel;
 }
 
@@ -30,15 +29,14 @@ public:
     void setScene(Haruka::Scene* scene);
     void onImGuiRender();
 
-    void setOnSceneLoad(std::function<void(const std::string&)> cb);
-    void setOnSceneSave(std::function<void(const std::string&)> cb);
-    void setOnSceneNew(std::function<void(const std::string&)> cb);
+    void setOnFileLoad(std::function<void(const std::string&)> cb) { onFileLoad = std::move(cb); }
+    void setOnPrefabLoad(std::function<void(const std::string&)> cb);
+    void setOnPrefabSave(std::function<void(const std::string&)> cb);
 
 private:
     Haruka::Project* currentProject = nullptr;
     Haruka::Scene* currentScene = nullptr;
 
-    std::unique_ptr<Haruka::SceneManagerPanel> sceneManager;
     std::unique_ptr<Haruka::PrefabsPanel> prefabsPanel;
 
     std::string selectedPath;
@@ -48,6 +46,8 @@ private:
     bool showNewFileDialog = false;
     bool showNewFolderDialog = false;
     char newItemName[256] = "";
+    
+    std::function<void(const std::string&)> onFileLoad;
     std::string newItemParentPath;
 
     // File system watching

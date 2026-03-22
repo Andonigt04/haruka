@@ -60,7 +60,6 @@ namespace Haruka
         
         bool save(const std::string& filepath);
         bool load(const std::string& filepath);
-        bool loadFromJSON(const std::string& filepath);
         
         std::string sceneName;
 

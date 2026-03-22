@@ -136,3 +136,80 @@ void PrimitiveShapes::createPlane(float width, float height, int subdivisions, s
         }
     }
 }
+
+void PrimitiveShapes::createCubeSphere(float radius, int subdivisions, std::vector<glm::vec3>& vertices, std::vector<glm::vec3>& normals, std::vector<unsigned int>& indices)
+{
+    vertices.clear();
+    normals.clear();
+    indices.clear();
+
+    // Crear las 6 caras de un cubo
+    std::vector<glm::vec3> faceVertices[6];
+    std::vector<unsigned int> faceIndices[6];
+    
+    // Definir las 6 caras del cubo (cada cara es un grid)
+    glm::vec3 faceNormals[6] = {
+        glm::vec3(1, 0, 0),   // Derecha
+        glm::vec3(-1, 0, 0),  // Izquierda
+        glm::vec3(0, 1, 0),   // Arriba
+        glm::vec3(0, -1, 0),  // Abajo
+        glm::vec3(0, 0, 1),   // Frente
+        glm::vec3(0, 0, -1)   // Atrás
+    };
+    
+    int gridSize = 2 << subdivisions; // 2^(subdivisions+1)
+    float step = 2.0f / gridSize;
+    
+    // Para cada cara del cubo
+    for (int face = 0; face < 6; face++) {
+        std::vector<glm::vec3> faceVerts;
+        
+        // Generar grid de vértices para esta cara
+        for (int i = 0; i <= gridSize; i++) {
+            for (int j = 0; j <= gridSize; j++) {
+                float u = -1.0f + i * step;
+                float v = -1.0f + j * step;
+                
+                glm::vec3 p;
+                if (face == 0) p = glm::vec3(1, v, -u);      // Derecha
+                else if (face == 1) p = glm::vec3(-1, v, u); // Izquierda
+                else if (face == 2) p = glm::vec3(u, 1, v);  // Arriba
+                else if (face == 3) p = glm::vec3(u, -1, -v);// Abajo
+                else if (face == 4) p = glm::vec3(u, v, 1);  // Frente
+                else p = glm::vec3(-u, v, -1);               // Atrás
+                
+                // Normalizar para convertir a esfera
+                glm::vec3 normalized = glm::normalize(p) * radius;
+                faceVerts.push_back(normalized);
+                vertices.push_back(normalized);
+                normals.push_back(glm::normalize(normalized));
+            }
+        }
+        
+        // Generar índices para esta cara (quads -> triangles)
+        int stride = gridSize + 1;
+        for (int i = 0; i < gridSize; i++) {
+            for (int j = 0; j < gridSize; j++) {
+                int a = i * stride + j;
+                int b = a + 1;
+                int c = a + stride;
+                int d = c + 1;
+                
+                unsigned int baseIndex = vertices.size() - faceVerts.size() + a;
+                unsigned int baseB = baseIndex + 1;
+                unsigned int baseC = baseIndex + stride;
+                unsigned int baseD = baseC + 1;
+                
+                // Primer triángulo
+                indices.push_back(baseIndex);
+                indices.push_back(baseC);
+                indices.push_back(baseB);
+                
+                // Segundo triángulo
+                indices.push_back(baseB);
+                indices.push_back(baseC);
+                indices.push_back(baseD);
+            }
+        }
+    }
+}

@@ -56,7 +56,7 @@ private:
     bool isViewportHovered = false;
     bool isViewportFocused = false;
     bool playMode = false;
-    bool showGrid = true;
+    bool showGrid = false;
 
     int selectedObjectIndex = -1;
     int currentGizmoOperation = ImGuizmo::TRANSLATE;

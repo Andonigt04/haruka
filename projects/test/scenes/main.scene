@@ -1,48 +1,46 @@
 {
     "name": "main",
-    "initializer": "scripts/init.cpp",
+    "initializer": "",
     "objects": [
         {
-            "name": "Planet",
-            "type": "Planet",
-            "position": [0, -10, 0],
+            "name": "Sun",
+            "type": "Star",
+            "position": [-149500000, 0, 0],
             "rotation": [0, 0, 0],
-            "scale": [5, 5, 5],
-            "meshRenderer": {
-                "meshType": "sphere",
-                "radius": 1.0,
-                "segments": 32
-            },
-            "material": {
-                "albedo": [0.2, 0.6, 0.2],
-                "roughness": 0.7,
-                "metallic": 0.0
-            }
+            "scale": [696000, 696000, 696000],
+            "color": [1.0, 0.95, 0.7],
+            "intensity": 2.0,
+            "modelPath": ""
         },
         {
-            "name": "Sun",
-            "type": "Light",
-            "position": [20, 20, 20],
+            "name": "Earth",
+            "type": "Planet",
+            "position": [0, 0, 0],
             "rotation": [0, 0, 0],
-            "scale": [2, 2, 2],
-            "meshRenderer": {
-                "meshType": "sphere",
-                "radius": 1.0,
-                "segments": 16
-            },
-            "material": {
-                "albedo": [1.0, 1.0, 0.0],
-                "roughness": 0.2,
-                "metallic": 0.5
-            }
+            "scale": [6371, 6371, 6371],
+            "color": [0.1, 0.5, 0.8],
+            "intensity": 1.0,
+            "modelPath": ""
+        },
+        {
+            "name": "Moon",
+            "type": "Planet",
+            "position": [600000, 0, 0],
+            "rotation": [0, 0, 0],
+            "scale": [2700, 2700, 2700],
+            "color": [0.7, 0.7, 0.7],
+            "intensity": 0.8,
+            "modelPath": ""
         },
         {
             "name": "Player",
-            "type": "Prefab",
-            "path": "prefabs/Player.prefab",
-            "position": [0, 5, 0],
+            "type": "Character",
+            "position": [0, 30000, 0],
             "rotation": [0, 0, 0],
-            "scale": [1, 1, 1]
+            "scale": [10, 15, 10],
+            "color": [0.2, 0.4, 0.8],
+            "intensity": 1.0,
+            "modelPath": ""
         }
     ]
 }

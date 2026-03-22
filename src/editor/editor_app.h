@@ -12,10 +12,15 @@
 #include "editor/panels/console.h"
 #include "editor/panels/stats.h"
 #include "editor/commands/command_history.h"
-#include "editor/panels/scene_manager.h"
 #include "game/ingame_chat.h"
 #include "editor/panels/prefabs_panel.h"
 #include "game/planetary_system.h"
+#include "editor/panels/settings.h"
+#include "editor/panels/asset_importer.h"
+#include "editor/panels/search_panel.h"
+#include "editor/panels/multi_scene_manager.h"
+#include "editor/panels/scripting_editor.h"
+#include "editor/panels/ui_builder.h"
 #include <imgui.h>
 #include <memory>
 
@@ -47,8 +52,14 @@ private:
     ViewportPanel viewportPanel;
     ConsolePanel consolePanel;
     StatsPanel statsPanel;
-    Haruka::SceneManagerPanel sceneManagerPanel;
     MaterialEditorPanel materialEditorPanel;
+    
+    // New Panels
+    SettingsPanel settingsPanel;
+    AssetImporter assetImporter;
+    SearchPanel searchPanel;
+    ScriptingEditor scriptingEditor;
+    UIBuilder uiBuilder;
     
     // Gizmos
     int gizmoMode = 0;
@@ -64,9 +75,6 @@ private:
     int height = 900;
     float deltaTime = 0.0f;
     float lastFrame = 0.0f;
-
-    void saveScene(const std::string& path);
-    void loadScene(const std::string& path);
 
     // Play Mode
     void enterPlayMode();
@@ -87,7 +95,6 @@ private:
     std::unique_ptr<StreamCapture> coutCapture;
     std::unique_ptr<StreamCapture> cerrCapture;
     std::unique_ptr<Haruka::InGameChat> inGameChat;
-    std::string currentScenePath;
     bool showSaveAsPopup = false;
     char saveAsBuffer[512] = {0};
     
@@ -104,4 +111,25 @@ private:
     bool isProjectCompiling = false;
 
     void exportGame();
+
+    // Auto-save system
+    struct SceneFile {
+        std::string path;
+        std::string name;
+        bool isPrefab;
+        float lastSaveTime = 0.0f;
+    };
+    
+    SceneFile currentFile;
+    float autoSaveInterval = 30.0f;
+    float timeSinceLastSave = 0.0f;
+    bool autoSaveEnabled = true;
+    int maxBackups = 5;
+    
+    void saveFile(const std::string& path, bool asPrefab = false);
+    void loadFile(const std::string& path);
+    void createFileBackup(const std::string& path);
+    void cleanOldBackups(const std::string& path);
+    void deleteAllBackups(const std::string& path);
+    std::string getFileType(const std::string& path);
 };

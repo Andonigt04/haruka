@@ -3,9 +3,26 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtx/intersect.hpp>
 #include <algorithm>
+#include <set>
 #include "editor/commands/scene_commands.h"
 #include <ImGuizmo.h>
 #include <glm/gtc/type_ptr.hpp>
+
+// Helper function para tipos que no deben renderizarse
+static bool shouldSkipRendering(const std::string& type) {
+    static const std::set<std::string> skipTypes = {
+        "Character",
+        "Camera", 
+        "PlayerController",
+        "RigidBody",
+        "Transform",
+        "Prefab",
+        "Script",
+        "AudioSource",
+        "Collider"
+    };
+    return skipTypes.find(type) != skipTypes.end();
+}
 
 ViewportPanel::ViewportPanel() {}
 
@@ -45,6 +62,11 @@ int ViewportPanel::getHoveredObjectIndex(const glm::vec3& rayOrigin, const glm::
     for (size_t i = 0; i < objects.size(); i++) {
         const auto& obj = objects[i];
         
+        // Saltar componentes que no deben renderizarse
+        if (shouldSkipRendering(obj.type)) {
+            continue;
+        }
+        
         // Bounding sphere (radio 0.5 * escala)
         glm::vec3 center = glm::vec3(obj.position);
         float radius = 0.5f * glm::length(glm::vec3(obj.scale));
@@ -67,7 +89,7 @@ void ViewportPanel::handleGizmoInput() {
     ImGuiIO& io = ImGui::GetIO();
 
     if (isViewportHovered && !io.WantCaptureMouse && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-        glm::mat4 proj = glm::perspective(glm::radians(45.0f), (float)width / (float)height, 0.1f, 1000.0f);
+        glm::mat4 proj = glm::perspective(glm::radians(45.0f), (float)width / (float)height, 0.1f, 1000000000.0f);
         glm::mat4 view = camera->getViewMatrix();
 
         glm::vec3 rayDir = getRayFromMouse(proj, view);
@@ -94,7 +116,7 @@ void ViewportPanel::handleGizmoInput() {
             ImGuizmo::SetRect(viewportMin.x, viewportMin.y, viewportMax.x - viewportMin.x, viewportMax.y - viewportMin.y);
 
             glm::mat4 view = camera->getViewMatrix();
-            glm::mat4 proj = glm::perspective(glm::radians(45.0f), (float)width / (float)height, 0.1f, 1000.0f);
+            glm::mat4 proj = glm::perspective(glm::radians(45.0f), (float)width / (float)height, 0.1f, 1000000000.0f);
 
             ImGuizmo::Manipulate(
                 glm::value_ptr(view), glm::value_ptr(proj),
@@ -123,7 +145,7 @@ void ViewportPanel::handleGizmoInput() {
                                            glm::vec3(0,0,1);
 
         if (gizmoMode == 0) { // MOVE
-            glm::mat4 proj = glm::perspective(glm::radians(45.0f), (float)width / (float)height, 0.1f, 1000.0f);
+            glm::mat4 proj = glm::perspective(glm::radians(45.0f), (float)width / (float)height, 0.1f, 1000000000.0f);
             glm::mat4 view = camera->getViewMatrix();
 
             glm::vec3 rayDir = getRayFromMouse(proj, view);
@@ -215,7 +237,7 @@ void ViewportPanel::renderScene() {
         sceneShader = std::make_unique<Shader>("shaders/simple.vert", "shaders/pbr.frag");
     }
 
-    glm::mat4 proj = glm::perspective(glm::radians(45.0f), (float)width / (float)height, 0.1f, 1000.0f);
+    glm::mat4 proj = glm::perspective(glm::radians(45.0f), (float)width / (float)height, 0.1f, 1000000000.0f);
     glm::mat4 view = camera->getViewMatrix();
 
     renderGrid(view, proj);
@@ -248,6 +270,11 @@ void ViewportPanel::renderScene() {
         const auto& objects = currentScene->getObjects();
         for (size_t i = 0; i < objects.size(); i++) {
             const auto& obj = objects[i];
+            
+            // Saltar componentes que no deben renderizarse
+            if (shouldSkipRendering(obj.type)) {
+                continue;
+            }
             
             glm::dmat4 model = glm::dmat4(1.0f);
             model = glm::translate(model, obj.position);
@@ -302,6 +329,17 @@ void ViewportPanel::renderScene() {
                     cubeMesh->draw();
                     renderVertex_count += 24;
                 }
+            } else if (obj.type == "Planet" || obj.type == "Star") {
+                // Renderizar planetas y estrellas como esferas de cubo (uniforme en todos lados)
+                static std::unique_ptr<SimpleMesh> planetMesh;
+                if (!planetMesh) {
+                    std::vector<glm::vec3> verts, norms;
+                    std::vector<unsigned int> indices;
+                    PrimitiveShapes::createCubeSphere(1.0f, 4, verts, norms, indices); // 4 subdivisiones = muy detallado
+                    planetMesh = std::make_unique<SimpleMesh>(verts, norms, indices);
+                }
+                planetMesh->draw();
+                renderVertex_count += 2048;
             } else {
                 if (!cubeMesh) {
                     std::vector<glm::vec3> verts, norms;
@@ -561,8 +599,8 @@ void ViewportPanel::renderGrid(const glm::mat4& view, const glm::mat4& proj) {
     if (!sceneShader) return;
 
     if (gridVAO == 0) {
-        const int gridSize = 1000000;
-        const float gridSpacing = 1.0f;
+        const int gridSize = 100000;  // Reducido de 1,000,000 a 100,000
+        const float gridSpacing = 100.0f;  // Aumentado de 1.0f a 100.0f para mejor escala
         std::vector<float> gridVertices;
 
         // Líneas en X
@@ -634,7 +672,7 @@ void ViewportPanel::renderGizmoImGuizmo()
     ImGuizmo::SetRect(viewportMin.x, viewportMin.y, viewportMax.x - viewportMin.x, viewportMax.y - viewportMin.y);
 
     glm::mat4 view = camera->getViewMatrix();
-    glm::mat4 proj = glm::perspective(glm::radians(45.0f), (float)width / (float)height, 0.1f, 1000.0f);
+    glm::mat4 proj = glm::perspective(glm::radians(45.0f), (float)width / (float)height, 0.1f, 1000000000.0f);
 
     ImGuizmo::Manipulate(
         glm::value_ptr(view), glm::value_ptr(proj),

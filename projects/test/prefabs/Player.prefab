@@ -4,28 +4,43 @@
     "components": [
         {
             "type": "Transform",
-            "position": [6471000, 0, 0],
+            "name": "Transform",
+            "position": [0, 0, 0],
             "rotation": [0, 0, 0],
-            "scale": [1, 1, 1]
+            "scale": [1, 1, 1],
+            "color": [1.0, 1.0, 1.0],
+            "intensity": 1.0,
+            "modelPath": ""
         },
         {
             "type": "Character",
-            "class": "Haruka::Character",
-            "userId": "player1",
-            "walkSpeed": 5.0,
-            "runSpeed": 10.0,
-            "crouchSpeed": 2.5,
-            "jumpForce": 8.0,
-            "mouseSensitivity": 0.1,
-            "standingHeight": 1.8,
-            "crouchingHeight": 1.2
+            "name": "Character",
+            "position": [0, 0, 0],
+            "rotation": [0, 0, 0],
+            "scale": [1, 1, 1],
+            "color": [0.3, 0.5, 1.0],
+            "intensity": 1.0,
+            "modelPath": ""
         },
         {
             "type": "PlayerController",
-            "class": "GameLogic::PlayerController",
-            "moveSpeed": 5.0,
-            "jumpForce": 8.0,
-            "mouseSensitivity": 0.1
+            "name": "PlayerController",
+            "position": [0, 0, 0],
+            "rotation": [0, 0, 0],
+            "scale": [1, 1, 1],
+            "color": [1.0, 1.0, 1.0],
+            "intensity": 1.0,
+            "modelPath": ""
+        },
+        {
+            "type": "Sphere",
+            "name": "Player_Body",
+            "position": [0, 0, 0],
+            "rotation": [0, 0, 0],
+            "scale": [1, 1, 1.8],
+            "color": [0.2, 0.4, 0.8],
+            "intensity": 1.0,
+            "modelPath": ""
         }
     ]
 }

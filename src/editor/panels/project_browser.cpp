@@ -1,5 +1,4 @@
 #include "project_browser.h"
-#include "scene_manager.h"
 #include "prefabs_panel.h"
 #include <iostream>
 #include <filesystem>
@@ -12,7 +11,6 @@ namespace fs = std::filesystem;
 using namespace std::chrono;
 
 ProjectBrowserPanel::ProjectBrowserPanel() {
-    sceneManager = std::make_unique<Haruka::SceneManagerPanel>();
     prefabsPanel = std::make_unique<Haruka::PrefabsPanel>();
     lastRefreshTime = steady_clock::now();
 }
@@ -21,13 +19,11 @@ void ProjectBrowserPanel::setProject(Haruka::Project* project) {
     currentProject = project;
     lastProjectPath = project ? project->getPath() : "";
     needsRefresh = true;
-    if (sceneManager) sceneManager->setProject(project);
     if (prefabsPanel) prefabsPanel->setProject(project);
 }
 
 void ProjectBrowserPanel::setScene(Haruka::Scene* scene) {
     currentScene = scene;
-    if (sceneManager) sceneManager->setScene(scene);
     if (prefabsPanel) prefabsPanel->setScene(scene);
 }
 
@@ -312,17 +308,15 @@ void ProjectBrowserPanel::handleFileClick(const FileItem& item) {
     
     // Doble click en escenas
     if (item.extension == "scene" && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
-        if (currentScene) {
-            currentScene->load(item.path);
-            std::cout << "Loaded scene: " << item.name << std::endl;
+        if (onFileLoad) {
+            onFileLoad(item.path);
         }
     }
     
     // Doble click en prefabs
     if (item.extension == "prefab" && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
-        if (currentScene) {
-            currentScene->load(item.path);
-            std::cout << "Loaded prefab: " << item.name << std::endl;
+        if (onFileLoad) {
+            onFileLoad(item.path);
         }
     }
 }
@@ -383,15 +377,11 @@ void ProjectBrowserPanel::onImGuiRender() {
     ImGui::End();
 }
 
-void ProjectBrowserPanel::setOnSceneLoad(std::function<void(const std::string&)> cb) {
-    if (sceneManager) sceneManager->setOnSceneLoad(std::move(cb));
+void ProjectBrowserPanel::setOnPrefabLoad(std::function<void(const std::string&)> cb) {
+    if (prefabsPanel) prefabsPanel->setOnPrefabLoad(std::move(cb));
 }
 
-void ProjectBrowserPanel::setOnSceneSave(std::function<void(const std::string&)> cb) {
-    if (sceneManager) sceneManager->setOnSceneSave(std::move(cb));
-}
-
-void ProjectBrowserPanel::setOnSceneNew(std::function<void(const std::string&)> cb) {
-    if (sceneManager) sceneManager->setOnSceneNew(std::move(cb));
+void ProjectBrowserPanel::setOnPrefabSave(std::function<void(const std::string&)> cb) {
+    if (prefabsPanel) prefabsPanel->setOnPrefabSave(std::move(cb));
 }
 

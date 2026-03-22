@@ -46,28 +46,55 @@ bool Scene::save(const std::string& filepath) {
             std::filesystem::create_directories(p.parent_path());
         }
 
+        // Detectar si es prefab por extensión
+        std::string ext = filepath.substr(filepath.find_last_of(".") + 1);
+        bool isPrefab = (ext == "prefab");
+
         nlohmann::json j;
         j["name"] = sceneName;
-        j["objects"] = nlohmann::json::array();
-
-        for (const auto& obj : objects) {
-            nlohmann::json o;
-            o["name"] = obj.name;
-            o["type"] = obj.type;
-            o["modelPath"] = obj.modelPath;
-            o["position"] = {obj.position.x, obj.position.y, obj.position.z};
-            o["rotation"] = {obj.rotation.x, obj.rotation.y, obj.rotation.z};
-            o["scale"]    = {obj.scale.x, obj.scale.y, obj.scale.z};
-            o["color"]    = {obj.color.x, obj.color.y, obj.color.z};
-            o["intensity"] = obj.intensity;
-            o["parentIndex"] = obj.parentIndex;
-            o["childrenIndices"] = obj.childrenIndices;
-
-            if (obj.material) {
-                o["material"] = obj.material->toJSON();
+        
+        if (isPrefab) {
+            // Guardar como prefab con initializer
+            j["initializer"] = initializerPath;
+            j["components"] = nlohmann::json::array();
+            for (const auto& obj : objects) {
+                nlohmann::json comp;
+                comp["name"] = obj.name;
+                comp["type"] = obj.type;
+                comp["modelPath"] = obj.modelPath;
+                comp["position"] = {obj.position.x, obj.position.y, obj.position.z};
+                comp["rotation"] = {obj.rotation.x, obj.rotation.y, obj.rotation.z};
+                comp["scale"]    = {obj.scale.x, obj.scale.y, obj.scale.z};
+                comp["color"]    = {obj.color.x, obj.color.y, obj.color.z};
+                comp["intensity"] = obj.intensity;
+                
+                if (obj.material) {
+                    comp["material"] = obj.material->toJSON();
+                }
+                j["components"].push_back(comp);
             }
+        } else {
+            // Guardar como escena normal
+            j["objects"] = nlohmann::json::array();
+            for (const auto& obj : objects) {
+                nlohmann::json o;
+                o["name"] = obj.name;
+                o["type"] = obj.type;
+                o["modelPath"] = obj.modelPath;
+                o["position"] = {obj.position.x, obj.position.y, obj.position.z};
+                o["rotation"] = {obj.rotation.x, obj.rotation.y, obj.rotation.z};
+                o["scale"]    = {obj.scale.x, obj.scale.y, obj.scale.z};
+                o["color"]    = {obj.color.x, obj.color.y, obj.color.z};
+                o["intensity"] = obj.intensity;
+                o["parentIndex"] = obj.parentIndex;
+                o["childrenIndices"] = obj.childrenIndices;
 
-            j["objects"].push_back(o);
+                if (obj.material) {
+                    o["material"] = obj.material->toJSON();
+                }
+
+                j["objects"].push_back(o);
+            }
         }
 
         std::ofstream out(filepath, std::ios::trunc);
@@ -88,6 +115,7 @@ bool Scene::load(const std::string& filepath) {
         in >> j;
 
         if (j.contains("name")) sceneName = j["name"].get<std::string>();
+        if (j.contains("initializer")) initializerPath = j["initializer"].get<std::string>();
         objects.clear();
 
         // Detectar si es un prefab por extensión
@@ -99,9 +127,12 @@ bool Scene::load(const std::string& filepath) {
             if (j.contains("components") && j["components"].is_array()) {
                 for (const auto& comp : j["components"]) {
                     SceneObject obj;
-                    obj.name = comp.value("type", "");
+                    obj.name = comp.value("name", comp.value("type", ""));
                     obj.type = comp.value("type", "");
                     obj.properties = comp;
+                    obj.modelPath = comp.value("modelPath", "");
+                    obj.color = glm::dvec3(1.0);
+                    obj.intensity = 1.0;
 
                     if (comp.contains("position") && comp["position"].size() == 3)
                         obj.position = {comp["position"][0], comp["position"][1], comp["position"][2]};
@@ -109,6 +140,16 @@ bool Scene::load(const std::string& filepath) {
                         obj.rotation = {comp["rotation"][0], comp["rotation"][1], comp["rotation"][2]};
                     if (comp.contains("scale") && comp["scale"].size() == 3)
                         obj.scale = {comp["scale"][0], comp["scale"][1], comp["scale"][2]};
+                    if (comp.contains("color") && comp["color"].size() == 3)
+                        obj.color = {comp["color"][0], comp["color"][1], comp["color"][2]};
+                    if (comp.contains("intensity"))
+                        obj.intensity = comp["intensity"].get<double>();
+
+                    // Cargar material si existe
+                    if (comp.contains("material")) {
+                        obj.material = std::make_shared<MaterialComponent>();
+                        obj.material->fromJSON(comp["material"]);
+                    }
 
                     objects.push_back(obj);
                 }

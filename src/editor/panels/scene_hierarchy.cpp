@@ -1,4 +1,7 @@
 #include "scene_hierarchy.h"
+#include "renderer/primitive_shapes.h"
+#include "core/components/material_component.h"
+#include "core/components/mesh_renderer_component.h"
 #include "editor/commands/scene_commands.h"
 #include <glm/glm.hpp>
 #include <iostream>
@@ -14,19 +17,85 @@ void SceneHierarchyPanel::setCommandHistory(CommandHistory* history) {
 }
 
 void SceneHierarchyPanel::onImGuiRender() {
-    if (ImGui::Begin("Scene Hierarchy")) {
-        if (currentScene) {
-            for (size_t i = 0; i < currentScene->getObjects().size(); ++i) {
-                if (currentScene->getObjects()[i].parentIndex == -1) {
-                    renderObjectNode(i);
+    ImGui::Begin("Scene Hierarchy");
+    
+    if (ImGui::Button("Add Cube", ImVec2(-1, 0))) {
+        createPrimitive("Cube", "cube");
+    }
+    if (ImGui::Button("Add Sphere", ImVec2(-1, 0))) {
+        createPrimitive("Sphere", "sphere");
+    }
+    if (ImGui::Button("Add Plane", ImVec2(-1, 0))) {
+        createPrimitive("Plane", "plane");
+    }
+    if (ImGui::Button("Add Light", ImVec2(-1, 0))) {
+        createPrimitive("Light", "light");
+    }
+    
+    ImGui::Separator();
+    
+    if (currentScene) {
+        const auto& objects = currentScene->getObjects();
+        for (size_t i = 0; i < objects.size(); ++i) {
+            try {
+                if (objects[i].parentIndex == -1) {
+                    renderObjectNode((int)i);
                 }
+            } catch (...) {
+                std::cerr << "Error rendering object at index " << i << std::endl;
             }
         }
     }
+    
     ImGui::End();
 }
 
+void SceneHierarchyPanel::createPrimitive(const std::string& name, const std::string& type) {
+    if (!currentScene) return;
+    
+    Haruka::SceneObject obj;
+    obj.name = name + "_" + std::to_string(currentScene->getObjects().size());
+    obj.type = type == "light" ? "Light" : 
+               type == "cube" ? "Cube" :
+               type == "sphere" ? "Sphere" : "Plane";
+    obj.position = glm::dvec3(0, 0, 0);
+    obj.rotation = glm::dvec3(0, 0, 0);
+    obj.scale = glm::dvec3(1, 1, 1);
+    
+    // Crear mesh
+    obj.meshRenderer = std::make_shared<MeshRendererComponent>();
+    std::vector<glm::vec3> verts, norms;
+    std::vector<unsigned int> indices;
+    
+    if (type == "cube") {
+        PrimitiveShapes::createCube(1.0f, verts, norms, indices);
+        obj.material = std::make_shared<Haruka::MaterialComponent>();
+        obj.material->albedo = glm::vec3(0.8f, 0.8f, 0.8f);
+    } else if (type == "sphere") {
+        PrimitiveShapes::createSphere(1.0f, 32, 32, verts, norms, indices);
+        obj.material = std::make_shared<Haruka::MaterialComponent>();
+        obj.material->albedo = glm::vec3(0.5f, 0.7f, 0.5f);
+    } else if (type == "plane") {
+        PrimitiveShapes::createPlane(2.0f, 2.0f, 10, verts, norms, indices);
+        obj.material = std::make_shared<Haruka::MaterialComponent>();
+        obj.material->albedo = glm::vec3(0.7f, 0.7f, 0.7f);
+    } else if (type == "light") {
+        PrimitiveShapes::createSphere(0.5f, 16, 16, verts, norms, indices);
+        obj.material = std::make_shared<Haruka::MaterialComponent>();
+        obj.material->albedo = glm::vec3(1.0f, 1.0f, 0.0f);
+    }
+    
+    obj.meshRenderer->setMesh(verts, norms, indices);
+    currentScene->addObject(obj);
+
+	std::cout << "✓ Created " << obj.name << std::endl;
+}
+
 void SceneHierarchyPanel::renderObjectNode(int index) {
+    if (!currentScene || index < 0 || index >= (int)currentScene->getObjects().size()) {
+        return;
+    }
+    
     auto& obj = currentScene->getObjects()[index];
     
     ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth;
@@ -59,7 +128,9 @@ void SceneHierarchyPanel::renderObjectNode(int index) {
     
     if (nodeOpen) {
         for (int childIndex : obj.childrenIndices) {
-            renderObjectNode(childIndex);
+            if (childIndex >= 0 && childIndex < (int)currentScene->getObjects().size()) {
+                renderObjectNode(childIndex);
+            }
         }
         
         // Renderizar children vector (hijos del prefab, etc)

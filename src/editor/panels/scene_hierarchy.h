@@ -44,4 +44,5 @@ private:
 
     void renderChildObject(Haruka::SceneObject& child, size_t index);
     void showContextMenuChild(Haruka::SceneObject& child);
+    void createPrimitive(const std::string& name, const std::string& type);
 };
