@@ -3,44 +3,25 @@
     "initializer": "",
     "objects": [
         {
-            "name": "Sun",
-            "type": "Star",
-            "position": [-149500000, 0, 0],
+            "name": "DirectionalLight",
+            "type": "Light",
+            "position": [0, 2, -5],
             "rotation": [0, 0, 0],
-            "scale": [696000, 696000, 696000],
-            "color": [1.0, 0.95, 0.7],
+            "scale": [1, 1, 1],
+            "color": [1.0, 1.0, 0.8],
             "intensity": 2.0,
-            "modelPath": ""
-        },
-        {
-            "name": "Earth",
-            "type": "Planet",
-            "position": [0, 0, 0],
-            "rotation": [0, 0, 0],
-            "scale": [6371, 6371, 6371],
-            "color": [0.1, 0.5, 0.8],
-            "intensity": 1.0,
-            "modelPath": ""
-        },
-        {
-            "name": "Moon",
-            "type": "Planet",
-            "position": [600000, 0, 0],
-            "rotation": [0, 0, 0],
-            "scale": [2700, 2700, 2700],
-            "color": [0.7, 0.7, 0.7],
-            "intensity": 0.8,
             "modelPath": ""
         },
         {
             "name": "Player",
             "type": "Character",
-            "position": [0, 7000, 0],
+            "position": [0, 0, 10],
             "rotation": [0, 0, 0],
-            "scale": [10, 15, 10],
+            "scale": [1, 1, 1],
             "color": [0.2, 0.4, 0.8],
             "intensity": 1.0,
             "modelPath": ""
         }
     ]
 }
+

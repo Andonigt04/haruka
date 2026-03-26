@@ -1,4 +1,5 @@
 #include "point_shadow.h"
+#include "core/error_reporter.h"
 #include <iostream>
 
 PointShadow::PointShadow(unsigned int resolution) : resolution(resolution)
@@ -35,7 +36,7 @@ void PointShadow::setupFramebuffer()
     glReadBuffer(GL_NONE);
 
     if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
-        std::cerr << "ERROR: Point Shadow framebuffer incomplete!" << std::endl;
+        HARUKA_MOTOR_ERROR(ErrorCode::RENDER_TARGET_FAILED, "Point Shadow framebuffer incomplete!");
     }
 
     glBindFramebuffer(GL_FRAMEBUFFER, 0);

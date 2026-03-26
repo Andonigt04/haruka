@@ -1,4 +1,5 @@
 #include "project.h"
+#include "error_reporter.h"
 
 #include <fstream>
 #include <filesystem>
@@ -37,7 +38,7 @@ namespace Haruka
             std::cout << "Project created at: " << path << std::endl;
             return ok;
         } catch (const std::exception& e) {
-            std::cerr << "Error creating project: " << e.what() << std::endl;
+            HARUKA_MOTOR_ERROR(ErrorCode::GAME_LOGIC_ERROR, std::string("Error creating project: ") + e.what());
             return false;
         }
     }
@@ -73,7 +74,7 @@ namespace Haruka
     bool Project::loadFromJSON(const std::string& filepath) {
         std::ifstream file(filepath);
         if (!file.is_open()) {
-            std::cerr << "Cannot open project file: " << filepath << std::endl;
+            HARUKA_MOTOR_ERROR(ErrorCode::FILE_NOT_FOUND, std::string("Cannot open project file: ") + filepath);
             return false;
         }
         
@@ -110,7 +111,7 @@ namespace Haruka
     bool Project::saveToJSON(const std::string& filepath) {
         std::ofstream file(filepath);
         if (!file.is_open()) {
-            std::cerr << "Cannot create project file: " << filepath << std::endl;
+            HARUKA_MOTOR_ERROR(ErrorCode::FILE_WRITE_ERROR, std::string("Cannot create project file: ") + filepath);
             return false;
         }
         

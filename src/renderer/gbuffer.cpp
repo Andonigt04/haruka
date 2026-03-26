@@ -1,4 +1,5 @@
 #include "gbuffer.h"
+#include "core/error_reporter.h"
 #include <iostream>
 
 GBuffer::GBuffer(unsigned int width, unsigned int height)
@@ -51,7 +52,7 @@ void GBuffer::setupFramebuffer() {
     glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, rboDepth);
 
     if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
-        std::cerr << "ERROR: GBuffer incomplete!" << std::endl;
+        HARUKA_MOTOR_ERROR(ErrorCode::RENDER_TARGET_FAILED, "GBuffer incomplete!");
     }
 
     glBindFramebuffer(GL_FRAMEBUFFER, 0);

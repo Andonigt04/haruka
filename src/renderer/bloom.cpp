@@ -1,4 +1,5 @@
 #include "bloom.h"
+#include "core/error_reporter.h"
 #include <iostream>
 
 Bloom::Bloom(unsigned int width, unsigned int height) : width(width), height(height)
@@ -31,7 +32,7 @@ void Bloom::setupFramebuffer()
     glDrawBuffers(2, attachments);
     
     if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
-        std::cerr << "ERROR: Bloom framebuffer incomplete" << std::endl;
+        HARUKA_MOTOR_ERROR(ErrorCode::RENDER_TARGET_FAILED, "Bloom framebuffer incomplete");
     
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }

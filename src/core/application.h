@@ -24,6 +24,15 @@
 #include "renderer/render_target.h"
 #include "renderer/simple_mesh.h"
 #include "renderer/primitive_shapes.h"
+#include "renderer/light_culler.h"
+#include "renderer/gpu_instancing.h"
+#include "renderer/compute_postprocess.h"
+#include "renderer/cascaded_shadow.h"
+#include "renderer/virtual_texturing.h"
+#include "error_reporter.h"
+#include "io/asset_streamer.h"
+#include "debug_overlay.h"
+#include "physics/raycast_simple.h"
 
 class Application {
 public:
@@ -31,15 +40,22 @@ public:
     ~Application();
     
     Camera* getCamera() { return _camera.get(); }
+    Haruka::Scene* getCurrentScene() { return _currentScene.get(); }
+    RaycastSimple* getRaycastSystem() { return _raycastSystem.get(); }
     void run();
 
 private:
+    // Constants
+    static constexpr int WINDOW_WIDTH = 1280;
+    static constexpr int WINDOW_HEIGHT = 720;
+    static constexpr int MAX_LIGHTS = 256; 
+
     void init_window();
     void main_loop();
     void cleanup();
     
     void loadScene(const std::string& scenePath);
-    void renderScene();
+    void renderScene(Shader* shader = nullptr);
 
     // Window
     GLFWwindow* _window;
@@ -62,6 +78,18 @@ private:
     std::unique_ptr<IBL> _iblSystem;
     std::unique_ptr<PointShadow> _pointShadowSystem;
     std::unique_ptr<WorldSystem> _worldSystem;
+    std::unique_ptr<LightCuller> _lightCuller;
+    std::unique_ptr<GPUInstancing> _instancing;
+    std::unique_ptr<ComputePostProcess> _computePostProcess;
+    std::unique_ptr<CascadedShadowMap> _cascadedShadow;
+    std::unique_ptr<VirtualTexturing> _virtualTexturing;
+    std::unique_ptr<RaycastSimple> _raycastSystem;
+    
+    // Debug overlay para profiling (singleton reference)
+    // Nota: DebugOverlay es singleton
+    
+    // Asset streaming para reducir RAM
+    // Nota: AssetStreamer es singleton, pero mantener referencia aquí
     
     std::unique_ptr<RenderTarget> _lightingTarget;
     std::unique_ptr<RenderTarget> _bloomExtractTarget;

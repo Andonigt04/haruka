@@ -63,36 +63,56 @@ void PrimitiveShapes::createCube(float size, std::vector<glm::vec3>& vertices, s
 
     float s = size / 2.0f;
 
-    // Vertices (8 esquinas)
-    vertices = {
-        {-s, -s, -s}, {s, -s, -s}, {s, s, -s}, {-s, s, -s},  // Back
-        {-s, -s, s},  {s, -s, s},  {s, s, s},  {-s, s, s}    // Front
-    };
+    // Crear 24 vértices (4 por cara, para normales per-face)
+    // Back face (z = -s)
+    vertices.push_back({-s, -s, -s}); vertices.push_back({s, -s, -s}); 
+    vertices.push_back({s, s, -s}); vertices.push_back({-s, s, -s});
+    
+    // Front face (z = s)
+    vertices.push_back({-s, -s, s}); vertices.push_back({s, -s, s}); 
+    vertices.push_back({s, s, s}); vertices.push_back({-s, s, s});
+    
+    // Left face (x = -s)
+    vertices.push_back({-s, -s, -s}); vertices.push_back({-s, -s, s}); 
+    vertices.push_back({-s, s, s}); vertices.push_back({-s, s, -s});
+    
+    // Right face (x = s)
+    vertices.push_back({s, -s, -s}); vertices.push_back({s, -s, s}); 
+    vertices.push_back({s, s, s}); vertices.push_back({s, s, -s});
+    
+    // Bottom face (y = -s)
+    vertices.push_back({-s, -s, -s}); vertices.push_back({s, -s, -s}); 
+    vertices.push_back({s, -s, s}); vertices.push_back({-s, -s, s});
+    
+    // Top face (y = s)
+    vertices.push_back({-s, s, -s}); vertices.push_back({s, s, -s}); 
+    vertices.push_back({s, s, s}); vertices.push_back({-s, s, s});
 
-    // Normals (por cara)
+    // Normals (una por cara, aplicada a los 4 vértices de esa cara)
     glm::vec3 faceNormals[6] = {
         {0, 0, -1}, {0, 0, 1},   // Back, Front
         {-1, 0, 0}, {1, 0, 0},   // Left, Right
         {0, -1, 0}, {0, 1, 0}    // Bottom, Top
     };
 
-    // Índices (6 caras, 2 triángulos cada una)
-    unsigned int cubeIndices[36] = {
-        0, 2, 1, 0, 3, 2,  // Back
-        4, 5, 6, 4, 6, 7,  // Front
-        4, 0, 3, 4, 3, 7,  // Left
-        1, 2, 6, 1, 6, 5,  // Right
-        4, 1, 5, 4, 0, 1,  // Bottom
-        3, 6, 2, 3, 7, 6   // Top
-    };
-
-    indices.assign(cubeIndices, cubeIndices + 36);
-
-    // Asignar normals por vértice (repetir por cada cara)
-    for (int i = 0; i < 36; i += 6) {
-        for (int j = 0; j < 6; ++j) {
-            normals.push_back(faceNormals[i / 6]);
+    // Asignar normales (4 vértices por cara)
+    for (int face = 0; face < 6; ++face) {
+        for (int i = 0; i < 4; ++i) {
+            normals.push_back(faceNormals[face]);
         }
+    }
+
+    // Índices (2 triángulos por cara)
+    for (int face = 0; face < 6; ++face) {
+        unsigned int baseIdx = face * 4;
+        // Triángulo 1
+        indices.push_back(baseIdx);
+        indices.push_back(baseIdx + 2);
+        indices.push_back(baseIdx + 1);
+        // Triángulo 2
+        indices.push_back(baseIdx);
+        indices.push_back(baseIdx + 3);
+        indices.push_back(baseIdx + 2);
     }
 }
 

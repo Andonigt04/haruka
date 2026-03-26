@@ -34,5 +34,8 @@ file(GLOB_RECURSE PROJECT_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/scripts/*.cpp"
 )
 
+# Remover init_test.cpp del build normal
+list(REMOVE_ITEM PROJECT_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/scripts/init_test.cpp")
+
 add_library(TestGameLogic SHARED ${PROJECT_SOURCES})
 target_link_libraries(TestGameLogic PRIVATE ${HarukaEngineLib_LIBRARY})

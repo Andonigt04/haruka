@@ -137,4 +137,9 @@ private:
     void cleanOldBackups(const std::string& path);
     void deleteAllBackups(const std::string& path);
     std::string getFileType(const std::string& path);
+    
+    // Motor sub-process management
+    pid_t motorPID = -1;
+    void startMotorProcess();
+    void stopMotorProcess();
 };

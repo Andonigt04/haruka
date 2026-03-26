@@ -1,4 +1,6 @@
 #version 460 core
+#extension GL_ARB_gpu_shader_fp64 : enable
+
 out vec4 FragColor;
 
 in vec2 TexCoords;
@@ -18,17 +20,14 @@ struct Light {
     vec3 position;
     vec3 color;
 };
-uniform Light lights[32];
+uniform Light lights[256];  // Aumentado de 32 a 256
 uniform int numLights;
 
-// Muestras para PCF en cubemap
-vec3 sampleOffsetDirections[20] = vec3[]
+// Optimized PCF sampling (reducido de 20 a 8 muestras)
+const vec3 sampleOffsetDirections[8] = vec3[]
 (
    vec3( 1,  1,  1), vec3( 1, -1,  1), vec3(-1, -1,  1), vec3(-1,  1,  1), 
-   vec3( 1,  1, -1), vec3( 1, -1, -1), vec3(-1, -1, -1), vec3(-1,  1, -1),
-   vec3( 1,  1,  0), vec3( 1, -1,  0), vec3(-1, -1,  0), vec3(-1,  1,  0),
-   vec3( 1,  0,  1), vec3(-1,  0,  1), vec3( 1,  0, -1), vec3(-1,  0, -1),
-   vec3( 0,  1,  1), vec3( 0, -1,  1), vec3( 0, -1, -1), vec3( 0,  1, -1)
+   vec3( 1,  1, -1), vec3( 1, -1, -1), vec3(-1, -1, -1), vec3(-1,  1, -1)
 );
 
 float ShadowCalculation(vec3 FragPos)
@@ -37,9 +36,9 @@ float ShadowCalculation(vec3 FragPos)
     float currentDepth = length(fragToLight);
 
     float shadow = 0.0;
-    float bias = 0.05;
-    int samples = 20;
-    float diskRadius = 0.01;
+    const float bias = 0.05;
+    const int samples = 8;
+    const float diskRadius = 0.01;
 
     for(int i = 0; i < samples; ++i)
     {
@@ -59,35 +58,48 @@ void main()
     vec3 Albedo  = texture(gAlbedoSpec, TexCoords).rgb;
     float Spec   = texture(gAlbedoSpec, TexCoords).a;
     vec3 Emissive = texture(gEmissive, TexCoords).rgb;
-    float AO = 1.0; // fuerza AO para evitar negro
+    float AO = 1.0;
 
     vec3 viewDir = normalize(viewPos - FragPos);
 
-    // ===== DIRECT LIGHTING (Point Lights) =====
+    // ===== DIRECT LIGHTING =====
     vec3 lighting = vec3(0.0);
     
     // Ambient
     vec3 ambient = 0.1 * Albedo * AO;
     lighting += ambient;
-    
-    // shadow normal
-    float shadow = ShadowCalculation(FragPos);
 
     for(int i = 0; i < numLights; ++i)
     {
-        vec3 lightDir = normalize(lights[i].position - FragPos);
-        float diff = max(dot(Normal, lightDir), 0.0);
+        // Detectar si es DirectionalLight (posición muy lejana, > 1000)
+        float dist = length(lights[i].position);
+        
+        if (dist > 1000.0) {
+            // === DIRECTIONAL LIGHT (Sun) ===
+            vec3 lightDir = normalize(-lights[i].position);  // Invertir dirección
+            float diff = max(dot(Normal, lightDir), 0.0);
 
-        vec3 halfwayDir = normalize(lightDir + viewDir);
-        float spec = pow(max(dot(Normal, halfwayDir), 0.0), 32.0) * Spec;
+            vec3 halfwayDir = normalize(lightDir + viewDir);
+            float spec = pow(max(dot(Normal, halfwayDir), 0.0), 32.0) * Spec;
 
-        float distance = length(lights[i].position - FragPos);
-        float attenuation = 1.0 / (distance * distance + 0.001);
+            vec3 radiance = lights[i].color;
 
-        vec3 radiance = lights[i].color * attenuation;
+            lighting += (diff * Albedo + spec * vec3(0.5)) * radiance;
+        } else {
+            // === POINT LIGHT ===
+            vec3 lightDir = normalize(lights[i].position - FragPos);
+            float diff = max(dot(Normal, lightDir), 0.0);
 
-        float shadowFactor = (i == 0) ? (1.0 - shadow) : 1.0;
-        lighting += (diff * Albedo + spec * vec3(0.5)) * radiance * shadowFactor;
+            vec3 halfwayDir = normalize(lightDir + viewDir);
+            float spec = pow(max(dot(Normal, halfwayDir), 0.0), 32.0) * Spec;
+
+            float distance = length(lights[i].position - FragPos);
+            float attenuation = 1.0 / (distance * distance + 0.001);
+
+            vec3 radiance = lights[i].color * attenuation;
+
+            lighting += (diff * Albedo + spec * vec3(0.5)) * radiance;
+        }
     }
     
     lighting += Emissive * 0.5;

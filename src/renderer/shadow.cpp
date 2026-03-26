@@ -1,4 +1,5 @@
 #include "shadow.h"
+#include "core/error_reporter.h"
 
 #include <iostream>
 
@@ -27,7 +28,7 @@ void Shadow::setupFramebuffer()
     glReadBuffer(GL_NONE);
 
     // Verify
-    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) { std::cerr << "ERROR: Shadow framebuffer no está completo!" << std::endl; }
+    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) { HARUKA_MOTOR_ERROR(ErrorCode::RENDER_TARGET_FAILED, "Shadow framebuffer no está completo!"); }
 
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }

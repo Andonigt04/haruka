@@ -5,45 +5,48 @@
 #include "game/character.h"
 #include "core/camera.h"
 #include <iostream>
+#include <memory>
 
+// Global state
 Camera* g_gameCamera = nullptr;
 Haruka::Character* g_playerCharacter = nullptr;
 GameLogic::PlayerInputController* g_playerInputController = nullptr;
 Haruka::PlanetarySystem* g_planetarySystem = nullptr;
 
-// Callbacks del juego
+// ============================================================================
+// GAME INITIALIZATION
+// ============================================================================
+
 void gameOnInit(Haruka::Scene* scene) {
     if (!scene) return;
     
-    std::cout << "Game initialized - Planetary system loaded" << std::endl;
+    std::cout << "\n🎮 Game Initializing..." << std::endl;
     
-    // Inicializar sistema planetario
-    if (!g_planetarySystem) {
-        g_planetarySystem = new Haruka::PlanetarySystem();
-        // Nota: init() requiere WorldSystem que no tenemos aquí
-        // La gravedad se aplicará automáticamente basada en la escena
-    }
+    // Initialize planetary system
+    g_planetarySystem = new Haruka::PlanetarySystem();
+    std::cout << "✓ Planetary system initialized" << std::endl;
     
     auto& objects = scene->getObjects();
+    std::cout << "✓ Scene loaded with " << objects.size() << " objects" << std::endl;
     
-    // Buscar el jugador en la escena
+    // Find and initialize player
     for (auto& obj : objects) {
         if (obj.type == "Character" && obj.name == "Player") {
             Haruka::WorldPos playerPos = obj.position;
+            
             g_playerCharacter = new Haruka::Character(playerPos, "player1");
             g_gameCamera = g_playerCharacter->getCamera();
             
-            // Crear controlador de entrada
-            g_playerInputController = new GameLogic::PlayerInputController(g_playerCharacter, g_planetarySystem);
+            g_playerInputController = new GameLogic::PlayerInputController(
+                g_playerCharacter,
+                g_planetarySystem
+            );
             
-            // Establecer el jugador en el sistema planetario
-            if (g_planetarySystem) {
-                auto charPtr = std::make_unique<Haruka::Character>(playerPos, "player1");
-                g_planetarySystem->setPlayer(std::move(charPtr));
-            }
+            auto charPtr = std::make_unique<Haruka::Character>(playerPos, "player1");
+            g_planetarySystem->setPlayer(std::move(charPtr));
             
-            std::cout << "✓ Player initialized at position: " 
-                      << playerPos.x << ", " << playerPos.y << ", " << playerPos.z << std::endl;
+            std::cout << "✓ Player initialized" << std::endl;
+            std::cout << "✓ Game ready\n" << std::endl;
             return;
         }
     }
@@ -51,24 +54,30 @@ void gameOnInit(Haruka::Scene* scene) {
     std::cout << "⚠ No player found in scene" << std::endl;
 }
 
+// ============================================================================
+// GAME UPDATE
+// ============================================================================
+
 void gameOnUpdate(GLFWwindow* window, float deltaTime) {
-    // Actualizar sistema planetario (física, órbitas, etc)
     if (g_planetarySystem) {
         g_planetarySystem->update(deltaTime);
     }
     
-    // Procesar input del jugador
     if (g_playerInputController) {
         g_playerInputController->update(window, deltaTime);
     }
 }
+
+// ============================================================================
+// GAME INTERFACE
+// ============================================================================
 
 Camera* gameGetCamera() {
     return g_gameCamera;
 }
 
 void gameOnShutdown() {
-    std::cout << "Game shutting down..." << std::endl;
+    std::cout << "\n🛑 Shutting down..." << std::endl;
     if (g_playerCharacter) {
         delete g_playerCharacter;
         g_playerCharacter = nullptr;
@@ -77,9 +86,12 @@ void gameOnShutdown() {
         delete g_playerInputController;
         g_playerInputController = nullptr;
     }
+    if (g_planetarySystem) {
+        delete g_planetarySystem;
+        g_planetarySystem = nullptr;
+    }
 }
 
-// Interfaz de juego - EXPORT para que el editor lo cargue
 namespace GameLogic {
     Haruka::GameInterface gameInterface = {
         .onInit = gameOnInit,
@@ -87,14 +99,15 @@ namespace GameLogic {
         .onShutdown = gameOnShutdown,
         .getCamera = gameGetCamera,
         .getScene = nullptr,
-        .name = "Planetary Exploration System",
+        .name = "Game",
         .version = "0.1.0"
     };
 }
 
-// Función que el editor carga dinámicamente
 extern "C" {
     Haruka::GameInterface* getGameInterface() {
         return &GameLogic::gameInterface;
     }
 }
+
+

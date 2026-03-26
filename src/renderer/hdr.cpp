@@ -1,4 +1,5 @@
 #include "hdr.h"
+#include "core/error_reporter.h"
 
 #include <iostream>
 
@@ -39,7 +40,7 @@ void HDR::setupFramebuffer()
     glDrawBuffers(2, attachments);
 
     if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) 
-        std::cerr << "ERROR: HDR framebuffer incomplete" << std::endl;
+        HARUKA_MOTOR_ERROR(ErrorCode::RENDER_TARGET_FAILED, "HDR framebuffer incomplete");
 
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }

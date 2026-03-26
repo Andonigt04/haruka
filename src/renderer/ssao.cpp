@@ -1,4 +1,5 @@
 #include "ssao.h"
+#include "core/error_reporter.h"
 #include <random>
 #include <iostream>
 
@@ -59,7 +60,7 @@ void SSAO::setupFramebuffer() {
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, ssaoColorBuffer, 0);
     
     if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
-        std::cerr << "ERROR: SSAO framebuffer incomplete!" << std::endl;
+        HARUKA_MOTOR_ERROR(ErrorCode::RENDER_TARGET_FAILED, "SSAO framebuffer incomplete!");
     }
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }

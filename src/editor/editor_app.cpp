@@ -2,6 +2,7 @@
 
 #include "editor_app.h"
 #include "core/camera.h"
+#include "core/error_reporter.h"
 
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
@@ -18,16 +19,22 @@
 #include <chrono>
 #include <iomanip>
 #include <sstream>
+#include <unistd.h>
+#include <sys/wait.h>
+#include <signal.h>
+#include <cerrno>
 
 EditorApplication::EditorApplication() : window(nullptr) {}
 
 EditorApplication::~EditorApplication() {
+    stopMotorProcess();
     shutdown();
 }
 
 void EditorApplication::init() {
     // ===== GLFW & GLAD Setup =====
     if (!glfwInit()) {
+        HARUKA_EDITOR_ERROR(ErrorCode::EDITOR_INIT_FAILED, "Failed to initialize GLFW in Editor");
         throw std::runtime_error("Failed to initialize GLFW");
     }
 
@@ -132,6 +139,9 @@ void EditorApplication::init() {
         currentScene->addObject(cube);
         std::cout << "✓ Default cube added to scene" << std::endl;
     }
+    
+    // Iniciar motor sub-proceso
+    startMotorProcess();
     
     std::cout << "✓ Haruka Editor initialized" << std::endl;
 }
@@ -982,4 +992,74 @@ void EditorApplication::deleteAllBackups(const std::string& filePath) {
 
 std::string EditorApplication::getFileType(const std::string& path) {
     return (path.find(".prefab") != std::string::npos) ? "Prefab" : "Scene";
+}
+
+void EditorApplication::startMotorProcess() {
+    if (motorPID != -1) {
+        return;  // Motor ya está corriendo
+    }
+
+    if (!currentProject) {
+        std::cerr << "⚠ No project loaded, cannot start motor" << std::endl;
+        return;
+    }
+
+    pid_t pid = fork();
+
+    if (pid == -1) {
+        std::cerr << "✗ Failed to fork motor process" << std::endl;
+        return;
+    }
+
+    if (pid == 0) {
+        // Proceso hijo: ejecutar HarukaEngine
+        std::string exePath = "../HarukaEngine";  // Ruta relativa desde build/
+        
+        // Argumentos: ruta del proyecto
+        const char* args[] = {
+            exePath.c_str(),
+            nullptr
+        };
+
+        // Ejecutar motor
+        execvp(exePath.c_str(), (char* const*)args);
+
+        // Si execvp falla
+        std::cerr << "✗ Failed to exec motor: " << strerror(errno) << std::endl;
+        exit(1);
+    } else {
+        // Proceso padre: guardar PID
+        motorPID = pid;
+        std::cout << "▶ Motor process started (PID: " << motorPID << ")" << std::endl;
+    }
+}
+
+void EditorApplication::stopMotorProcess() {
+    if (motorPID == -1) {
+        return;  // Motor no está corriendo
+    }
+
+    std::cout << "■ Stopping motor process..." << std::endl;
+
+    // Enviar SIGTERM al proceso motor
+    kill(motorPID, SIGTERM);
+
+    // Esperar a que el proceso termine (timeout de 3 segundos)
+    int status;
+    for (int i = 0; i < 30; i++) {  // 30 * 100ms = 3 segundos
+        pid_t result = waitpid(motorPID, &status, WNOHANG);
+        if (result == motorPID) {
+            std::cout << "✓ Motor process stopped" << std::endl;
+            motorPID = -1;
+            return;
+        }
+        usleep(100000);  // 100ms
+    }
+
+    // Si aún está corriendo, SIGKILL
+    std::cerr << "⚠ Motor did not stop gracefully, forcing..." << std::endl;
+    kill(motorPID, SIGKILL);
+    waitpid(motorPID, &status, 0);
+    motorPID = -1;
+    std::cout << "✓ Motor process killed" << std::endl;
 }

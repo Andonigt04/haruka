@@ -227,6 +227,28 @@ void ViewportPanel::renderScene() {
     renderVertex_count = 0;
     renderDraw_calls = 0;
 
+    // Intentar obtener RenderTarget del Motor si está activo
+    RenderTarget* motorTarget = MotorInstance::getInstance().getRenderTarget();
+    if (motorTarget && MotorInstance::getInstance().isMotorActive()) {
+        // Copiar textura del motor al renderTarget del viewport
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, motorTarget->getFBO());
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, renderTarget->getFBO());
+        glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL_COLOR_BUFFER_BIT, GL_LINEAR);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        
+        // El motor está renderizando, mostrar solo eso
+        renderDraw_calls = 1;
+        renderVertex_count = 0;
+        
+        if (statsPanel) {
+            statsPanel->setVertexCount(renderVertex_count);
+            statsPanel->setDrawCalls(renderDraw_calls);
+            statsPanel->setTriangleCount(0);
+        }
+        return;
+    }
+
+    // Fallback: Renderizar localmente si el Motor no está disponible
     renderTarget->bindForWriting();
     glViewport(0, 0, width, height);
     glEnable(GL_DEPTH_TEST);
@@ -240,26 +262,41 @@ void ViewportPanel::renderScene() {
     glm::mat4 proj = glm::perspective(glm::radians(45.0f), (float)width / (float)height, 0.1f, 1000000000.0f);
     glm::mat4 view = camera->getViewMatrix();
 
-    renderGrid(view, proj);
-    renderDraw_calls++;
-
     sceneShader->use();
     sceneShader->setMat4("projection", proj);
     sceneShader->setMat4("view", view);
 
-    // Configurar luces
-    std::vector<glm::vec3> lights = {
-        glm::vec3(10.0f, 10.0f, 10.0f),
-        glm::vec3(-10.0f, 5.0f, -10.0f)
-    };
-    std::vector<glm::vec3> lightColors = {
-        glm::vec3(300.0f, 300.0f, 300.0f),
-        glm::vec3(150.0f, 150.0f, 150.0f)
-    };
-
     sceneShader->setVec3("viewPos", camera->position);
-    sceneShader->setInt("numLights", lights.size());
 
+    // Sincronizar luces de la escena con el shader
+    std::vector<glm::vec3> lights;
+    std::vector<glm::vec3> lightColors;
+    
+    if (currentScene) {
+        const auto& objects = currentScene->getObjects();
+        
+        // Buscar luces (PointLight + DirectionalLight)
+        for (const auto& obj : objects) {
+            if ((obj.type == "PointLight" || obj.type == "DirectionalLight") && lights.size() < 4) {
+                lights.push_back(glm::vec3(obj.position));
+                lightColors.push_back(glm::vec3(obj.color) * glm::vec3(obj.intensity));
+            }
+        }
+    }
+    
+    // Fallback lights si la escena no tiene
+    if (lights.empty()) {
+        lights = {
+            glm::vec3(10.0f, 10.0f, 10.0f),
+            glm::vec3(-10.0f, 5.0f, -10.0f)
+        };
+        lightColors = {
+            glm::vec3(300.0f, 300.0f, 300.0f),
+            glm::vec3(150.0f, 150.0f, 150.0f)
+        };
+    }
+
+    sceneShader->setInt("numLights", lights.size());
     for (size_t i = 0; i < lights.size() && i < 4; i++) {
         std::string prefix = "lights[" + std::to_string(i) + "]";
         sceneShader->setVec3(prefix + ".position", lights[i]);

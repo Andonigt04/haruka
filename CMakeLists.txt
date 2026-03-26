@@ -3,6 +3,24 @@ project(HarukaEngine)
 
 set(OpenGL_GL_PREFERENCE GLVND)
 set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# ===== Optimization Flags =====
+if(MSVC)
+    # Visual Studio optimizations
+    set(CMAKE_CXX_FLAGS_RELEASE "/O2 /Oi /Ot /Oy /GL /fp:fast /arch:AVX2")
+    set(CMAKE_EXE_LINKER_FLAGS_RELEASE "/LTCG /OPT:REF /OPT:ICF")
+else()
+    # GCC/Clang optimizations
+    set(CMAKE_CXX_FLAGS_RELEASE "-O3 -march=native -mtune=native -flto -ffast-math -fno-signed-zeros -fno-trapping-math")
+    set(CMAKE_EXE_LINKER_FLAGS_RELEASE "-O3 -flto")
+    set(CMAKE_SHARED_LINKER_FLAGS_RELEASE "-O3 -flto")
+endif()
+
+# Default to Release build
+if(NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Release)
+endif()
 
 include(FetchContent)
 
@@ -102,6 +120,13 @@ add_library(HarukaEngineLib SHARED
     ${ENGINE_SOURCES}
     ${GLAD_SOURCE}
     ${IMGUI_SOURCES}
+)
+
+# Enable optimizations for HarukaEngineLib
+set_target_properties(HarukaEngineLib PROPERTIES
+    INTERPROCEDURAL_OPTIMIZATION TRUE
+    POSITION_INDEPENDENT_CODE ON
+    VISIBILITY_INLINES_HIDDEN ON
 )
 
 target_include_directories(HarukaEngineLib PUBLIC

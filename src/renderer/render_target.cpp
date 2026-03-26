@@ -1,4 +1,5 @@
 #include "render_target.h"
+#include "core/error_reporter.h"
 #include <iostream>
 
 RenderTarget::RenderTarget(unsigned int width, unsigned int height)
@@ -25,7 +26,7 @@ void RenderTarget::setupFramebuffer() {
     glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, rboDepth);
 
     if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
-        std::cerr << "ERROR: RenderTarget framebuffer incomplete!" << std::endl;
+        HARUKA_MOTOR_ERROR(ErrorCode::RENDER_TARGET_FAILED, "RenderTarget framebuffer incomplete!");
     }
 
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
