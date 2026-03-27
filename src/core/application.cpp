@@ -23,6 +23,7 @@
 #include "error_reporter.h"
 #include "renderer/gpu_instancing.h"
 #include "physics/raycast_simple.h"
+#include "object_types.h"
 
 // Mouse input state
 struct MouseState {
@@ -236,7 +237,15 @@ void Application::renderScene(Shader* shader) {
     
     size_t modelIndex = 0;
     for (const auto& obj : _currentScene->getObjects()) {
-        if (obj.type == "Model" && modelIndex < _sceneModels.size()) {
+        // Convertir tipo string a enum
+        Haruka::ObjectType objType = Haruka::stringToObjectType(obj.type);
+        
+        // Skip non-renderable types
+        if (!Haruka::isRenderableObjectType(objType)) {
+            continue;
+        }
+        
+        if (objType == Haruka::ObjectType::MODEL && modelIndex < _sceneModels.size()) {
             glm::mat4 modelMatrix = glm::mat4(1.0f);
             modelMatrix = glm::translate(modelMatrix, glm::vec3(obj.position));
             modelMatrix = glm::rotate(modelMatrix, glm::radians((float)obj.rotation.x), glm::vec3(1, 0, 0));
@@ -251,8 +260,8 @@ void Application::renderScene(Shader* shader) {
             modelIndex++;
         }
         
-        // Renderizar primitivos (Mesh sin modelPath)
-        if (obj.type == "Mesh") {
+        // Renderizar primitivos (Mesh)
+        if (objType == Haruka::ObjectType::MESH) {
             if (!cubeMesh) {
                 HARUKA_MOTOR_ERROR(ErrorCode::RENDER_TARGET_FAILED, "cubeMesh not initialized for object: " + obj.name);
                 continue;
@@ -272,6 +281,31 @@ void Application::renderScene(Shader* shader) {
             // Renderizar cubo primitivo
             cubeMesh->draw();
         }
+        
+        // Renderizar luces como esferas (PointLight/Spotlight)
+        // TODO: Renderizar en forward pass, no en deferred geometry pass
+        /*
+        if (objType == Haruka::ObjectType::SPOTLIGHT) {
+            if (!sphereLOD[0]) {
+                HARUKA_MOTOR_ERROR(ErrorCode::RENDER_TARGET_FAILED, "sphereLOD[0] not initialized for object: " + obj.name);
+                continue;
+            }
+            
+            glm::mat4 modelMatrix = glm::mat4(1.0f);
+            modelMatrix = glm::translate(modelMatrix, glm::vec3(obj.position));
+            modelMatrix = glm::rotate(modelMatrix, glm::radians((float)obj.rotation.x), glm::vec3(1, 0, 0));
+            modelMatrix = glm::rotate(modelMatrix, glm::radians((float)obj.rotation.y), glm::vec3(0, 1, 0));
+            modelMatrix = glm::rotate(modelMatrix, glm::radians((float)obj.rotation.z), glm::vec3(0, 0, 1));
+            modelMatrix = glm::scale(modelMatrix, glm::vec3(obj.scale));
+            
+            useShader->use();
+            useShader->setMat4("model", modelMatrix);
+            useShader->setVec3("color", obj.color);
+            
+            // Renderizar esfera para PointLight
+            sphereLOD[0]->draw();
+        }
+        */
     }
 }
 
@@ -304,7 +338,8 @@ void Application::main_loop() {
     
     // Get lights from scene (motor es agnóstico - IDE decide qué hay en la escena)
     for (const auto& obj : _currentScene->getObjects()) {
-        if (obj.type == "Light") {
+        Haruka::ObjectType objType = Haruka::stringToObjectType(obj.type);
+        if (Haruka::isLightObjectType(objType)) {
             lights.push_back(obj.position);
             lightColors.push_back(obj.color * obj.intensity);
         }
@@ -336,8 +371,9 @@ void Application::main_loop() {
         geomShader.setMat4("projection", proj);
         geomShader.setMat4("view", view);
 
-        // Render scene objects con shader de geometría
-        renderScene(&geomShader);
+        if (cubeMesh) {
+            renderScene(&geomShader);
+        }
 
         // Render celestial bodies with LOD
         for (const auto& body : _worldSystem->getBodies()) {
@@ -348,6 +384,8 @@ void Application::main_loop() {
             float distance = glm::length(camPos - bodyPos);
             
             int lod = distance < 50.0f ? 0 : distance < 200.0f ? 1 : distance < 1000.0f ? 2 : 3;
+            
+            if (!sphereLOD[lod]) continue;
 
             glm::mat4 bodyModel = glm::translate(glm::mat4(1.0f), glm::vec3(body.localPos));
             bodyModel = glm::scale(bodyModel, glm::vec3(body.radius));
@@ -457,7 +495,8 @@ void Application::main_loop() {
         DebugOverlay::getInstance().updateMetrics(metrics);
         
         // Renderizar debug overlay (ImGui)
-        DebugOverlay::getInstance().render();
+        // TODO: Fix ImGui crash in DebugOverlay::render()
+        // DebugOverlay::getInstance().render();
 
         glfwSwapBuffers(_window);
         glfwPollEvents();

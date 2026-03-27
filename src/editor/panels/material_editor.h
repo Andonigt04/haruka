@@ -7,13 +7,11 @@ class MaterialEditorPanel {
 public:
     MaterialEditorPanel() = default;
     
-    void setScene(Haruka::Scene* scene) { currentScene = scene; }
-    void setSelectedObject(const std::string& objectName);
+    void setSelectedObject(Haruka::SceneObject* obj);
     void onImGuiRender();
     
 private:
-    Haruka::Scene* currentScene = nullptr;
-    std::string selectedObjectName;
+    Haruka::SceneObject* selectedObject = nullptr;
     Haruka::MaterialComponent* editingMaterial = nullptr;
     
     char shaderBuffer[256] = {};

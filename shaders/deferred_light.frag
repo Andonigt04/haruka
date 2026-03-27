@@ -23,7 +23,6 @@ struct Light {
 uniform Light lights[256];  // Aumentado de 32 a 256
 uniform int numLights;
 
-// Optimized PCF sampling (reducido de 20 a 8 muestras)
 const vec3 sampleOffsetDirections[8] = vec3[]
 (
    vec3( 1,  1,  1), vec3( 1, -1,  1), vec3(-1, -1,  1), vec3(-1,  1,  1), 

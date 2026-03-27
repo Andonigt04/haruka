@@ -12,6 +12,7 @@ public:
     SceneHierarchyPanel() = default;
     
     void setScene(Haruka::Scene* scene);
+    void setSelectedObjectIndex(int index);
     void setCommandHistory(CommandHistory* history);
     void onImGuiRender();
 
@@ -42,7 +43,7 @@ private:
     std::function<void(int)> onObjectSelectedByIndex;
     std::function<void(const std::string&)> onObjectSelectedByName;
 
-    void renderChildObject(Haruka::SceneObject& child, size_t index);
-    void showContextMenuChild(Haruka::SceneObject& child);
+    void renderChildObject(const Haruka::SceneObject& child, size_t index);
+    void showContextMenuChild(const Haruka::SceneObject& child);
     void createPrimitive(const std::string& name, const std::string& type);
 };

@@ -10,8 +10,8 @@ bool MeshOptimizer::areVerticesSimilar(
     const Vertex& v2,
     float threshold) const {
     
-    float posDist = glm::distance(v1.position, v2.position);
-    float normalDist = glm::distance(v1.normal, v2.normal);
+    float posDist = glm::distance(v1.Position, v2.Position);
+    float normalDist = glm::distance(v1.Normal, v2.Normal);
     
     return posDist < threshold && normalDist < threshold;
 }

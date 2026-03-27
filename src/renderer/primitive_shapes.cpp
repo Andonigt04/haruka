@@ -233,3 +233,110 @@ void PrimitiveShapes::createCubeSphere(float radius, int subdivisions, std::vect
         }
     }
 }
+
+void PrimitiveShapes::createCubeVertex(float size, std::vector<Vertex>& vertices, std::vector<unsigned int>& indices) {
+    vertices.clear();
+    indices.clear();
+    
+    float s = size / 2.0f;
+    
+    // Crear 24 vértices (4 por cara para texturas UV)
+    // Cara frontal (+Z)
+    vertices.push_back({glm::vec3(-s, -s,  s), glm::vec3(0, 0, 1), glm::vec2(0, 0), glm::vec3(1, 0, 0), glm::vec3(0, 1, 0)});
+    vertices.push_back({glm::vec3( s, -s,  s), glm::vec3(0, 0, 1), glm::vec2(1, 0), glm::vec3(1, 0, 0), glm::vec3(0, 1, 0)});
+    vertices.push_back({glm::vec3( s,  s,  s), glm::vec3(0, 0, 1), glm::vec2(1, 1), glm::vec3(1, 0, 0), glm::vec3(0, 1, 0)});
+    vertices.push_back({glm::vec3(-s,  s,  s), glm::vec3(0, 0, 1), glm::vec2(0, 1), glm::vec3(1, 0, 0), glm::vec3(0, 1, 0)});
+    
+    // Cara trasera (-Z)
+    vertices.push_back({glm::vec3( s, -s, -s), glm::vec3(0, 0, -1), glm::vec2(0, 0), glm::vec3(-1, 0, 0), glm::vec3(0, 1, 0)});
+    vertices.push_back({glm::vec3(-s, -s, -s), glm::vec3(0, 0, -1), glm::vec2(1, 0), glm::vec3(-1, 0, 0), glm::vec3(0, 1, 0)});
+    vertices.push_back({glm::vec3(-s,  s, -s), glm::vec3(0, 0, -1), glm::vec2(1, 1), glm::vec3(-1, 0, 0), glm::vec3(0, 1, 0)});
+    vertices.push_back({glm::vec3( s,  s, -s), glm::vec3(0, 0, -1), glm::vec2(0, 1), glm::vec3(-1, 0, 0), glm::vec3(0, 1, 0)});
+    
+    // Cara izquierda (-X)
+    vertices.push_back({glm::vec3(-s, -s, -s), glm::vec3(-1, 0, 0), glm::vec2(0, 0), glm::vec3(0, 0, 1), glm::vec3(0, 1, 0)});
+    vertices.push_back({glm::vec3(-s, -s,  s), glm::vec3(-1, 0, 0), glm::vec2(1, 0), glm::vec3(0, 0, 1), glm::vec3(0, 1, 0)});
+    vertices.push_back({glm::vec3(-s,  s,  s), glm::vec3(-1, 0, 0), glm::vec2(1, 1), glm::vec3(0, 0, 1), glm::vec3(0, 1, 0)});
+    vertices.push_back({glm::vec3(-s,  s, -s), glm::vec3(-1, 0, 0), glm::vec2(0, 1), glm::vec3(0, 0, 1), glm::vec3(0, 1, 0)});
+    
+    // Cara derecha (+X)
+    vertices.push_back({glm::vec3( s, -s,  s), glm::vec3(1, 0, 0), glm::vec2(0, 0), glm::vec3(0, 0, -1), glm::vec3(0, 1, 0)});
+    vertices.push_back({glm::vec3( s, -s, -s), glm::vec3(1, 0, 0), glm::vec2(1, 0), glm::vec3(0, 0, -1), glm::vec3(0, 1, 0)});
+    vertices.push_back({glm::vec3( s,  s, -s), glm::vec3(1, 0, 0), glm::vec2(1, 1), glm::vec3(0, 0, -1), glm::vec3(0, 1, 0)});
+    vertices.push_back({glm::vec3( s,  s,  s), glm::vec3(1, 0, 0), glm::vec2(0, 1), glm::vec3(0, 0, -1), glm::vec3(0, 1, 0)});
+    
+    // Cara superior (+Y)
+    vertices.push_back({glm::vec3(-s,  s,  s), glm::vec3(0, 1, 0), glm::vec2(0, 0), glm::vec3(1, 0, 0), glm::vec3(0, 0, -1)});
+    vertices.push_back({glm::vec3( s,  s,  s), glm::vec3(0, 1, 0), glm::vec2(1, 0), glm::vec3(1, 0, 0), glm::vec3(0, 0, -1)});
+    vertices.push_back({glm::vec3( s,  s, -s), glm::vec3(0, 1, 0), glm::vec2(1, 1), glm::vec3(1, 0, 0), glm::vec3(0, 0, -1)});
+    vertices.push_back({glm::vec3(-s,  s, -s), glm::vec3(0, 1, 0), glm::vec2(0, 1), glm::vec3(1, 0, 0), glm::vec3(0, 0, -1)});
+    
+    // Cara inferior (-Y)
+    vertices.push_back({glm::vec3(-s, -s, -s), glm::vec3(0, -1, 0), glm::vec2(0, 0), glm::vec3(1, 0, 0), glm::vec3(0, 0, 1)});
+    vertices.push_back({glm::vec3( s, -s, -s), glm::vec3(0, -1, 0), glm::vec2(1, 0), glm::vec3(1, 0, 0), glm::vec3(0, 0, 1)});
+    vertices.push_back({glm::vec3( s, -s,  s), glm::vec3(0, -1, 0), glm::vec2(1, 1), glm::vec3(1, 0, 0), glm::vec3(0, 0, 1)});
+    vertices.push_back({glm::vec3(-s, -s,  s), glm::vec3(0, -1, 0), glm::vec2(0, 1), glm::vec3(1, 0, 0), glm::vec3(0, 0, 1)});
+    
+    // Índices (2 triángulos por cara, 6 caras = 36 índices)
+    for (unsigned int i = 0; i < 6; ++i) {
+        unsigned int base = i * 4;
+        indices.push_back(base);
+        indices.push_back(base + 1);
+        indices.push_back(base + 2);
+        
+        indices.push_back(base);
+        indices.push_back(base + 2);
+        indices.push_back(base + 3);
+    }
+}
+
+void PrimitiveShapes::createSphereVertex(float radius, int sectors, int stacks, std::vector<Vertex>& vertices, std::vector<unsigned int>& indices) {
+    vertices.clear();
+    indices.clear();
+    
+    float x, y, z, xy;
+    float sectorStep = 2 * glm::pi<float>() / sectors;
+    float stackStep = glm::pi<float>() / stacks;
+    
+    for (int i = 0; i <= stacks; ++i) {
+        float stackAngle = glm::pi<float>() / 2 - i * stackStep;
+        xy = radius * cos(stackAngle);
+        z = radius * sin(stackAngle);
+        
+        for (int j = 0; j <= sectors; ++j) {
+            float sectorAngle = j * sectorStep;
+            x = xy * cos(sectorAngle);
+            y = xy * sin(sectorAngle);
+            
+            glm::vec3 pos(x, y, z);
+            glm::vec3 normal = glm::normalize(pos);
+            glm::vec2 texCoord(float(j) / sectors, float(i) / stacks);
+            
+            Vertex v;
+            v.Position = pos;
+            v.Normal = normal;
+            v.TexCoords = texCoord;
+            v.Tangent = glm::vec3(1, 0, 0);
+            v.Bitangent = glm::vec3(0, 1, 0);
+            vertices.push_back(v);
+        }
+    }
+    
+    for (int i = 0; i < stacks; ++i) {
+        unsigned int k1 = i * (sectors + 1);
+        unsigned int k2 = k1 + sectors + 1;
+        
+        for (int j = 0; j < sectors; ++j, ++k1, ++k2) {
+            if (i != 0) {
+                indices.push_back(k1);
+                indices.push_back(k2);
+                indices.push_back(k1 + 1);
+            }
+            if (i != (stacks - 1)) {
+                indices.push_back(k1 + 1);
+                indices.push_back(k2);
+                indices.push_back(k2 + 1);
+            }
+        }
+    }
+}

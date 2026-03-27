@@ -3,12 +3,7 @@
 #include <glm/glm.hpp>
 #include <vector>
 #include <memory>
-
-struct Vertex {
-    glm::vec3 position;
-    glm::vec3 normal;
-    glm::vec2 texCoord;
-};
+#include "mesh.h"
 
 /**
  * MeshOptimizer - Optimizaciones de mesh para mejor performance

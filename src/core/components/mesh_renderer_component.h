@@ -13,9 +13,7 @@ public:
     MeshRendererComponent();
     ~MeshRendererComponent();
 
-    void setMesh(const std::vector<glm::vec3>& vertices, 
-                 const std::vector<glm::vec3>& normals,
-                 const std::vector<unsigned int>& indices);
+    void setMesh(const std::vector<glm::vec3>& vertices, const std::vector<glm::vec3>& normals, const std::vector<unsigned int>& indices);
     
     void render(Shader& shader) const;
     void renderInspector();

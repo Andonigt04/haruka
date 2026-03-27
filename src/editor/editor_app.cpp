@@ -27,7 +27,6 @@
 EditorApplication::EditorApplication() : window(nullptr) {}
 
 EditorApplication::~EditorApplication() {
-    stopMotorProcess();
     shutdown();
 }
 
@@ -87,7 +86,6 @@ void EditorApplication::init() {
     inspectorPanel.setOnSceneChanged([this]() { sceneDirty = true; });
     projectBrowserPanel.setProject(currentProject.get());
     projectBrowserPanel.setScene(currentScene.get());
-    materialEditorPanel.setScene(currentScene.get());
     
     // ===== Camera Setup =====
     viewportCamera = std::make_unique<Camera>(Haruka::WorldPos(0.0f, 5.0f, 15.0f));
@@ -114,11 +112,18 @@ void EditorApplication::init() {
     });
 
     sceneHierarchyPanel.setOnObjectSelectedByIndex([this](int index) {
-        inspectorPanel.setSelectedObjectIndex(index);
+        if (currentScene && index >= 0 && index < (int)currentScene->getObjects().size()) {
+            inspectorPanel.setSelectedObjectIndex(index);
+        }
     });
 
     sceneHierarchyPanel.setOnObjectSelectedByName([this](const std::string& name) {
-        materialEditorPanel.setSelectedObject(name);
+        if (!name.empty() && currentScene) {
+            auto obj = currentScene->getObject(name);
+            if (obj) {
+                materialEditorPanel.setSelectedObject(obj);
+            }
+        }
     });
 
     // ===== Stream Capture Setup =====
@@ -127,6 +132,9 @@ void EditorApplication::init() {
 
     // Initialize panels
     settingsPanel.load();
+    
+    // Inicializar MenuBar
+    menuBar = std::make_unique<MenuBar>(this);
     
     // Setup default scene object
     if (currentScene) {
@@ -139,9 +147,6 @@ void EditorApplication::init() {
         currentScene->addObject(cube);
         std::cout << "✓ Default cube added to scene" << std::endl;
     }
-    
-    // Iniciar motor sub-proceso
-    startMotorProcess();
     
     std::cout << "✓ Haruka Editor initialized" << std::endl;
 }
@@ -232,248 +237,202 @@ void EditorApplication::render() {
 }
 
 void EditorApplication::renderUI() {
-    // Setup DockSpace
-    ImGuiViewport* viewport = ImGui::GetMainViewport();
-    ImGui::SetNextWindowPos(viewport->WorkPos);
-    ImGui::SetNextWindowSize(viewport->WorkSize);
-    ImGui::SetNextWindowViewport(viewport->ID);
+    try {
+        // Setup DockSpace
+        ImGuiViewport* viewport = ImGui::GetMainViewport();
+        ImGui::SetNextWindowPos(viewport->WorkPos);
+        ImGui::SetNextWindowSize(viewport->WorkSize);
+        ImGui::SetNextWindowViewport(viewport->ID);
 
-    ImGuiWindowFlags window_flags = ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_NoDocking;
-    window_flags |= ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse;
-    window_flags |= ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove;
-    window_flags |= ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus;
+        ImGuiWindowFlags window_flags = ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_NoDocking;
+        window_flags |= ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse;
+        window_flags |= ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove;
+        window_flags |= ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus;
 
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
 
-    ImGui::Begin("DockSpace", nullptr, window_flags);
-    ImGui::PopStyleVar(3);
+        ImGui::Begin("DockSpace", nullptr, window_flags);
+        ImGui::PopStyleVar(3);
 
-    ImGuiID dockspace_id = ImGui::GetID("MyDockSpace");
-    ImGui::DockSpace(dockspace_id, ImVec2(0.0f, 0.0f), ImGuiDockNodeFlags_PassthruCentralNode);
+        ImGuiID dockspace_id = ImGui::GetID("MyDockSpace");
+        ImGui::DockSpace(dockspace_id, ImVec2(0.0f, 0.0f), ImGuiDockNodeFlags_PassthruCentralNode);
 
-    showMenuBar();
-    ImGui::End();
+        menuBar->render();
+        ImGui::End();
 
-    if (isPlayMode) ImGui::BeginDisabled();
+        if (isPlayMode) ImGui::BeginDisabled();
 
-    // Project Browser como panel principal
-    projectBrowserPanel.onImGuiRender();
-        
-    // Scene hierarchy e inspector (independientes)
-    sceneHierarchyPanel.onImGuiRender();
-    
-    if (sceneHierarchyPanel.getSelectedObjectIndex() >= 0) {
-        inspectorPanel.setSelectedObjectIndex(sceneHierarchyPanel.getSelectedObjectIndex());
-    }
-    
-    inspectorPanel.onImGuiRender();
-    consolePanel.onImGuiRender();
-    statsPanel.onImGuiRender();
-
-    if (isPlayMode) ImGui::EndDisabled();
-
-    viewportPanel.onImGuiRender();
-    viewportPanel.setGizmoMode(gizmoMode);
-
-    if (showDemoWindow) {
-        ImGui::ShowDemoWindow(&showDemoWindow);
-    }
-    
-    // New panels
-    settingsPanel.onImGuiRender();
-    assetImporter.onImGuiRender();
-    searchPanel.onImGuiRender();
-    scriptingEditor.onImGuiRender();
-    uiBuilder.onImGuiRender();
-
-    // Save As popup (fuera del menú)
-    if (showSaveAsPopup) ImGui::OpenPopup("Save File As");
-    if (ImGui::BeginPopupModal("Save File As", &showSaveAsPopup, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::InputText("Path##save", saveAsBuffer, sizeof(saveAsBuffer));
-        bool isPrefab = std::string(saveAsBuffer).find(".prefab") != std::string::npos;
-        
-        if (ImGui::Button("Save")) {
-            saveFile(saveAsBuffer, isPrefab);
-            showSaveAsPopup = false;
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Cancel")) {
-            showSaveAsPopup = false;
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::EndPopup();
-    }
-
-    // Unsaved changes popup
-    if (showUnsavedChangesPopup) ImGui::OpenPopup("Unsaved Changes");
-    if (ImGui::BeginPopupModal("Unsaved Changes", &showUnsavedChangesPopup, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::Text("Hay cambios sin guardar.");
-        if (ImGui::Button("Guardar y continuar")) {
-            if (!currentFile.path.empty()) saveFile(currentFile.path, currentFile.isPrefab);
-            if (!pendingSceneToLoad.empty()) loadFile(pendingSceneToLoad);
-            pendingSceneToLoad.clear();
-            showUnsavedChangesPopup = false;
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Descartar")) {
-            if (!pendingSceneToLoad.empty()) loadFile(pendingSceneToLoad);
-            pendingSceneToLoad.clear();
-            showUnsavedChangesPopup = false;
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Cancelar")) {
-            pendingSceneToLoad.clear();
-            showUnsavedChangesPopup = false;
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::EndPopup();
-    }
-
-    // New Project popup
-    if (showNewProjectDialog) ImGui::OpenPopup("New Project");
-    if (ImGui::BeginPopupModal("New Project", &showNewProjectDialog, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::InputText("Project Name", newProjectNameBuffer, sizeof(newProjectNameBuffer));
-        ImGui::InputText("Project Path", newProjectPathBuffer, sizeof(newProjectPathBuffer));
-        
-        if (ImGui::Button("Create", ImVec2(120, 0))) {
-            createNewProject(newProjectNameBuffer, newProjectPathBuffer);
-            showNewProjectDialog = false;
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Cancel", ImVec2(120, 0))) {
-            showNewProjectDialog = false;
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::EndPopup();
-    }
-}
-
-void EditorApplication::showMenuBar() {
-    if (!ImGui::BeginMainMenuBar()) return;
-    
-    if (ImGui::BeginMenu("File")) {
-        if (ImGui::MenuItem("New Project")) {
-            std::snprintf(newProjectNameBuffer, sizeof(newProjectNameBuffer), "NewProject");
-            std::snprintf(newProjectPathBuffer, sizeof(newProjectPathBuffer), "/mnt/sdb1/haruka/projects/");
-            showNewProjectDialog = true;
-        }
-
-        if (ImGui::MenuItem("Open Project", "Ctrl+O")) {
-            nfdchar_t* outPath = nullptr;
-            nfdresult_t result = NFD_PickFolder(nullptr, &outPath);
-
-            if (result == NFD_OKAY && currentProject) {
-                const std::string selectedPath(outPath);
-                currentProject->load(selectedPath);
-                projectBrowserPanel.setProject(currentProject.get());
-                projectBrowserPanel.setScene(currentScene.get());
-                std::cout << "Project loaded: " << selectedPath << std::endl;
-                free(outPath);
-            } else if (result == NFD_CANCEL) {
-                std::cout << "User cancelled folder selection" << std::endl;
+        // Project Browser
+        if (showProjectBrowser) {
+            try {
+                projectBrowserPanel.onImGuiRender();
+            } catch (const std::exception& e) {
+                HARUKA_EDITOR_ERROR(ErrorCode::EDITOR_INIT_FAILED, "ProjectBrowser crash: " + std::string(e.what()));
             }
         }
-
-        ImGui::Separator();
-
-        if (ImGui::MenuItem("Save", "Ctrl+S")) {
-            if (!currentFile.path.empty()) {
-                saveFile(currentFile.path, currentFile.isPrefab);
-            } else {
-                std::snprintf(saveAsBuffer, sizeof(saveAsBuffer), "scenes/Untitled.scene");
-                showSaveAsPopup = true;
-            }
-        }
-
-        if (ImGui::MenuItem("Save As...")) {
-            std::snprintf(saveAsBuffer, sizeof(saveAsBuffer), "%s", currentFile.path.c_str());
-            showSaveAsPopup = true;
-        }
-
-        ImGui::Separator();
-
-        if (ImGui::MenuItem("Open File", "Ctrl+O")) {
-            nfdchar_t* outPath = nullptr;
-            nfdresult_t result = NFD_OpenDialog("scene,prefab", nullptr, &outPath);
             
-            if (result == NFD_OKAY) {
-                loadFile(outPath);
-                free(outPath);
+        // Scene Hierarchy
+        if (showSceneHierarchy) {
+            try {
+                sceneHierarchyPanel.onImGuiRender();
+            } catch (const std::exception& e) {
+                HARUKA_EDITOR_ERROR(ErrorCode::EDITOR_INIT_FAILED, "SceneHierarchy crash: " + std::string(e.what()));
+            }
+        }
+        
+        // Inspector
+        if (showInspector) {
+            try {
+                inspectorPanel.onImGuiRender();
+            } catch (const std::exception& e) {
+                HARUKA_EDITOR_ERROR(ErrorCode::EDITOR_INIT_FAILED, "Inspector crash: " + std::string(e.what()));
+            }
+        }
+        
+        // Console
+        if (showConsole) {
+            try {
+                consolePanel.onImGuiRender();
+            } catch (const std::exception& e) {
+                HARUKA_EDITOR_ERROR(ErrorCode::EDITOR_INIT_FAILED, "Console crash: " + std::string(e.what()));
+            }
+        }
+        
+        // Stats
+        if (showStats) {
+            try {
+                statsPanel.onImGuiRender();
+            } catch (const std::exception& e) {
+                HARUKA_EDITOR_ERROR(ErrorCode::EDITOR_INIT_FAILED, "Stats crash: " + std::string(e.what()));
+            }
+        }
+        
+        // Material Editor
+        if (showMaterialEditor) {
+            try {
+                materialEditorPanel.onImGuiRender();
+            } catch (const std::exception& e) {
+                HARUKA_EDITOR_ERROR(ErrorCode::EDITOR_INIT_FAILED, "MaterialEditor crash: " + std::string(e.what()));
             }
         }
 
-        ImGui::Separator();
+        if (isPlayMode) ImGui::EndDisabled();
 
-        if (ImGui::MenuItem("Export Game")) {
-            exportGame();
+        // Viewport (siempre visible)
+        if (showViewport) {
+            try {
+                viewportPanel.onImGuiRender();
+            } catch (const std::exception& e) {
+                HARUKA_EDITOR_ERROR(ErrorCode::EDITOR_INIT_FAILED, "Viewport crash: " + std::string(e.what()));
+            }
         }
+        viewportPanel.setGizmoMode(gizmoMode);
 
-        if (ImGui::MenuItem("Exit", "Alt+F4")) {
-            glfwSetWindowShouldClose(window, true);
+        if (showDemoWindow) {
+            ImGui::ShowDemoWindow(&showDemoWindow);
         }
-
-        ImGui::EndMenu();
-    }
-
-    if (ImGui::BeginMenu("Edit")) {
-        if (ImGui::MenuItem("Move Gizmo", "W", gizmoMode == 0)) gizmoMode = 0;
-        if (ImGui::MenuItem("Rotate Gizmo", "E", gizmoMode == 1)) gizmoMode = 1;
-        if (ImGui::MenuItem("Scale Gizmo", "R", gizmoMode == 2)) gizmoMode = 2;
         
-        ImGui::Separator();
+        try {
+            settingsPanel.onImGuiRender();
+        } catch (const std::exception& e) {
+            HARUKA_EDITOR_ERROR(ErrorCode::EDITOR_INIT_FAILED, "Settings crash: " + std::string(e.what()));
+        }
         
-        if (ImGui::MenuItem("Undo", "Ctrl+Z", false, commandHistory.canUndo())) {
-            commandHistory.undo();
+        try {
+            assetImporter.onImGuiRender();
+        } catch (const std::exception& e) {
+            HARUKA_EDITOR_ERROR(ErrorCode::EDITOR_INIT_FAILED, "AssetImporter crash: " + std::string(e.what()));
         }
-        if (ImGui::MenuItem("Redo", "Ctrl+Y", false, commandHistory.canRedo())) {
-            commandHistory.redo();
+        
+        try {
+            searchPanel.onImGuiRender();
+        } catch (const std::exception& e) {
+            HARUKA_EDITOR_ERROR(ErrorCode::EDITOR_INIT_FAILED, "SearchPanel crash: " + std::string(e.what()));
         }
-        ImGui::EndMenu();
-    }
-
-    if (ImGui::BeginMenu("View")) {
-        ImGui::MenuItem("Scene Hierarchy", nullptr, true);
-        ImGui::MenuItem("Inspector", nullptr, true);
-        ImGui::MenuItem("Project Browser", nullptr, true);
-        ImGui::MenuItem("Console", nullptr, true);
-        ImGui::MenuItem("Performance Stats", nullptr, true);
-        ImGui::Separator();
-        ImGui::MenuItem("ImGui Demo", nullptr, &showDemoWindow);
-        ImGui::EndMenu();
-    }
-
-    if (ImGui::Button("Compile Project", ImVec2(150, 0))) {
-        compileProject();
-    }
-
-    if (isProjectCompiling) {
-        ImGui::SameLine();
-        ImGui::Text("Compiling...");
-    }
-
-    if (ImGui::MenuItem((!isPlayMode) ? "Start" : "Stop", "F5", isPlayMode)) {
-        if (!isPlayMode) {
-            enterPlayMode();
-        } else {
-            exitPlayMode();
+        
+        try {
+            scriptingEditor.onImGuiRender();
+        } catch (const std::exception& e) {
+            HARUKA_EDITOR_ERROR(ErrorCode::EDITOR_INIT_FAILED, "ScriptingEditor crash: " + std::string(e.what()));
         }
-    }
-
-    if (ImGui::BeginMenu("Help")) {
-        if (ImGui::MenuItem("About")) {
-            std::cout << "Haruka Engine Editor v0.1" << std::endl;
+        
+        try {
+            uiBuilder.onImGuiRender();
+        } catch (const std::exception& e) {
+            HARUKA_EDITOR_ERROR(ErrorCode::EDITOR_INIT_FAILED, "UIBuilder crash: " + std::string(e.what()));
         }
-        ImGui::EndMenu();
-    }
 
-    ImGui::EndMainMenuBar();
+        // Save As popup (fuera del menú)
+        if (showSaveAsPopup) ImGui::OpenPopup("Save File As");
+        if (ImGui::BeginPopupModal("Save File As", &showSaveAsPopup, ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::InputText("Path##save", saveAsBuffer, sizeof(saveAsBuffer));
+            bool isPrefab = std::string(saveAsBuffer).find(".prefab") != std::string::npos;
+            
+            if (ImGui::Button("Save")) {
+                saveFile(saveAsBuffer, isPrefab);
+                showSaveAsPopup = false;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel")) {
+                showSaveAsPopup = false;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+
+        // Unsaved changes popup
+        if (showUnsavedChangesPopup) ImGui::OpenPopup("Unsaved Changes");
+        if (ImGui::BeginPopupModal("Unsaved Changes", &showUnsavedChangesPopup, ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::Text("Hay cambios sin guardar.");
+            if (ImGui::Button("Guardar y continuar")) {
+                if (!currentFile.path.empty()) saveFile(currentFile.path, currentFile.isPrefab);
+                if (!pendingSceneToLoad.empty()) loadFile(pendingSceneToLoad);
+                pendingSceneToLoad.clear();
+                showUnsavedChangesPopup = false;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Descartar")) {
+                if (!pendingSceneToLoad.empty()) loadFile(pendingSceneToLoad);
+                pendingSceneToLoad.clear();
+                showUnsavedChangesPopup = false;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Cancelar")) {
+                pendingSceneToLoad.clear();
+                showUnsavedChangesPopup = false;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+
+        // New Project popup
+        if (showNewProjectDialog) ImGui::OpenPopup("New Project");
+        if (ImGui::BeginPopupModal("New Project", &showNewProjectDialog, ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::InputText("Project Name", newProjectNameBuffer, sizeof(newProjectNameBuffer));
+            ImGui::InputText("Project Path", newProjectPathBuffer, sizeof(newProjectPathBuffer));
+            
+            if (ImGui::Button("Create", ImVec2(120, 0))) {
+                createNewProject(newProjectNameBuffer, newProjectPathBuffer);
+                showNewProjectDialog = false;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+                showNewProjectDialog = false;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+    } catch (const std::exception& e) {
+        HARUKA_EDITOR_ERROR(ErrorCode::EDITOR_INIT_FAILED, "RenderUI general crash: " + std::string(e.what()));
+    }
 }
+
 
 void EditorApplication::enterPlayMode() {
     if (isPlayMode || !currentProject) return;
@@ -503,6 +462,11 @@ void EditorApplication::enterPlayMode() {
             }
             
             currentScene->load(fullScenePath);
+            
+            // Resetear selección
+            sceneHierarchyPanel.setSelectedObjectIndex(-1);
+            inspectorPanel.setSelectedObjectIndex(-1);
+            
             std::cout << "Scene loaded: " << startScenePath << std::endl;
         }
     }
@@ -541,7 +505,7 @@ void EditorApplication::enterPlayMode() {
             std::cout << "⚠ getGameInterface not found, project may not implement it" << std::endl;
         }
     } else {
-        std::cerr << "✗ Could not load project library: " << dlerror() << std::endl;
+        HARUKA_EDITOR_ERROR(ErrorCode::MOTOR_LIBRARY, "Could not load project library: " + std::string(dlerror()));
     }
 
     std::cout << "▶ Play Mode started" << std::endl;
@@ -801,7 +765,7 @@ void EditorApplication::compileProject() {
     if (result == 0) {
         std::cout << "✓ Project compiled successfully" << std::endl;
     } else {
-        std::cerr << "✗ Project compilation failed" << std::endl;
+        HARUKA_EDITOR_ERROR(ErrorCode::PROJECT_COMPILATION_FAIL, "Project compilation failed: ");
     }
     
     isProjectCompiling = false;
@@ -872,7 +836,7 @@ void EditorApplication::saveFile(const std::string& path, bool asPrefab) {
         std::string type = isPrefab ? "Prefab" : "Scene";
         std::cout << "✓ " << type << " saved: " << path << std::endl;
     } else {
-        std::cerr << "✗ Failed to save file: " << path << std::endl;
+        HARUKA_EDITOR_ERROR(ErrorCode::FAILED_TO_SAVE_FILE, "Failed to save: " + path);
     }
 }
 
@@ -896,10 +860,14 @@ void EditorApplication::loadFile(const std::string& path) {
         inspectorPanel.setScene(currentScene.get());
         viewportPanel.setScene(currentScene.get());
         
+        // Resetear selección a ningún objeto
+        sceneHierarchyPanel.setSelectedObjectIndex(-1);
+        inspectorPanel.setSelectedObjectIndex(-1);
+        
         std::string type = currentFile.isPrefab ? "Prefab" : "Scene";
         std::cout << "✓ " << type << " loaded: " << path << std::endl;
     } else {
-        std::cerr << "✗ Failed to load file: " << path << std::endl;
+        HARUKA_EDITOR_ERROR(ErrorCode::FAILED_TO_LOAD_FILE, "Failed to load file: " + path);
     }
 }
 
@@ -933,7 +901,7 @@ void EditorApplication::createFileBackup(const std::string& filePath) {
         
         std::cout << "✓ Backup created: " << backupPath << std::endl;
     } catch (const std::exception& e) {
-        std::cerr << "✗ Backup failed: " << e.what() << std::endl;
+        HARUKA_EDITOR_ERROR(ErrorCode::FAILED_TO_SAVE_FILE, "Backup failed: " + std::string(e.what()));
     }
 }
 
@@ -986,80 +954,10 @@ void EditorApplication::deleteAllBackups(const std::string& filePath) {
             }
         }
     } catch (const std::exception& e) {
-        std::cerr << "✗ Error deleting backups: " << e.what() << std::endl;
+        HARUKA_EDITOR_ERROR(ErrorCode::FAILED_TO_DELETE_FILE, "Error deleting backups: " + std::string(e.what()));
     }
 }
 
 std::string EditorApplication::getFileType(const std::string& path) {
     return (path.find(".prefab") != std::string::npos) ? "Prefab" : "Scene";
-}
-
-void EditorApplication::startMotorProcess() {
-    if (motorPID != -1) {
-        return;  // Motor ya está corriendo
-    }
-
-    if (!currentProject) {
-        std::cerr << "⚠ No project loaded, cannot start motor" << std::endl;
-        return;
-    }
-
-    pid_t pid = fork();
-
-    if (pid == -1) {
-        std::cerr << "✗ Failed to fork motor process" << std::endl;
-        return;
-    }
-
-    if (pid == 0) {
-        // Proceso hijo: ejecutar HarukaEngine
-        std::string exePath = "../HarukaEngine";  // Ruta relativa desde build/
-        
-        // Argumentos: ruta del proyecto
-        const char* args[] = {
-            exePath.c_str(),
-            nullptr
-        };
-
-        // Ejecutar motor
-        execvp(exePath.c_str(), (char* const*)args);
-
-        // Si execvp falla
-        std::cerr << "✗ Failed to exec motor: " << strerror(errno) << std::endl;
-        exit(1);
-    } else {
-        // Proceso padre: guardar PID
-        motorPID = pid;
-        std::cout << "▶ Motor process started (PID: " << motorPID << ")" << std::endl;
-    }
-}
-
-void EditorApplication::stopMotorProcess() {
-    if (motorPID == -1) {
-        return;  // Motor no está corriendo
-    }
-
-    std::cout << "■ Stopping motor process..." << std::endl;
-
-    // Enviar SIGTERM al proceso motor
-    kill(motorPID, SIGTERM);
-
-    // Esperar a que el proceso termine (timeout de 3 segundos)
-    int status;
-    for (int i = 0; i < 30; i++) {  // 30 * 100ms = 3 segundos
-        pid_t result = waitpid(motorPID, &status, WNOHANG);
-        if (result == motorPID) {
-            std::cout << "✓ Motor process stopped" << std::endl;
-            motorPID = -1;
-            return;
-        }
-        usleep(100000);  // 100ms
-    }
-
-    // Si aún está corriendo, SIGKILL
-    std::cerr << "⚠ Motor did not stop gracefully, forcing..." << std::endl;
-    kill(motorPID, SIGKILL);
-    waitpid(motorPID, &status, 0);
-    motorPID = -1;
-    std::cout << "✓ Motor process killed" << std::endl;
 }

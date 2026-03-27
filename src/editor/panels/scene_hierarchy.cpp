@@ -1,4 +1,6 @@
 #include "scene_hierarchy.h"
+#include "core/error_reporter.h"
+
 #include "renderer/primitive_shapes.h"
 #include "core/components/material_component.h"
 #include "core/components/mesh_renderer_component.h"
@@ -9,7 +11,10 @@
 
 void SceneHierarchyPanel::setScene(Haruka::Scene* scene) {
     currentScene = scene;
-    selectedObjectIndex = -1;
+}
+
+void SceneHierarchyPanel::setSelectedObjectIndex(int index) {
+    selectedObjectIndex = index;
 }
 
 void SceneHierarchyPanel::setCommandHistory(CommandHistory* history) {
@@ -96,23 +101,28 @@ void SceneHierarchyPanel::renderObjectNode(int index) {
         return;
     }
     
-    auto& obj = currentScene->getObjects()[index];
+    // Acceder al objeto sin mantener referencia (puede invalidarse)
+    const auto& objects = currentScene->getObjects();
+    if (index >= (int)objects.size()) return;  // Double check
+    
+    std::string objName = objects[index].name;
+    bool hasChildren = !objects[index].childrenIndices.empty() || !objects[index].children.empty();
     
     ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth;
     if (index == selectedObjectIndex) flags |= ImGuiTreeNodeFlags_Selected;
-    if (obj.childrenIndices.empty() && obj.children.empty()) flags |= ImGuiTreeNodeFlags_Leaf;
+    if (!hasChildren) flags |= ImGuiTreeNodeFlags_Leaf;
     
-    bool nodeOpen = ImGui::TreeNodeEx((void*)(intptr_t)index, flags, "%s", obj.name.c_str());
+    bool nodeOpen = ImGui::TreeNodeEx((void*)(intptr_t)index, flags, "%s", objName.c_str());
     
     if (ImGui::IsItemClicked()) {
         selectedObjectIndex = index;
         if (onObjectSelectedByIndex) onObjectSelectedByIndex(index);
-        if (onObjectSelectedByName) onObjectSelectedByName(obj.name);
+        if (onObjectSelectedByName) onObjectSelectedByName(objName);
     }
     
     if (ImGui::BeginDragDropSource()) {
         ImGui::SetDragDropPayload("SCENE_OBJECT", &index, sizeof(int));
-        ImGui::Text("Move: %s", obj.name.c_str());
+        ImGui::Text("Move: %s", objName.c_str());
         ImGui::EndDragDropSource();
     }
     
@@ -127,15 +137,20 @@ void SceneHierarchyPanel::renderObjectNode(int index) {
     showContextMenu(index);
     
     if (nodeOpen) {
-        for (int childIndex : obj.childrenIndices) {
-            if (childIndex >= 0 && childIndex < (int)currentScene->getObjects().size()) {
-                renderObjectNode(childIndex);
+        // Re-validar índice antes de acceder
+        if (index >= 0 && index < (int)currentScene->getObjects().size()) {
+            const auto& obj = currentScene->getObjects()[index];
+            
+            for (int childIndex : obj.childrenIndices) {
+                if (childIndex >= 0 && childIndex < (int)currentScene->getObjects().size()) {
+                    renderObjectNode(childIndex);
+                }
             }
-        }
-        
-        // Renderizar children vector (hijos del prefab, etc)
-        for (size_t i = 0; i < obj.children.size(); ++i) {
-            renderChildObject(obj.children[i], i);
+            
+            // Renderizar children vector (hijos del prefab, etc)
+            for (size_t i = 0; i < obj.children.size(); ++i) {
+                renderChildObject(obj.children[i], i);
+            }
         }
         
         ImGui::TreePop();
@@ -143,10 +158,12 @@ void SceneHierarchyPanel::renderObjectNode(int index) {
 }
 
 // Nueva función para renderizar objetos hijos del vector children
-void SceneHierarchyPanel::renderChildObject(Haruka::SceneObject& child, size_t index) {
+void SceneHierarchyPanel::renderChildObject(const Haruka::SceneObject& child, size_t index) {
     ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_Leaf;
     
-    bool nodeOpen = ImGui::TreeNodeEx((void*)(intptr_t)(&child), flags, "%s (%s)", child.name.c_str(), child.type.c_str());
+    // Usar un ID único basado en el nombre, no en el puntero (que puede ser inválido si el vector se realoca)
+    std::string childId = child.name + "##child_" + std::to_string(index);
+    bool nodeOpen = ImGui::TreeNodeEx(childId.c_str(), flags, "%s (%s)", child.name.c_str(), child.type.c_str());
     
     showContextMenuChild(child);
     
@@ -155,7 +172,7 @@ void SceneHierarchyPanel::renderChildObject(Haruka::SceneObject& child, size_t i
     }
 }
 
-void SceneHierarchyPanel::showContextMenuChild(Haruka::SceneObject& child) {
+void SceneHierarchyPanel::showContextMenuChild(const Haruka::SceneObject& child) {
     if (ImGui::BeginPopupContextItem()) {
         if (ImGui::MenuItem("Delete")) {
             // TODO: Implementar borrar hijo

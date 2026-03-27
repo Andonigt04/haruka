@@ -3,14 +3,26 @@
     "initializer": "",
     "objects": [
         {
-            "name": "DirectionalLight",
+            "name": "Sun",
             "type": "Light",
-            "position": [0, 2, -5],
+            "position": [10, 8, -15],
             "rotation": [0, 0, 0],
-            "scale": [1, 1, 1],
-            "color": [1.0, 1.0, 0.8],
-            "intensity": 2.0,
-            "modelPath": ""
+            "scale": [1.0, 1.0, 1.0],
+            "color": [1.0, 0.9, 0.7],
+            "intensity": 3.0,
+            "modelPath": "",
+            "meshRenderer": {
+                "meshType": "sphere",
+                "radius": 0.5,
+                "segments": 16
+            },
+            "material": {
+                "name": "SunMaterial",
+                "albedo": [1.0, 0.9, 0.7],
+                "metallic": 0.0,
+                "roughness": 0.2,
+                "emission": [1.0, 0.9, 0.7]
+            }
         },
         {
             "name": "Player",
@@ -20,7 +32,12 @@
             "scale": [1, 1, 1],
             "color": [0.2, 0.4, 0.8],
             "intensity": 1.0,
-            "modelPath": ""
+            "modelPath": "",
+            "meshRenderer": {
+                "meshType": "sphere",
+                "radius": 0.8,
+                "segments": 32
+            }
         }
     ]
 }

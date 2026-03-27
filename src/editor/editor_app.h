@@ -22,8 +22,11 @@
 #include "editor/panels/multi_scene_manager.h"
 #include "editor/panels/scripting_editor.h"
 #include "editor/panels/ui_builder.h"
+#include "menu_bar.h"
 #include <imgui.h>
 #include <memory>
+
+class MenuBar;
 
 class EditorApplication {
 public:
@@ -31,6 +34,8 @@ public:
     ~EditorApplication();
     
     void run();
+    
+    friend class MenuBar;
 
 private:
     void init();
@@ -38,7 +43,8 @@ private:
     void update();
     void render();
     void renderUI();
-    void showMenuBar();
+    
+    std::unique_ptr<MenuBar> menuBar;
 
     // UI
     GLFWwindow* window;
@@ -54,8 +60,6 @@ private:
     ConsolePanel consolePanel;
     StatsPanel statsPanel;
     MaterialEditorPanel materialEditorPanel;
-    
-    // New Panels
     SettingsPanel settingsPanel;
     AssetImporter assetImporter;
     SearchPanel searchPanel;
@@ -71,6 +75,20 @@ private:
     bool showNewProjectDialog = false;
     char newProjectNameBuffer[256] = {0};
     char newProjectPathBuffer[512] = {0};
+    
+    // Panel Visibility
+    bool showSceneHierarchy = true;
+    bool showInspector = true;
+    bool showProjectBrowser = true;
+    bool showViewport = true;
+    bool showConsole = true;
+    bool showStats = true;
+    bool showMaterialEditor = true;
+    bool showSettings = false;
+    bool showAssetImporter = false;
+    bool showSearchPanel = false;
+    bool showScriptingEditor = false;
+    bool showUIBuilder = false;
     
     int width = 1600;
     int height = 900;
@@ -137,9 +155,4 @@ private:
     void cleanOldBackups(const std::string& path);
     void deleteAllBackups(const std::string& path);
     std::string getFileType(const std::string& path);
-    
-    // Motor sub-process management
-    pid_t motorPID = -1;
-    void startMotorProcess();
-    void stopMotorProcess();
 };
