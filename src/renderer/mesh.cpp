@@ -2,6 +2,7 @@
 
 #include <glad/glad.h>
 
+// Constructor para modelos complejos (con texturas)
 Mesh::Mesh(std::vector<Vertex> vertex, std::vector<unsigned int> idx, std::vector<MeshTexture> textures) {
     if (vertex.empty()) {
         std::cout << "ERROR::MESH::Vértices vacíos al crear la malla" << std::endl;
@@ -10,7 +11,26 @@ Mesh::Mesh(std::vector<Vertex> vertex, std::vector<unsigned int> idx, std::vecto
     this->vertex = vertex;
     this->index = idx;
     this->textures = textures;
+    this->isSimpleGeometry = false;
     setupMesh();
+}
+
+// Constructor simplificado (solo geometria)
+Mesh::Mesh(const std::vector<glm::vec3>& vertices,
+           const std::vector<glm::vec3>& normals,
+           const std::vector<unsigned int>& indices) {
+    this->isSimpleGeometry = true;
+    this->index = indices;
+    this->vertex.clear();
+    this->textures.clear();
+    setupSimpleMesh(vertices, normals, indices);
+}
+
+Mesh::~Mesh() {
+    glDeleteBuffers(1, &VBO);
+    if (nbo != 0) glDeleteBuffers(1, &nbo);
+    glDeleteBuffers(1, &EBO);
+    glDeleteVertexArrays(1, &VAO);
 }
 
 void Mesh::Draw(Shader &shader) 
@@ -70,7 +90,27 @@ void Mesh::Draw(Shader &shader)
     glBindVertexArray(VAO);
     glDrawElements(GL_TRIANGLES, index.size(), GL_UNSIGNED_INT, 0);
     glBindVertexArray(0);
-} 
+}
+
+void Mesh::draw() const {
+    glBindVertexArray(VAO);
+
+    if (!isSimpleGeometry) {
+        glDrawElements(GL_TRIANGLES, index.size(), GL_UNSIGNED_INT, 0);
+    } else {
+        // Defaults para geometria simple
+        glDisableVertexAttribArray(2);
+        glVertexAttrib2f(2, 0.0f, 0.0f);
+        glDisableVertexAttribArray(3);
+        glVertexAttrib3f(3, 1.0f, 0.0f, 0.0f);
+        glDisableVertexAttribArray(4);
+        glVertexAttrib3f(4, 0.0f, 1.0f, 0.0f);
+        
+        glDrawElements(GL_TRIANGLES, index.size(), GL_UNSIGNED_INT, 0);
+    }
+    
+    glBindVertexArray(0);
+}
 
 void Mesh::setupMesh() {
     glGenVertexArrays(1, &VAO);
@@ -100,5 +140,33 @@ void Mesh::setupMesh() {
     glEnableVertexAttribArray(4);
     glVertexAttribPointer(4, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, Bitangent));
     
+    glBindVertexArray(0);
+}
+
+void Mesh::setupSimpleMesh(const std::vector<glm::vec3>& vertices,
+                           const std::vector<glm::vec3>& normals,
+                           const std::vector<unsigned int>& indices) {
+    glGenVertexArrays(1, &VAO);
+    glBindVertexArray(VAO);
+
+    // Positions
+    glGenBuffers(1, &VBO);
+    glBindBuffer(GL_ARRAY_BUFFER, VBO);
+    glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(glm::vec3), vertices.data(), GL_STATIC_DRAW);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(glm::vec3), (void*)0);
+    glEnableVertexAttribArray(0);
+
+    // Normals
+    glGenBuffers(1, &nbo);
+    glBindBuffer(GL_ARRAY_BUFFER, nbo);
+    glBufferData(GL_ARRAY_BUFFER, normals.size() * sizeof(glm::vec3), normals.data(), GL_STATIC_DRAW);
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(glm::vec3), (void*)0);
+    glEnableVertexAttribArray(1);
+
+    // Indices
+    glGenBuffers(1, &EBO);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(unsigned int), indices.data(), GL_STATIC_DRAW);
+
     glBindVertexArray(0);
 }

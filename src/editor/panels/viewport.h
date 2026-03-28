@@ -19,6 +19,8 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <ImGuizmo.h>
 
+class Application;
+
 class ViewportPanel {
 public:
     ViewportPanel();
@@ -49,6 +51,9 @@ public:
     void setGizmoMode(int mode) { gizmoMode = mode; }
 
 private:
+    // Motor app instance owned by the viewport when running in editor mode
+    std::unique_ptr<Application> ownedApplication;
+
     Haruka::Scene* currentScene = nullptr;
     Camera* camera = nullptr;
 
@@ -76,13 +81,6 @@ private:
 
     // OpenGL/ImGui resources
     std::unique_ptr<RenderTarget> renderTarget;
-    std::unique_ptr<Shader> sceneShader;
-    std::unique_ptr<SimpleMesh> cubeMesh;
-    std::unordered_map<std::string, std::unique_ptr<Model>> loadedModels;
-
-    // Grid/gizmo VAO/VBO
-    GLuint gridVAO = 0, gridVBO = 0;
-    GLuint gizmoVAO = 0, gizmoVBO = 0;
 
     // Stats panel
     StatsPanel* statsPanel = nullptr;

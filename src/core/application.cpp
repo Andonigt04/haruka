@@ -2,6 +2,7 @@
 
 #include <iostream>
 #include <cmath>
+#include <unordered_set>
 #include <glm/gtc/matrix_transform.hpp>
 
 #include "renderer/mesh.h"
@@ -33,6 +34,18 @@ struct MouseState {
 };
 
 static MouseState g_mouseState;
+
+namespace {
+struct SceneRenderItem {
+    glm::mat4 modelMatrix{1.0f};
+    glm::vec3 color{1.0f};
+    Haruka::MaterialComponent* material = nullptr;
+    std::shared_ptr<MeshRendererComponent> meshRenderer;
+    std::string modelPath;
+};
+
+std::vector<SceneRenderItem> g_sceneRenderQueue;
+}
 
 Application::Application() : _window(nullptr) {}
 
@@ -93,20 +106,6 @@ void Application::loadScene(const std::string& scenePath) {
     
     if (_currentScene->load(scenePath)) {
         std::cout << "Scene loaded: " << _currentScene->getName() << std::endl;
-        
-        // Cargar modelos de la escena
-        _sceneModels.clear();
-        for (const auto& obj : _currentScene->getObjects()) {
-            if (obj.type == "Model" && !obj.modelPath.empty()) {
-                try {
-                    auto model = std::make_unique<Model>(obj.modelPath);
-                    _sceneModels.push_back(std::move(model));
-                    std::cout << "  Loaded model: " << obj.name << " from " << obj.modelPath << std::endl;
-                } catch (const std::exception& e) {
-                    HARUKA_MOTOR_ERROR(ErrorCode::MODEL_LOAD_FAILED, std::string("Failed to load model ") + obj.name + ": " + e.what());
-                }
-            }
-        }
     } else {
         HARUKA_MOTOR_ERROR(ErrorCode::SCENE_PARSE_ERROR, std::string("Failed to load scene from: ") + scenePath);
         // Crear escena vacía por defecto
@@ -114,7 +113,7 @@ void Application::loadScene(const std::string& scenePath) {
     }
 }
 
-void Application::init_window() {
+void Application::create_window() {
     if (!glfwInit()) {
         HARUKA_MOTOR_ERROR(ErrorCode::MOTOR_INIT_FAILED, "Failed to initialize GLFW");
         throw std::runtime_error("Fallo al inicializar GLFW");
@@ -124,7 +123,7 @@ void Application::init_window() {
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
-    _window = glfwCreateWindow(_width, _height, "Haruka Engine | Runtime", nullptr, nullptr);
+    _window = glfwCreateWindow(_width, _height, "Haruka Engine", nullptr, nullptr);
     if (!_window) {
         HARUKA_MOTOR_ERROR(ErrorCode::WINDOW_CREATION_FAILED, "Failed to create GLFW window");
         throw std::runtime_error("Fallo al crear la ventana");
@@ -136,13 +135,35 @@ void Application::init_window() {
         throw std::runtime_error("Fallo al inicializar GLAD");
     }
 
-    _camera = std::make_unique<Camera>(Haruka::WorldPos(0.0f, 0.0f, 15.0f));
-
     glfwSetWindowUserPointer(_window, this);
     glfwSetScrollCallback(_window, scroll_callback);
     glfwSetCursorPosCallback(_window, mouse_callback);
     glfwSetInputMode(_window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
     glEnable(GL_DEPTH_TEST);
+}
+
+void Application::init(Haruka::Scene& scene) {
+    
+    _currentScene = std::make_unique<Haruka::Scene>(scene);
+
+    // Buscar cámara en la escena
+    Camera* sceneCamera = nullptr;
+    const auto& objects = _currentScene->getObjects();
+    for (const auto& obj : objects) {
+        if (obj.type == "Camera") {
+            sceneCamera = new Camera(obj.position);
+            std::cout << "✓ Camera found in scene at position: " << obj.position.x << ", " << obj.position.y << ", " << obj.position.z << std::endl;
+            break;
+        }
+    }
+    
+    // Si no hay cámara en la escena, usar default
+    if (!sceneCamera) {
+        sceneCamera = new Camera(Haruka::WorldPos(0.0f, 0.0f, 15.0f));
+        std::cout << "⚠ No camera found in scene, using default position" << std::endl;
+    }
+    
+    _camera = std::unique_ptr<Camera>(sceneCamera);
 
     // Initialize rendering systems
     _mainShader = std::make_unique<Shader>("shaders/simple.vert", "shaders/pbr.frag");
@@ -160,8 +181,10 @@ void Application::init_window() {
     _lightingTarget = std::make_unique<RenderTarget>(_width, _height);
     _bloomExtractTarget = std::make_unique<RenderTarget>(_width, _height);
 
-    // Registrar RenderTarget para que el Editor pueda acceder
-    MotorInstance::getInstance().setRenderTarget(_lightingTarget.get());
+    // Registrar RenderTarget por defecto (standalone), sin pisar uno externo (viewport)
+    if (!MotorInstance::getInstance().getRenderTarget()) {
+        MotorInstance::getInstance().setRenderTarget(_lightingTarget.get());
+    }
 
     // Registrar Application para que scripts accedan a sistemas (raycast, etc)
     MotorInstance::getInstance().setApplication(this);
@@ -215,292 +238,325 @@ void Application::init_window() {
         sphereLOD[i] = std::make_unique<SimpleMesh>(verts, norms, indices);
     }
     
-    std::vector<glm::vec3> cubeVerts, cubeNorms;
-    std::vector<unsigned int> cubeIndices;
-    PrimitiveShapes::createCube(1.0f, cubeVerts, cubeNorms, cubeIndices);
-    cubeMesh = std::make_unique<SimpleMesh>(cubeVerts, cubeNorms, cubeIndices);
-
-    std::vector<glm::vec3> planeVerts, planeNorms;
-    std::vector<unsigned int> planeIndices;
-    PrimitiveShapes::createPlane(2.0f, 2.0f, 10, planeVerts, planeNorms, planeIndices);
-    planeMesh = std::make_unique<SimpleMesh>(planeVerts, planeNorms, planeIndices);
-
     _worldSystem->initComputeShaders();
-
-    _currentScene = std::make_unique<Haruka::Scene>("EmptyScene");
+    
+    // Initialize cached shaders (avoid recreating each frame)
+    _geomShader = std::make_unique<Shader>("shaders/deferred_geom.vert", "shaders/deferred_geom.frag");
+    _ssaoShader = std::make_unique<Shader>("shaders/screenquad.vert", "shaders/ssao.frag");
+    _lightShader = std::make_unique<Shader>("shaders/screenquad.vert", "shaders/deferred_light.frag");
+    _compositeShader = std::make_unique<Shader>("shaders/screenquad.vert", "shaders/bloom_composite.frag");
+    _flatShader = std::make_unique<Shader>("shaders/simple.vert", "shaders/light_cube.frag");
 }
 
 void Application::renderScene(Shader* shader) {
-    if (!_currentScene) return;
+    (void)shader; // Esta función solo construye la cola de render
+
+    Haruka::Scene* scene = MotorInstance::getInstance().getScene();
+    if (!scene) {
+        scene = _currentScene.get();
+    }
+    g_sceneRenderQueue.clear();
+    if (!scene) return;
     
-    Shader* useShader = shader ? shader : _mainShader.get();
-    
-    size_t modelIndex = 0;
-    for (const auto& obj : _currentScene->getObjects()) {
-        // Convertir tipo string a enum
+    for (const auto& obj : scene->getObjects()) {
         Haruka::ObjectType objType = Haruka::stringToObjectType(obj.type);
-        
-        // Skip non-renderable types
+
         if (!Haruka::isRenderableObjectType(objType)) {
             continue;
         }
-        
-        if (objType == Haruka::ObjectType::MODEL && modelIndex < _sceneModels.size()) {
-            glm::mat4 modelMatrix = glm::mat4(1.0f);
-            modelMatrix = glm::translate(modelMatrix, glm::vec3(obj.position));
-            modelMatrix = glm::rotate(modelMatrix, glm::radians((float)obj.rotation.x), glm::vec3(1, 0, 0));
-            modelMatrix = glm::rotate(modelMatrix, glm::radians((float)obj.rotation.y), glm::vec3(0, 1, 0));
-            modelMatrix = glm::rotate(modelMatrix, glm::radians((float)obj.rotation.z), glm::vec3(0, 0, 1));
-            modelMatrix = glm::scale(modelMatrix, glm::vec3(obj.scale));
-            
-            useShader->use();
-            useShader->setMat4("model", modelMatrix);
-            _sceneModels[modelIndex]->Draw(*useShader);
-            
-            modelIndex++;
+
+        glm::mat4 modelMatrix = glm::mat4(1.0f);
+        modelMatrix = glm::translate(modelMatrix, glm::vec3(obj.position));
+        modelMatrix = glm::rotate(modelMatrix, glm::radians((float)obj.rotation.x), glm::vec3(1, 0, 0));
+        modelMatrix = glm::rotate(modelMatrix, glm::radians((float)obj.rotation.y), glm::vec3(0, 1, 0));
+        modelMatrix = glm::rotate(modelMatrix, glm::radians((float)obj.rotation.z), glm::vec3(0, 0, 1));
+        modelMatrix = glm::scale(modelMatrix, glm::vec3(obj.scale));
+
+        SceneRenderItem item;
+        item.modelMatrix = modelMatrix;
+        item.color = glm::vec3(obj.color);
+        item.material = obj.material.get();
+
+        // MeshRenderer (componente de geometría almacenada)
+        if (obj.meshRenderer) {
+            item.meshRenderer = obj.meshRenderer;
+            g_sceneRenderQueue.push_back(std::move(item));
+            continue;
         }
-        
-        // Renderizar primitivos (Mesh)
-        if (objType == Haruka::ObjectType::MESH) {
-            if (!cubeMesh) {
-                HARUKA_MOTOR_ERROR(ErrorCode::RENDER_TARGET_FAILED, "cubeMesh not initialized for object: " + obj.name);
-                continue;
-            }
-            
-            glm::mat4 modelMatrix = glm::mat4(1.0f);
-            modelMatrix = glm::translate(modelMatrix, glm::vec3(obj.position));
-            modelMatrix = glm::rotate(modelMatrix, glm::radians((float)obj.rotation.x), glm::vec3(1, 0, 0));
-            modelMatrix = glm::rotate(modelMatrix, glm::radians((float)obj.rotation.y), glm::vec3(0, 1, 0));
-            modelMatrix = glm::rotate(modelMatrix, glm::radians((float)obj.rotation.z), glm::vec3(0, 0, 1));
-            modelMatrix = glm::scale(modelMatrix, glm::vec3(obj.scale));
-            
-            useShader->use();
-            useShader->setMat4("model", modelMatrix);
-            useShader->setVec3("color", obj.color);
-            
-            // Renderizar cubo primitivo
-            cubeMesh->draw();
+
+        // Modelo externo
+        if (objType == Haruka::ObjectType::MODEL && !obj.modelPath.empty()) {
+            item.modelPath = obj.modelPath;
+            g_sceneRenderQueue.push_back(std::move(item));
+            continue;
         }
-        
-        // Renderizar luces como esferas (PointLight/Spotlight)
-        // TODO: Renderizar en forward pass, no en deferred geometry pass
-        /*
-        if (objType == Haruka::ObjectType::SPOTLIGHT) {
-            if (!sphereLOD[0]) {
-                HARUKA_MOTOR_ERROR(ErrorCode::RENDER_TARGET_FAILED, "sphereLOD[0] not initialized for object: " + obj.name);
-                continue;
-            }
-            
-            glm::mat4 modelMatrix = glm::mat4(1.0f);
-            modelMatrix = glm::translate(modelMatrix, glm::vec3(obj.position));
-            modelMatrix = glm::rotate(modelMatrix, glm::radians((float)obj.rotation.x), glm::vec3(1, 0, 0));
-            modelMatrix = glm::rotate(modelMatrix, glm::radians((float)obj.rotation.y), glm::vec3(0, 1, 0));
-            modelMatrix = glm::rotate(modelMatrix, glm::radians((float)obj.rotation.z), glm::vec3(0, 0, 1));
-            modelMatrix = glm::scale(modelMatrix, glm::vec3(obj.scale));
-            
-            useShader->use();
-            useShader->setMat4("model", modelMatrix);
-            useShader->setVec3("color", obj.color);
-            
-            // Renderizar esfera para PointLight
-            sphereLOD[0]->draw();
-        }
-        */
     }
 }
 
 void Application::main_loop() {
-    
-    std::vector<glm::vec3> lights;
-    std::vector<glm::vec3> lightColors;
-    
-    // Actualizar posición de la cámara en AssetStreamer (para priorización)
-    AssetStreamer::getInstance().updateCameraPosition(_camera->position);
-    
-    // Actualizar cascadas de sombra según dirección de luz
-    // Si hay luces direccionales en la escena, usar la primera
-    // Si no hay, usar default pero NO aplicar sombras
-    glm::vec3 lightDir = glm::normalize(glm::vec3(1.0f, 1.0f, 1.0f));  // Default (sin efecto si no hay luces)
-    
-    _cascadedShadow->updateCascades(
-        lightDir,
-        _camera->position,
-        glm::vec3(0.0f, 0.0f, -1.0f),  // Forward direction
-        0.1f,                          // zNear
-        1000.0f,                        // zFar
-        45.0f                           // FOV
-    );
-    
-    // Procesar virtual texturing feedback
-    if (_virtualTexturing) {
-        _virtualTexturing->processFeedback();
-    }
-    
-    // Get lights from scene (motor es agnóstico - IDE decide qué hay en la escena)
-    for (const auto& obj : _currentScene->getObjects()) {
-        Haruka::ObjectType objType = Haruka::stringToObjectType(obj.type);
-        if (Haruka::isLightObjectType(objType)) {
-            lights.push_back(obj.position);
-            lightColors.push_back(obj.color * obj.intensity);
-        }
-    }
-    
-    // Sin fallback - si IDE no agrega luces, no hay luces
-    // El motor NO debe tomar decisiones sobre la escena
-
     while (!glfwWindowShouldClose(_window)) {
-        float currentFrame = static_cast<float>(glfwGetTime());
-        deltaTime = currentFrame - lastFrame;
-        lastFrame = currentFrame;
-
-        _camera->processInput(_window, deltaTime);
-
-        glm::mat4 proj = glm::perspective(glm::radians(_camera->zoom), (float)_width / (float)_height, 0.1f, 10000000000.0f);
-        glm::mat4 view = _camera->getViewMatrix();
-
-        // Update world system
-        _worldSystem->updateLocalPositions(_camera->position);
-        _worldSystem->frustumCull(_camera->position, view * proj, 10000.0f * Haruka::Units::MEGAMETER);
-
-        // ========== GEOMETRY PASS ==========
-        _gBuffer->bindForWriting();
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
-        Shader geomShader("shaders/deferred_geom.vert", "shaders/deferred_geom.frag");
-        geomShader.use();
-        geomShader.setMat4("projection", proj);
-        geomShader.setMat4("view", view);
-
-        if (cubeMesh) {
-            renderScene(&geomShader);
-        }
-
-        // Render celestial bodies with LOD
-        for (const auto& body : _worldSystem->getBodies()) {
-            if (!body.visible) continue;
-
-            glm::vec3 camPos(_camera->position.x, _camera->position.y, _camera->position.z);
-            glm::vec3 bodyPos(body.localPos.x, body.localPos.y, body.localPos.z);
-            float distance = glm::length(camPos - bodyPos);
-            
-            int lod = distance < 50.0f ? 0 : distance < 200.0f ? 1 : distance < 1000.0f ? 2 : 3;
-            
-            if (!sphereLOD[lod]) continue;
-
-            glm::mat4 bodyModel = glm::translate(glm::mat4(1.0f), glm::vec3(body.localPos));
-            bodyModel = glm::scale(bodyModel, glm::vec3(body.radius));
-            
-            geomShader.setMat4("model", bodyModel);
-            sphereLOD[lod]->draw();
-        }
-            
-        _gBuffer->unbind();
-
-        // ========== SSAO PASS ==========
-        _ssaoSystem->bindForWriting();
-        glClear(GL_COLOR_BUFFER_BIT);
-
-        Shader ssaoShader("shaders/screenquad.vert", "shaders/ssao.frag");
-        ssaoShader.use();
-        _gBuffer->bindForReading(0, 0);
-        _gBuffer->bindForReading(1, 1);
-        
-        ssaoShader.setInt("gPosition", 0);
-        ssaoShader.setInt("gNormal", 1);
-        ssaoShader.setInt("texNoise", 2);
-        ssaoShader.setInt("kernelSize", 64);
-        ssaoShader.setFloat("radius", 0.5f);
-        ssaoShader.setFloat("bias", 0.025f);
-        ssaoShader.setMat4("projection", proj);
-
-        glBindVertexArray(quadVAO);
-        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-        glBindVertexArray(0);
-
-        _ssaoSystem->unbind();
-
-        // ========== LIGHTING PASS ==========
-        _lightingTarget->bindForWriting();
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
-        Shader lightShader("shaders/screenquad.vert", "shaders/deferred_light.frag");
-        lightShader.use();
-
-        _gBuffer->bindForReading(0, 0);
-        _gBuffer->bindForReading(1, 1);
-        _gBuffer->bindForReading(2, 2);
-        _gBuffer->bindForReading(3, 3);
-        _ssaoSystem->bindForReading(4);
-        _iblSystem->bindPrefilterMap(5);
-        _iblSystem->bindBRDFLUT(6);
-
-        lightShader.setInt("gPosition", 0);
-        lightShader.setInt("gNormal", 1);
-        lightShader.setInt("gAlbedoSpec", 2);
-        lightShader.setInt("gEmissive", 3);
-        lightShader.setInt("ssao", 4);
-        lightShader.setInt("prefilterMap", 5);
-        lightShader.setInt("brdfLUT", 6);
-        lightShader.setVec3("viewPos", _camera->position);
-
-        // ===== LIGHT CULLING (Soporta ilimitadas luces) =====
-        auto culledLights = _lightCuller->cullLights(_currentScene.get(), view, proj, MAX_LIGHTS);
-        
-        lightShader.setInt("numLights", culledLights.size());
-
-        for (size_t i = 0; i < culledLights.size(); i++) {
-            lightShader.setVec3("lights[" + std::to_string(i) + "].position", culledLights[i].position);
-            lightShader.setVec3("lights[" + std::to_string(i) + "].color", culledLights[i].color);
-        }
-
-        glBindVertexArray(quadVAO);
-        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-        glBindVertexArray(0);
-
-        _lightingTarget->unbind();
-
-        // ========== FINAL COMPOSITE ==========
-        glViewport(0, 0, _width, _height);
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
-        Shader compositeShader("shaders/screenquad.vert", "shaders/bloom_composite.frag");
-        compositeShader.use();
-        _lightingTarget->bindForReading(0);
-        _bloomExtractTarget->bindForReading(1);
-        compositeShader.setInt("scene", 0);
-        compositeShader.setInt("bloom", 1);
-        compositeShader.setFloat("bloomStrength", 0.0f); // Disable bloom for now
-
-        glBindVertexArray(quadVAO);
-        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-        glBindVertexArray(0);
-
-        // Actualizar métricas de debug overlay
-        FrameMetrics metrics;
-        metrics.fps = 60.0f;  // Aproximado
-        metrics.frameTimeMs = 16.67f;  // ~60 FPS
-        metrics.drawCalls = 100;  // Ejemplo
-        metrics.totalLights = _currentScene ? _currentScene->getObjects().size() : 0;
-        metrics.culledLights = _lightCuller ? _lightCuller->getCulledLights() : 0;
-        
-        auto streamStats = AssetStreamer::getInstance().getStats();
-        metrics.loadedAssets = streamStats.loadedAssets;
-        metrics.pendingAssets = streamStats.pendingAssets;
-        metrics.cacheUtilization = streamStats.cacheUtilization;
-        
-        // Cascaded shadow maps info
-        metrics.numCascades = 4;
-        metrics.activeCascade = 0;  // Simulado (en producción, basado en distancia)
-        
-        DebugOverlay::getInstance().updateMetrics(metrics);
-        
-        // Renderizar debug overlay (ImGui)
-        // TODO: Fix ImGui crash in DebugOverlay::render()
-        // DebugOverlay::getInstance().render();
-
+        renderFrame();
         glfwSwapBuffers(_window);
         glfwPollEvents();
     }
+}
+
+void Application::renderFrame() {
+    Haruka::Scene* scene = MotorInstance::getInstance().getScene();
+    if (!scene && !_currentScene) return;
+    if (!_camera) return;
+
+    float currentFrame = static_cast<float>(glfwGetTime());
+    deltaTime = currentFrame - lastFrame;
+    lastFrame = currentFrame;
+    
+    renderFrameContent();
+}
+
+void Application::renderFrameContent() {
+    // ========== SETUP ==========
+    Camera* activeCamera = MotorInstance::getInstance().getCamera();
+    if (!activeCamera) {
+        activeCamera = _camera.get();
+    }
+    if (!activeCamera) return;
+
+    glm::mat4 proj = glm::perspective(glm::radians(activeCamera->zoom), (float)_width / (float)_height, 0.1f, 10000000000.0f);
+    glm::mat4 view = activeCamera->getViewMatrix();
+
+    // ========== EDITOR MODE (Viewport) ==========
+    RenderTarget* editorTarget = MotorInstance::getInstance().getRenderTarget();
+    if (editorTarget) {
+        renderScene();
+
+        editorTarget->bindForWriting();
+        glEnable(GL_DEPTH_TEST);
+        glClearColor(0.06f, 0.06f, 0.09f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+        _flatShader->use();
+        _flatShader->setMat4("projection", proj);
+        _flatShader->setMat4("view", view);
+
+        for (const auto& item : g_sceneRenderQueue) {
+            _flatShader->setMat4("model", item.modelMatrix);
+            glm::vec3 c = item.color;
+            if (glm::length(c) < 0.001f) c = glm::vec3(0.8f, 0.8f, 0.8f);
+            _flatShader->setVec3("lightColor", c);
+
+            if (item.meshRenderer) {
+                item.meshRenderer->render(*_flatShader);
+                continue;
+            }
+
+            if (!item.modelPath.empty()) {
+                try {
+                    Model model(item.modelPath);
+                    model.Draw(*_flatShader);
+                } catch (...) {
+                    // Ignorar en fallback
+                }
+                continue;
+            }
+        }
+
+        // Fallback: mostrar nada si escena vacía (no renderizar cubo por defecto)
+        // Los usuarios deben agregar explícitamente objetos a la escena
+
+        editorTarget->unbind();
+        return;
+    }
+
+    // ========== RUNTIME MODE (Deferred Pipeline) ==========
+    
+    // Actualizar posición de cámara
+    AssetStreamer::getInstance().updateCameraPosition(activeCamera->position);
+    
+    // Actualizar cascadas de sombra
+    glm::vec3 lightDir = glm::normalize(glm::vec3(1.0f, 1.0f, 1.0f));
+    _cascadedShadow->updateCascades(
+        lightDir,
+        activeCamera->position,
+        glm::vec3(0.0f, 0.0f, -1.0f),
+        0.1f,
+        1000.0f,
+        75.0f
+    );
+    
+    // Procesar feedback de virtual texturing
+    if (_virtualTexturing) {
+        _virtualTexturing->processFeedback();
+    }
+
+    // Actualizar world system
+    _worldSystem->updateLocalPositions(activeCamera->position);
+    _worldSystem->frustumCull(activeCamera->position, view * proj, 10000.0f * Haruka::Units::MEGAMETER);
+
+    // ========== GEOMETRY PASS ==========
+    _gBuffer->bindForWriting();
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    _geomShader->use();
+    _geomShader->setMat4("projection", proj);
+    _geomShader->setMat4("view", view);
+
+    renderScene();
+
+    for (const auto& item : g_sceneRenderQueue) {
+        _geomShader->setMat4("model", item.modelMatrix);
+        _geomShader->setVec3("color", item.color);
+
+        if (item.material) {
+            _geomShader->setVec3("material.albedo", item.material->albedo);
+            _geomShader->setFloat("material.roughness", item.material->roughness);
+            _geomShader->setFloat("material.metallic", item.material->metallic);
+        }
+
+        if (item.meshRenderer) {
+            item.meshRenderer->render(*_geomShader);
+            continue;
+        }
+
+        if (!item.modelPath.empty()) {
+            try {
+                Model model(item.modelPath);
+                model.Draw(*_geomShader);
+            } catch (const std::exception& e) {
+                HARUKA_MOTOR_ERROR(
+                    ErrorCode::MODEL_LOAD_FAILED,
+                    std::string("Failed to draw model ") + item.modelPath + ": " + e.what()
+                );
+            }
+            continue;
+        }
+    }
+
+    // Render celestial bodies with LOD
+    for (const auto& body : _worldSystem->getBodies()) {
+        if (!body.visible) continue;
+
+        glm::vec3 camPos(activeCamera->position.x, activeCamera->position.y, activeCamera->position.z);
+        glm::vec3 bodyPos(body.localPos.x, body.localPos.y, body.localPos.z);
+        float distance = glm::length(camPos - bodyPos);
+        
+        int lod = distance < 50.0f ? 0 : distance < 200.0f ? 1 : distance < 1000.0f ? 2 : 3;
+        
+        if (!sphereLOD[lod]) continue;
+
+        glm::mat4 bodyModel = glm::translate(glm::mat4(1.0f), glm::vec3(body.localPos));
+        bodyModel = glm::scale(bodyModel, glm::vec3(body.radius));
+        
+        _geomShader->setMat4("model", bodyModel);
+        sphereLOD[lod]->draw();
+    }
+        
+    _gBuffer->unbind();
+
+    // ========== SSAO PASS ==========
+    _ssaoSystem->bindForWriting();
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    _ssaoShader->use();
+    _gBuffer->bindForReading(0, 0);
+    _gBuffer->bindForReading(1, 1);
+    
+    _ssaoShader->setInt("gPosition", 0);
+    _ssaoShader->setInt("gNormal", 1);
+    _ssaoShader->setInt("texNoise", 2);
+    _ssaoShader->setInt("kernelSize", 64);
+    _ssaoShader->setFloat("radius", 0.5f);
+    _ssaoShader->setFloat("bias", 0.025f);
+    _ssaoShader->setMat4("projection", proj);
+
+    glBindVertexArray(quadVAO);
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    glBindVertexArray(0);
+
+    _ssaoSystem->unbind();
+
+    // ========== LIGHTING PASS ==========
+    _lightingTarget->bindForWriting();
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    _lightShader->use();
+
+    _gBuffer->bindForReading(0, 0);
+    _gBuffer->bindForReading(1, 1);
+    _gBuffer->bindForReading(2, 2);
+    _gBuffer->bindForReading(3, 3);
+    _ssaoSystem->bindForReading(4);
+    _iblSystem->bindPrefilterMap(5);
+    _iblSystem->bindBRDFLUT(6);
+
+    _lightShader->setInt("gPosition", 0);
+    _lightShader->setInt("gNormal", 1);
+    _lightShader->setInt("gAlbedoSpec", 2);
+    _lightShader->setInt("gEmissive", 3);
+    _lightShader->setInt("ssao", 4);
+    _lightShader->setInt("prefilterMap", 5);
+    _lightShader->setInt("brdfLUT", 6);
+    _lightShader->setVec3("viewPos", activeCamera->position);
+
+    // Light culling
+    Haruka::Scene* scene = MotorInstance::getInstance().getScene();
+    if (!scene) {
+        scene = _currentScene.get();
+    }
+    auto culledLights = _lightCuller->cullLights(scene, view, proj, MAX_LIGHTS);
+    
+    _lightShader->setInt("numLights", culledLights.size());
+
+    for (size_t i = 0; i < culledLights.size(); i++) {
+        _lightShader->setVec3("lights[" + std::to_string(i) + "].position", culledLights[i].position);
+        _lightShader->setVec3("lights[" + std::to_string(i) + "].color", culledLights[i].color);
+    }
+
+    glBindVertexArray(quadVAO);
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    glBindVertexArray(0);
+
+    _lightingTarget->unbind();
+
+    // ========== FINAL COMPOSITE ==========
+    RenderTarget* externalTarget = MotorInstance::getInstance().getRenderTarget();
+    if (externalTarget) {
+        externalTarget->bindForWriting();
+    }
+    glViewport(0, 0, _width, _height);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    _compositeShader->use();
+    _lightingTarget->bindForReading(0);
+    _bloomExtractTarget->bindForReading(1);
+    _compositeShader->setInt("scene", 0);
+    _compositeShader->setInt("bloom", 1);
+    _compositeShader->setFloat("bloomStrength", 0.0f);
+
+    glBindVertexArray(quadVAO);
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    glBindVertexArray(0);
+
+    if (externalTarget) {
+        externalTarget->unbind();
+    }
+
+    // ========== DEBUG METRICS ==========
+    FrameMetrics metrics;
+    metrics.fps = 60.0f;
+    metrics.frameTimeMs = 16.67f;
+    metrics.drawCalls = 100;
+    metrics.totalLights = scene ? scene->getObjects().size() : 0;
+    metrics.culledLights = _lightCuller ? _lightCuller->getCulledLights() : 0;
+    
+    auto streamStats = AssetStreamer::getInstance().getStats();
+    metrics.loadedAssets = streamStats.loadedAssets;
+    metrics.pendingAssets = streamStats.pendingAssets;
+    metrics.cacheUtilization = streamStats.cacheUtilization;
+    
+    metrics.numCascades = 4;
+    metrics.activeCascade = 0;
+    
+    DebugOverlay::getInstance().updateMetrics(metrics);
 }
 
 void Application::cleanup() {
@@ -510,6 +566,8 @@ void Application::cleanup() {
 }
 
 void Application::run() {
-    init_window();
+    create_window();
+    // TODO: necesario descomentar para produccion 
+    //init();
     main_loop();
 }

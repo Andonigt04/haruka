@@ -2,10 +2,10 @@
 #define MESH_H
 
 #include <iostream>
-
 #include <vector>
 #include <string>
 #include <glm/glm.hpp>
+#include <glad/glad.h>
 #include "shader.h"
 
 #pragma pack(push, 1)
@@ -31,12 +31,29 @@ public:
     std::vector<MeshTexture>  textures;
     unsigned int VAO;
 
+    // Constructor para modelos complejos (con texturas)
     Mesh(std::vector<Vertex> vertex, std::vector<unsigned int> idx, std::vector<MeshTexture> textures);
+    
+    // Constructor simplificado (solo geometria)
+    Mesh(const std::vector<glm::vec3>& vertices,
+         const std::vector<glm::vec3>& normals,
+         const std::vector<unsigned int>& indices);
+    
+    ~Mesh();
+
     void Draw(Shader &shader);
+    void draw() const;  // Alias para compatibilidad
+    size_t getIndexCount() const { return index.size(); }
 
 private:
     unsigned int VBO, EBO;
+    GLuint nbo = 0;  // Normal buffer para geometria simple
+    bool isSimpleGeometry = false;
+    
     void setupMesh();
+    void setupSimpleMesh(const std::vector<glm::vec3>& vertices,
+                         const std::vector<glm::vec3>& normals,
+                         const std::vector<unsigned int>& indices);
 };
 
 #endif

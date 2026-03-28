@@ -3,6 +3,8 @@
 #include "editor_app.h"
 #include "core/camera.h"
 #include "core/error_reporter.h"
+#include "core/components/mesh_renderer_component.h"
+#include "renderer/primitive_shapes.h"
 
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
@@ -135,18 +137,6 @@ void EditorApplication::init() {
     
     // Inicializar MenuBar
     menuBar = std::make_unique<MenuBar>(this);
-    
-    // Setup default scene object
-    if (currentScene) {
-        Haruka::SceneObject cube;
-        cube.name = "Cube_Default";
-        cube.type = "Cube";
-        cube.position = glm::dvec3(0, 0, 0);
-        cube.rotation = glm::dvec3(0, 0, 0);
-        cube.scale = glm::dvec3(1.0, 1.0, 1.0);
-        currentScene->addObject(cube);
-        std::cout << "✓ Default cube added to scene" << std::endl;
-    }
     
     std::cout << "✓ Haruka Editor initialized" << std::endl;
 }

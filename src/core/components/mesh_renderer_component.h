@@ -4,8 +4,8 @@
 #include <vector>
 #include <memory>
 #include <string>
+#include "renderer/simple_mesh.h"
 
-class SimpleMesh;
 class Shader;
 
 class MeshRendererComponent {

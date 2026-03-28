@@ -1,28 +1,12 @@
 #define GLM_ENABLE_EXPERIMENTAL
 #include "viewport.h"
+#include "core/application.h"
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtx/intersect.hpp>
 #include <algorithm>
-#include <set>
 #include "editor/commands/scene_commands.h"
 #include <ImGuizmo.h>
 #include <glm/gtc/type_ptr.hpp>
-
-// Helper function para tipos que no deben renderizarse
-static bool shouldSkipRendering(const std::string& type) {
-    static const std::set<std::string> skipTypes = {
-        "Character",
-        "Camera", 
-        "PlayerController",
-        "RigidBody",
-        "Transform",
-        "Prefab",
-        "Script",
-        "AudioSource",
-        "Collider"
-    };
-    return skipTypes.find(type) != skipTypes.end();
-}
 
 ViewportPanel::ViewportPanel() {}
 
@@ -30,14 +14,45 @@ ViewportPanel::~ViewportPanel() = default;
 
 void ViewportPanel::setScene(Haruka::Scene* scene) {
     currentScene = scene;
+    
+    // Inicializar Application si no existe
+    if (scene) {
+        auto* motorApp = MotorInstance::getInstance().getApplication();
+        if (!motorApp) {
+            if (!ownedApplication) {
+                ownedApplication = std::make_unique<Application>();
+            }
+            MotorInstance::getInstance().setApplication(ownedApplication.get());
+            ownedApplication->init(*scene);
+            if (!camera) {
+                camera = ownedApplication->getCamera();
+                MotorInstance::getInstance().setCamera(camera);
+            }
+        } else {
+            motorApp->init(*scene);
+            if (!camera) {
+                camera = motorApp->getCamera();
+                MotorInstance::getInstance().setCamera(camera);
+            }
+        }
+    }
+    
+    // Registrar en MotorInstance cuando cambia la escena
+    MotorInstance::getInstance().setScene(scene);
 }
 
 void ViewportPanel::setCamera(Camera* cam) {
     camera = cam;
+    
+    // Registrar en MotorInstance cuando cambia la cámara
+    MotorInstance::getInstance().setCamera(cam);
 }
 
 void ViewportPanel::recreateRenderTarget() {
     renderTarget = std::make_unique<RenderTarget>(width, height);
+    
+    // Registrar en MotorInstance cuando cambia el RenderTarget
+    MotorInstance::getInstance().setRenderTarget(renderTarget.get());
 }
 
 glm::vec3 ViewportPanel::getRayFromMouse(const glm::mat4& proj, const glm::mat4& view) {
@@ -61,11 +76,6 @@ int ViewportPanel::getHoveredObjectIndex(const glm::vec3& rayOrigin, const glm::
     const auto& objects = currentScene->getObjects();
     for (size_t i = 0; i < objects.size(); i++) {
         const auto& obj = objects[i];
-        
-        // Saltar componentes que no deben renderizarse
-        if (shouldSkipRendering(obj.type)) {
-            continue;
-        }
         
         // Bounding sphere (radio 0.5 * escala)
         glm::vec3 center = glm::vec3(obj.position);
@@ -222,21 +232,33 @@ void ViewportPanel::handleAssetDrop() {
 }
 
 void ViewportPanel::renderScene() {
-    if (!renderTarget || !camera) return;
+    if (!renderTarget) return;
 
     renderVertex_count = 0;
     renderDraw_calls = 0;
 
-    // Intentar obtener RenderTarget del Motor si está activo
+    // El motor renderiza, solo copiar su textura
     RenderTarget* motorTarget = MotorInstance::getInstance().getRenderTarget();
     if (motorTarget && MotorInstance::getInstance().isMotorActive()) {
+        // Si el motor ya renderiza directo en este target, no hacer blit
+        if (motorTarget == renderTarget.get()) {
+            renderDraw_calls = 1;
+            renderVertex_count = 0;
+
+            if (statsPanel) {
+                statsPanel->setVertexCount(renderVertex_count);
+                statsPanel->setDrawCalls(renderDraw_calls);
+                statsPanel->setTriangleCount(0);
+            }
+            return;
+        }
+
         // Copiar textura del motor al renderTarget del viewport
         glBindFramebuffer(GL_READ_FRAMEBUFFER, motorTarget->getFBO());
         glBindFramebuffer(GL_DRAW_FRAMEBUFFER, renderTarget->getFBO());
         glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL_COLOR_BUFFER_BIT, GL_LINEAR);
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
         
-        // El motor está renderizando, mostrar solo eso
         renderDraw_calls = 1;
         renderVertex_count = 0;
         
@@ -248,159 +270,12 @@ void ViewportPanel::renderScene() {
         return;
     }
 
-    // Fallback: Renderizar localmente si el Motor no está disponible
+    // Sin motor activo = viewport vacío
     renderTarget->bindForWriting();
     glViewport(0, 0, width, height);
-    glEnable(GL_DEPTH_TEST);
-    glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
-    if (!sceneShader) {
-        sceneShader = std::make_unique<Shader>("shaders/simple.vert", "shaders/pbr.frag");
-    }
-
-    glm::mat4 proj = glm::perspective(glm::radians(45.0f), (float)width / (float)height, 0.1f, 1000000000.0f);
-    glm::mat4 view = camera->getViewMatrix();
-
-    sceneShader->use();
-    sceneShader->setMat4("projection", proj);
-    sceneShader->setMat4("view", view);
-
-    sceneShader->setVec3("viewPos", camera->position);
-
-    // Sincronizar luces de la escena con el shader
-    std::vector<glm::vec3> lights;
-    std::vector<glm::vec3> lightColors;
-    
-    if (currentScene) {
-        const auto& objects = currentScene->getObjects();
-        
-        // Buscar luces (PointLight + DirectionalLight)
-        for (const auto& obj : objects) {
-            if ((obj.type == "PointLight" || obj.type == "DirectionalLight") && lights.size() < 4) {
-                lights.push_back(glm::vec3(obj.position));
-                lightColors.push_back(glm::vec3(obj.color) * glm::vec3(obj.intensity));
-            }
-        }
-    }
-    
-    // Fallback lights si la escena no tiene
-    if (lights.empty()) {
-        lights = {
-            glm::vec3(10.0f, 10.0f, 10.0f),
-            glm::vec3(-10.0f, 5.0f, -10.0f)
-        };
-        lightColors = {
-            glm::vec3(300.0f, 300.0f, 300.0f),
-            glm::vec3(150.0f, 150.0f, 150.0f)
-        };
-    }
-
-    sceneShader->setInt("numLights", lights.size());
-    for (size_t i = 0; i < lights.size() && i < 4; i++) {
-        std::string prefix = "lights[" + std::to_string(i) + "]";
-        sceneShader->setVec3(prefix + ".position", lights[i]);
-        sceneShader->setVec3(prefix + ".color", lightColors[i]);
-    }
-
-    if (currentScene) {
-        const auto& objects = currentScene->getObjects();
-        for (size_t i = 0; i < objects.size(); i++) {
-            const auto& obj = objects[i];
-            
-            // Saltar componentes que no deben renderizarse
-            if (shouldSkipRendering(obj.type)) {
-                continue;
-            }
-            
-            glm::dmat4 model = glm::dmat4(1.0f);
-            model = glm::translate(model, obj.position);
-            model = glm::rotate(model, glm::radians(obj.rotation.x), glm::dvec3(1, 0, 0));
-            model = glm::rotate(model, glm::radians(obj.rotation.y), glm::dvec3(0, 1, 0));
-            model = glm::rotate(model, glm::radians(obj.rotation.z), glm::dvec3(0, 0, 1));
-            model = glm::scale(model, obj.scale);
-
-            sceneShader->setMat4("model", model);
-            
-            // Aplicar material si existe
-            if (obj.material) {
-                sceneShader->setVec3("material.albedo", obj.material->albedo);
-                sceneShader->setFloat("material.roughness", obj.material->roughness);
-                sceneShader->setFloat("material.metallic", obj.material->metallic);
-            } else {
-                sceneShader->setVec3("material.albedo", glm::vec3(0.8f, 0.8f, 0.8f));
-                sceneShader->setFloat("material.roughness", 0.5f);
-                sceneShader->setFloat("material.metallic", 0.0f);
-            }
-            
-            // Renderizar con meshRenderer si existe
-            if (obj.meshRenderer) {
-                // Si es una luz, hacerla emisiva
-                if (obj.type == "Light") {
-                    glm::vec3 emissiveColor = obj.material ? obj.material->albedo : glm::vec3(1.0f, 1.0f, 0.0f);
-                    sceneShader->setVec3("albedo", emissiveColor);
-                    sceneShader->setFloat("roughness", 0.1f);
-                    sceneShader->setFloat("metallic", 0.0f);
-                    
-                    // Renderizar con brillo
-                    glDisable(GL_DEPTH_TEST);
-                    obj.meshRenderer->render(*sceneShader);
-                    glEnable(GL_DEPTH_TEST);
-                } else {
-                    // Objeto normal
-                    obj.meshRenderer->render(*sceneShader);
-                }
-                renderVertex_count += 100;
-            } else if (obj.type == "Model" && !obj.modelPath.empty()) {
-                Model* modelPtr = getOrLoadModel(obj.modelPath);
-                if (modelPtr) {
-                    modelPtr->Draw(*sceneShader);
-                    renderVertex_count += 1000;
-                } else {
-                    if (!cubeMesh) {
-                        std::vector<glm::vec3> verts, norms;
-                        std::vector<unsigned int> indices;
-                        PrimitiveShapes::createCube(1.0f, verts, norms, indices);
-                        cubeMesh = std::make_unique<SimpleMesh>(verts, norms, indices);
-                    }
-                    cubeMesh->draw();
-                    renderVertex_count += 24;
-                }
-            } else if (obj.type == "Planet" || obj.type == "Star") {
-                // Renderizar planetas y estrellas como esferas de cubo (uniforme en todos lados)
-                static std::unique_ptr<SimpleMesh> planetMesh;
-                if (!planetMesh) {
-                    std::vector<glm::vec3> verts, norms;
-                    std::vector<unsigned int> indices;
-                    PrimitiveShapes::createCubeSphere(1.0f, 4, verts, norms, indices); // 4 subdivisiones = muy detallado
-                    planetMesh = std::make_unique<SimpleMesh>(verts, norms, indices);
-                }
-                planetMesh->draw();
-                renderVertex_count += 2048;
-            } else {
-                if (!cubeMesh) {
-                    std::vector<glm::vec3> verts, norms;
-                    std::vector<unsigned int> indices;
-                    PrimitiveShapes::createCube(1.0f, verts, norms, indices);
-                    cubeMesh = std::make_unique<SimpleMesh>(verts, norms, indices);
-                }
-                cubeMesh->draw();
-                renderVertex_count += 24;
-            }
-            renderDraw_calls++;
-        }
-    }
-
-    renderGizmoAxes(view, proj);
-    renderDraw_calls += 3;
-    
     renderTarget->unbind();
-    
-    if (statsPanel) {
-        statsPanel->setVertexCount(renderVertex_count);
-        statsPanel->setDrawCalls(renderDraw_calls);
-        statsPanel->setTriangleCount(renderVertex_count / 3);
-    }
 }
 
 void ViewportPanel::updateCameraFromInput(float deltaTime) {
@@ -425,7 +300,7 @@ void ViewportPanel::updateCameraFromInput(float deltaTime) {
     }
 
     // WASD solo cuando el viewport tiene foco y no hay inputs activos
-    if (isViewportFocused && glfwWindow && !ImGui::IsAnyItemActive()) {
+    if (camera && isViewportFocused && glfwWindow && !ImGui::IsAnyItemActive()) {
         camera->processInput(glfwWindow, deltaTime);
     }
 }
@@ -515,76 +390,19 @@ void ViewportPanel::onImGuiRender() {
     ImGui::End();
 }
 
-void ViewportPanel::onUpdate(float deltaTime) {
+void ViewportPanel::onUpdate(float deltaTime) {    
     updateCameraFromInput(deltaTime);
+
+    if (ownedApplication) {
+        ownedApplication->renderFrame();
+    } else if (auto* app = MotorInstance::getInstance().getApplication()) {
+        app->renderFrame();
+    }
+
     renderScene();
 }
 
-void ViewportPanel::renderGizmoAxes(const glm::mat4& view, const glm::mat4& proj) {
-    if (!currentScene || selectedObjectIndex < 0) return;
-
-    const auto& objects = currentScene->getObjects();
-    if (selectedObjectIndex >= (int)objects.size()) return;
-
-    const auto& obj = objects[selectedObjectIndex];
-    if (!sceneShader) return;
-
-    // Desactivar depth test para que gizmos siempre estén visibles
-    glDisable(GL_DEPTH_TEST);
-    glLineWidth(3.0f);
-
-    if (gizmoVAO == 0) {
-        glGenVertexArrays(1, &gizmoVAO);
-        glGenBuffers(1, &gizmoVBO);
-
-        glBindVertexArray(gizmoVAO);
-        glBindBuffer(GL_ARRAY_BUFFER, gizmoVBO);
-        glBufferData(GL_ARRAY_BUFFER, sizeof(float) * 18, nullptr, GL_DYNAMIC_DRAW);
-
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-        glEnableVertexAttribArray(0);
-
-        glDisableVertexAttribArray(1);
-        glVertexAttrib3f(1, 0.0f, 0.0f, 1.0f);
-        glDisableVertexAttribArray(2);
-        glVertexAttrib2f(2, 0.0f, 0.0f);
-        glDisableVertexAttribArray(3);
-        glVertexAttrib3f(3, 1.0f, 0.0f, 0.0f);
-        glDisableVertexAttribArray(4);
-        glVertexAttrib3f(4, 0.0f, 1.0f, 0.0f);
-
-        glBindVertexArray(0);
-    }
-
-    glm::dmat4 model = glm::translate(glm::dmat4(1.0f), obj.position);
-
-    sceneShader->use();
-    sceneShader->setMat4("projection", proj);
-    sceneShader->setMat4("view", view);
-    sceneShader->setMat4("model", model);
-
-    auto drawAxis = [&](glm::vec3 a, glm::vec3 b, glm::vec3 color) {
-        float verts[6] = { a.x, a.y, a.z, b.x, b.y, b.z };
-
-        glBindVertexArray(gizmoVAO);
-        glBindBuffer(GL_ARRAY_BUFFER, gizmoVBO);
-        glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(verts), verts);
-
-        sceneShader->setVec3("lightColor", color);
-        glDrawArrays(GL_LINES, 0, 2);
-    };
-
-    float axisLen = 2.0f; // Más largos
-    drawAxis({0,0,0}, {axisLen,0,0}, {1,0,0}); // X rojo
-    drawAxis({0,0,0}, {0,axisLen,0}, {0,1,0}); // Y verde
-    drawAxis({0,0,0}, {0,0,axisLen}, {0,0,1}); // Z azul
-
-    glBindVertexArray(0);
-
-    // Restaurar estado
-    glEnable(GL_DEPTH_TEST);
-    glLineWidth(1.0f);
-}
+void ViewportPanel::renderGizmoAxes(const glm::mat4& view, const glm::mat4& proj) {}
 
 bool ViewportPanel::rayIntersectsAxis(const glm::vec3& rayOrigin, const glm::vec3& rayDir, const glm::vec3& axisOrigin, const glm::vec3& axisDir, float& tOut) {
     glm::vec3 w0 = rayOrigin - axisOrigin;
@@ -612,116 +430,9 @@ bool ViewportPanel::rayIntersectsAxis(const glm::vec3& rayOrigin, const glm::vec
 }
 
 Model* ViewportPanel::getOrLoadModel(const std::string& path) {
-    if (path.empty()) return nullptr;
-
-    auto it = loadedModels.find(path);
-    if (it != loadedModels.end()) {
-        return it->second.get();
-    }
-
-    try {
-        auto model = std::make_unique<Model>(path);
-        Model* ptr = model.get();
-        loadedModels[path] = std::move(model);
-        std::cout << "Model loaded: " << path << std::endl;
-        return ptr;
-    } catch (const std::exception& e) {
-        std::cerr << "Failed to load model " << path << ": " << e.what() << std::endl;
-        return nullptr;
-    }
+    return nullptr;
 }
 
-void ViewportPanel::renderGrid(const glm::mat4& view, const glm::mat4& proj) {
-    if (!showGrid) return;
-    if (!sceneShader) return;
+void ViewportPanel::renderGrid(const glm::mat4& view, const glm::mat4& proj) {}
 
-    if (gridVAO == 0) {
-        const int gridSize = 100000;  // Reducido de 1,000,000 a 100,000
-        const float gridSpacing = 100.0f;  // Aumentado de 1.0f a 100.0f para mejor escala
-        std::vector<float> gridVertices;
-
-        // Líneas en X
-        for (int i = -gridSize; i <= gridSize; ++i) {
-            float offset = i * gridSpacing;
-            gridVertices.push_back(-gridSize * gridSpacing); gridVertices.push_back(0.0f); gridVertices.push_back(offset);
-            gridVertices.push_back( gridSize * gridSpacing); gridVertices.push_back(0.0f); gridVertices.push_back(offset);
-        }
-
-        // Líneas en Z
-        for (int i = -gridSize; i <= gridSize; ++i) {
-            float offset = i * gridSpacing;
-            gridVertices.push_back(offset); gridVertices.push_back(0.0f); gridVertices.push_back(-gridSize * gridSpacing);
-            gridVertices.push_back(offset); gridVertices.push_back(0.0f); gridVertices.push_back( gridSize * gridSpacing);
-        }
-
-        glGenVertexArrays(1, &gridVAO);
-        glGenBuffers(1, &gridVBO);
-
-        glBindVertexArray(gridVAO);
-        glBindBuffer(GL_ARRAY_BUFFER, gridVBO);
-        glBufferData(GL_ARRAY_BUFFER, gridVertices.size() * sizeof(float), gridVertices.data(), GL_STATIC_DRAW);
-
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-        glEnableVertexAttribArray(0);
-
-        glDisableVertexAttribArray(1);
-        glVertexAttrib3f(1, 0.0f, 0.0f, 1.0f);
-        glDisableVertexAttribArray(2);
-        glVertexAttrib2f(2, 0.0f, 0.0f);
-        glDisableVertexAttribArray(3);
-        glVertexAttrib3f(3, 1.0f, 0.0f, 0.0f);
-        glDisableVertexAttribArray(4);
-        glVertexAttrib3f(4, 0.0f, 1.0f, 0.0f);
-
-        glBindVertexArray(0);
-    }
-
-    sceneShader->use();
-    sceneShader->setMat4("projection", proj);
-    sceneShader->setMat4("view", view);
-    sceneShader->setMat4("model", glm::mat4(1.0f));
-    sceneShader->setVec3("lightColor", glm::vec3(0.3f, 0.3f, 0.3f)); // Grid gris oscuro
-
-    glBindVertexArray(gridVAO);
-    glDrawArrays(GL_LINES, 0, (1000000 * 2 + 1) * 4); // Cambiar de 20 a 200
-    glBindVertexArray(0);
-}
-
-void ViewportPanel::renderGizmoImGuizmo()
-{
-    if (!currentScene || selectedObjectIndex < 0) return;
-
-    auto& obj = currentScene->getObjectsMutable()[selectedObjectIndex];
-
-    // Convierte dvec3 a vec3 para ImGuizmo
-    glm::vec3 pos   = glm::vec3(obj.position);
-    glm::vec3 rot   = glm::vec3(obj.rotation);
-    glm::vec3 scale = glm::vec3(obj.scale);
-
-    // Construye la matriz de transformación en float
-    glm::mat4 objTransform = glm::translate(glm::mat4(1.0f), pos)
-        * glm::rotate(glm::mat4(1.0f), glm::radians(rot.x), glm::vec3(1,0,0))
-        * glm::rotate(glm::mat4(1.0f), glm::radians(rot.y), glm::vec3(0,1,0))
-        * glm::rotate(glm::mat4(1.0f), glm::radians(rot.z), glm::vec3(0,0,1))
-        * glm::scale(glm::mat4(1.0f), scale);
-
-    ImGuizmo::SetDrawlist();
-    ImGuizmo::SetRect(viewportMin.x, viewportMin.y, viewportMax.x - viewportMin.x, viewportMax.y - viewportMin.y);
-
-    glm::mat4 view = camera->getViewMatrix();
-    glm::mat4 proj = glm::perspective(glm::radians(45.0f), (float)width / (float)height, 0.1f, 1000000000.0f);
-
-    ImGuizmo::Manipulate(
-        glm::value_ptr(view), glm::value_ptr(proj),
-        (ImGuizmo::OPERATION)currentGizmoOperation, ImGuizmo::LOCAL,
-        glm::value_ptr(objTransform)
-    );
-
-    if (ImGuizmo::IsUsing()) {
-        glm::vec3 newPos, newRot, newScale;
-        ImGuizmo::DecomposeMatrixToComponents(glm::value_ptr(objTransform), &newPos.x, &newRot.x, &newScale.x);
-        obj.position = glm::dvec3(newPos);
-        obj.rotation = glm::dvec3(newRot);
-        obj.scale    = glm::dvec3(newScale);
-    }
-}
+void ViewportPanel::renderGizmoImGuizmo() {}

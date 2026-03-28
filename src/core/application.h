@@ -10,10 +10,7 @@
 #include "world_system.h"
 #include "camera.h"
 #include "scene.h"
-#include "project.h"
-#include "renderer/mesh.h"
 #include "renderer/shader.h"
-#include "renderer/model.h"
 #include "renderer/shadow.h"
 #include "renderer/hdr.h"
 #include "renderer/bloom.h"
@@ -23,7 +20,6 @@
 #include "renderer/point_shadow.h"
 #include "renderer/render_target.h"
 #include "renderer/simple_mesh.h"
-#include "renderer/primitive_shapes.h"
 #include "renderer/light_culler.h"
 #include "renderer/gpu_instancing.h"
 #include "renderer/compute_postprocess.h"
@@ -34,40 +30,75 @@
 #include "debug_overlay.h"
 #include "physics/raycast_simple.h"
 
+class MotorInstance;
+
+/**
+ * Application - Motor de Haruka Engine
+ * 
+ * Responsabilidades:
+ * - Inicializar sistemas de renderizado
+ * - Renderizar un frame de la escena actual
+ * - Mantener cámara y estado global
+ * 
+ * NO es responsable de:
+ * - Crear/gestionar ventana (viewport del editor es la ventana)
+ * - Procesar input (viewport maneja input)
+ * - UI (viewport maneja ImGui)
+ */
 class Application {
 public:
     Application();
     ~Application();
     
+    // Getters
     Camera* getCamera() { return _camera.get(); }
     Haruka::Scene* getCurrentScene() { return _currentScene.get(); }
     RaycastSimple* getRaycastSystem() { return _raycastSystem.get(); }
+    
+    // Callbacks desde MotorInstance (cuando viewport cambia escena/cámara)
+    void onSceneChanged(Haruka::Scene* scene) { 
+        _currentScene.reset();
+        _currentScene = std::unique_ptr<Haruka::Scene>(scene);
+    }
+    void onCameraChanged(Camera* cam) { 
+        _camera.reset();
+        _camera = std::unique_ptr<Camera>(cam);
+    }
+
+    // inicia el producto final
     void run();
+    // inicia todo lo esencial - sobrecargado para recibir escena
+    void init(Haruka::Scene& scene);
+    // crea la ventana
+    void create_window();
+    // carga escena
+    void loadScene(const std::string& scenePath);
+    // renderiza escena
+    void renderScene(Shader* shader = nullptr);
+    // renderiza
+    void main_loop();
+    // renderiza UN frame (con deltaTime)
+    void renderFrame();
+    // renderiza contenido del frame (lógica pura)
+    void renderFrameContent();
+    // remueve todo para poder cerrar programa
+    void cleanup();
 
 private:
-    // Constants
-    static constexpr int WINDOW_WIDTH = 1280;
-    static constexpr int WINDOW_HEIGHT = 720;
-    static constexpr int MAX_LIGHTS = 256; 
-
-    void init_window();
-    void main_loop();
-    void cleanup();
+    friend class MotorInstance;
     
-    void loadScene(const std::string& scenePath);
-    void renderScene(Shader* shader = nullptr);
+    static constexpr int MAX_LIGHTS = 256;
+    
+    // Window (set by viewport via MotorInstance friend access)
+    GLFWwindow* _window = nullptr;
+    int _width = 1280;
+    int _height = 720;
 
-    // Window
-    GLFWwindow* _window;
-    const int _width = 1280;
-    const int _height = 720;
-
-    // Scene & Project
+    // Core systems
     std::unique_ptr<Haruka::Scene> _currentScene;
-    std::unique_ptr<Haruka::Project> _currentProject;
-    std::vector<std::unique_ptr<Model>> _sceneModels;
+    std::unique_ptr<Camera> _camera;
     
-    // Rendering systems
+    // Rendering pipeline
     std::unique_ptr<Shader> _mainShader;
     std::unique_ptr<Shader> _lampShader;
     std::unique_ptr<Shadow> _shadowSystem;
@@ -85,26 +116,25 @@ private:
     std::unique_ptr<VirtualTexturing> _virtualTexturing;
     std::unique_ptr<RaycastSimple> _raycastSystem;
     
-    // Debug overlay para profiling (singleton reference)
-    // Nota: DebugOverlay es singleton
-    
-    // Asset streaming para reducir RAM
-    // Nota: AssetStreamer es singleton, pero mantener referencia aquí
-    
+    // Render targets
     std::unique_ptr<RenderTarget> _lightingTarget;
     std::unique_ptr<RenderTarget> _bloomExtractTarget;
     
-    // Primitives for celestial bodies
+    // Primitives (LOD spheres para cuerpos celestes)
     std::unique_ptr<SimpleMesh> sphereLOD[4];
-    std::unique_ptr<SimpleMesh> cubeMesh;
-    std::unique_ptr<SimpleMesh> planeMesh;
     
-    // Camera & timing
-    std::unique_ptr<Camera> _camera;
+    // Shaders (cached para no recrear cada frame)
+    std::unique_ptr<Shader> _geomShader;
+    std::unique_ptr<Shader> _ssaoShader;
+    std::unique_ptr<Shader> _lightShader;
+    std::unique_ptr<Shader> _compositeShader;
+    std::unique_ptr<Shader> _flatShader;
+    
+    // Timing
     float deltaTime = 0.0f;
     float lastFrame = 0.0f;
     
-    // Screen quad
+    // Screen quad para post-processing
     unsigned int quadVAO = 0;
     unsigned int quadVBO = 0;
     void setupQuad();

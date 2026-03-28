@@ -1,49 +1,69 @@
 #pragma once
 
-class RenderTarget;
 class Application;
+class RenderTarget;
+class Camera;
+
+namespace Haruka {
+    class Scene;
+}
 
 /**
- * MotorInstance - Singleton que permite al Editor/Scripts acceder al Motor
+ * MotorInstance - Singleton que permite al Editor/Viewport comunicarse con el Motor
  * 
- * El Motor registra su RenderTarget y Application cuando está corriendo.
+ * Friend de Application para acceder directamente a _window, _width, _height
+ * El Motor registra su RenderTarget, Scene, Camera y Application cuando está corriendo.
  * El Editor/Scripts lo consultan para acceder a sistemas como Raycast.
  */
 class MotorInstance {
+    friend class Application;
+    
 public:
     static MotorInstance& getInstance() {
         static MotorInstance instance;
         return instance;
     }
-
-    // El Motor registra su RenderTarget cuando está corriendo
+    
     void setRenderTarget(RenderTarget* target) {
         motorRenderTarget = target;
     }
-
-    // El Motor registra su Application para acceso desde scripts
+    
+    void setScene(Haruka::Scene* scene) {
+        motorScene = scene;
+    }
+    
+    void setCamera(Camera* cam) {
+        motorCamera = cam;
+    }
+    
     void setApplication(Application* app) {
         motorApplication = app;
     }
-
-    // El Editor consulta si el Motor está activo
+    
     RenderTarget* getRenderTarget() const {
         return motorRenderTarget;
     }
-
-    // Scripts acceden a sistemas del motor (raycast, etc)
+    
+    Haruka::Scene* getScene() const {
+        return motorScene;
+    }
+    
+    Camera* getCamera() const {
+        return motorCamera;
+    }
+    
     Application* getApplication() const {
         return motorApplication;
     }
-
-    // Limpiar cuando el Motor se detiene
-    void clear() {
-        motorRenderTarget = nullptr;
-        motorApplication = nullptr;
-    }
-
+    
     bool isMotorActive() const {
-        return motorRenderTarget != nullptr;
+        return motorScene != nullptr && motorRenderTarget != nullptr;
+    }
+    
+    void clear() {
+        motorScene = nullptr;
+        motorCamera = nullptr;
+        motorApplication = nullptr;
     }
 
 private:
@@ -55,5 +75,7 @@ private:
     MotorInstance& operator=(const MotorInstance&) = delete;
 
     RenderTarget* motorRenderTarget = nullptr;
+    Haruka::Scene* motorScene = nullptr;
+    Camera* motorCamera = nullptr;
     Application* motorApplication = nullptr;
 };

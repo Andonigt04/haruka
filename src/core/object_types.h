@@ -33,6 +33,9 @@ namespace Haruka {
      */
     inline ObjectType stringToObjectType(const std::string& typeStr) {
         if (typeStr == "Mesh") return ObjectType::MESH;
+        if (typeStr == "Cube") return ObjectType::MESH;
+        if (typeStr == "Sphere") return ObjectType::MESH;
+        if (typeStr == "Plane") return ObjectType::MESH;
         if (typeStr == "Model") return ObjectType::MODEL;
         if (typeStr == "Light") return ObjectType::LIGHT;
         if (typeStr == "DirectionalLight") return ObjectType::DIRECTIONAL_LIGHT;
@@ -70,7 +73,12 @@ namespace Haruka {
      * Verificar si un tipo es renderizable
      */
     inline bool isRenderableObjectType(ObjectType type) {
-        return type == ObjectType::MESH || type == ObjectType::MODEL || type == ObjectType::SPOTLIGHT;
+        return type == ObjectType::MESH ||
+               type == ObjectType::MODEL ||
+               type == ObjectType::LIGHT ||
+               type == ObjectType::DIRECTIONAL_LIGHT ||
+               type == ObjectType::SPOTLIGHT ||
+               type == ObjectType::CHARACTER;
     }
     
     /**
