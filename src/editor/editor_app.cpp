@@ -372,6 +372,9 @@ void EditorApplication::renderUI() {
             }
             ImGui::EndPopup();
         }
+        
+        // Export Panel
+        exportPanel.render(this);
 
         // Unsaved changes popup
         if (showUnsavedChangesPopup) ImGui::OpenPopup("Unsaved Changes");
@@ -461,8 +464,8 @@ void EditorApplication::enterPlayMode() {
         }
     }
 
-    // Cargar la librería dinámicamente
-    std::string libPath = projectPath + "/build/libTestGameLogic.so";
+    std::string logicLib = "lib" + currentProject->getConfig().name + ".so";
+    std::string libPath = projectPath + logicLib;
     gameLibHandle = dlopen(libPath.c_str(), RTLD_LAZY);
     
     if (gameLibHandle) {
@@ -763,39 +766,17 @@ void EditorApplication::compileProject() {
 
 void EditorApplication::exportGame() {
     if (!currentProject) {
-        std::cerr << "No project loaded" << std::endl;
+        std::cerr << "✗ No project loaded" << std::endl;
         return;
     }
+    
+    // Mostrar panel de export
+    exportPanel.show();
+}
 
-    std::string projectPath = currentProject->getPath();
-    std::string exportPath = projectPath + "/export";
-    
-    // Crear directorio export
-    std::filesystem::create_directories(exportPath);
-    std::filesystem::create_directories(exportPath + "/scenes");
-    std::filesystem::create_directories(exportPath + "/assets");
-    
-    // Copiar escenas
-    std::filesystem::copy(projectPath + "/scenes", exportPath + "/scenes", 
-        std::filesystem::copy_options::overwrite_existing | 
-        std::filesystem::copy_options::recursive);
-    
-    // Copiar assets
-    std::filesystem::copy(projectPath + "/assets", exportPath + "/assets", 
-        std::filesystem::copy_options::overwrite_existing | 
-        std::filesystem::copy_options::recursive);
-    
-    // Copiar librería
-    std::filesystem::copy(projectPath + "/build/libTestGameLogic.so", 
-        exportPath + "/libTestGameLogic.so", 
-        std::filesystem::copy_options::overwrite_existing);
-    
-    // Copiar configuración
-    std::filesystem::copy(projectPath + "/project.hrk", 
-        exportPath + "/project.hrk", 
-        std::filesystem::copy_options::overwrite_existing);
-    
-    std::cout << "✓ Game exported to: " << exportPath << std::endl;
+void EditorApplication::showExportDialog() {
+    // El panel de export se renderiza desde renderUI()
+    exportPanel.render(this);
 }
 
 void EditorApplication::saveFile(const std::string& path, bool asPrefab) {

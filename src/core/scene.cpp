@@ -290,19 +290,31 @@ void Scene::loadPrefabComponents(const std::string& prefabPath, SceneObject& obj
 void Scene::executeInitializer(const std::string& scenePath) {
     std::ifstream in(scenePath);
     if (!in.is_open()) return;
-    
     nlohmann::json j;
     in >> j;
     in.close();
-
     if (!j.contains("initializer")) return;
-
     std::filesystem::path scenePath_fs(scenePath);
     std::filesystem::path projectRoot = scenePath_fs.parent_path().parent_path();
-    std::filesystem::path libPath = projectRoot / "build" / "libTestGameLogic.so";
-    
+    std::string projectName = "";
+    std::filesystem::path projectFile = projectRoot / "project.hrk";
+    std::ifstream pj(projectFile);
+    if (pj.is_open()) {
+        std::string line;
+        while (std::getline(pj, line)) {
+            if (line.find("\"name\"") != std::string::npos) {
+                size_t start = line.find(":") + 1;
+                size_t firstQuote = line.find("\"", start) + 1;
+                size_t lastQuote = line.find("\"", firstQuote);
+                projectName = line.substr(firstQuote, lastQuote - firstQuote);
+                break;
+            }
+        }
+        pj.close();
+    }
+    std::string logicLib = "lib" + projectName + ".so";
+    std::filesystem::path libPath = projectRoot / logicLib;
     std::cout << "Loading initializer: " << libPath.string() << std::endl;
-    
     void* handle = dlopen(libPath.c_str(), RTLD_LAZY);
     if (!handle) {
         std::cerr << "Could not load initializer library: " << dlerror() << std::endl;

@@ -21,7 +21,21 @@ namespace Haruka
         config.startScene = "main";
         config.assetsPath = "assets/";
         config.outputPath = "build/";
-        
+        // Detectar rutas del motor y editor
+        char absPath[4096];
+        std::string engineBin, editorBin;
+        if (realpath((path + "/../../build/HarukaEngine").c_str(), absPath)) {
+            engineBin = absPath;
+        } else {
+            engineBin = "HarukaEngine"; // Solo nombre, buscar en PATH
+        }
+        if (realpath((path + "/../../build/HarukaEditor").c_str(), absPath)) {
+            editorBin = absPath;
+        } else {
+            editorBin = "HarukaEditor";
+        }
+        config.engineBinary = engineBin;
+        config.editorBinary = editorBin;
         try {
             // Crear estructura de carpetas
             namespace fs = std::filesystem;
@@ -31,9 +45,7 @@ namespace Haruka
             fs::create_directories(path + "/assets/textures");
             fs::create_directories(path + "/assets/scripts");
             fs::create_directories(path + "/build");
-            
             config.scenes.push_back("main.scene");
-            
             bool ok = saveToJSON(path + "/project.hrk");
             std::cout << "Project created at: " << path << std::endl;
             return ok;
@@ -102,6 +114,44 @@ namespace Haruka
                 size_t lastQuote = line.find("\"", firstQuote);
                 config.startScene = line.substr(firstQuote, lastQuote - firstQuote);
             }
+            else if (line.find("\"shadersPath\"") != std::string::npos) {
+                size_t start = line.find(":") + 1;
+                size_t firstQuote = line.find("\"", start) + 1;
+                size_t lastQuote = line.find("\"", firstQuote);
+                config.shadersPath = line.substr(firstQuote, lastQuote - firstQuote);
+            }
+            // Parse outputPath
+            else if (line.find("\"outputPath\"") != std::string::npos) {
+                size_t start = line.find(":") + 1;
+                size_t firstQuote = line.find("\"", start) + 1;
+                size_t lastQuote = line.find("\"", firstQuote);
+                config.outputPath = line.substr(firstQuote, lastQuote - firstQuote);
+            }
+            // Parse export settings
+            else if (line.find("\"author\"") != std::string::npos) {
+                size_t start = line.find(":") + 1;
+                size_t firstQuote = line.find("\"", start) + 1;
+                size_t lastQuote = line.find("\"", firstQuote);
+                config.exportSettings.author = line.substr(firstQuote, lastQuote - firstQuote);
+            }
+            else if (line.find("\"description\"") != std::string::npos) {
+                size_t start = line.find(":") + 1;
+                size_t firstQuote = line.find("\"", start) + 1;
+                size_t lastQuote = line.find("\"", firstQuote);
+                config.exportSettings.description = line.substr(firstQuote, lastQuote - firstQuote);
+            }
+            else if (line.find("\"defaultBuildType\"") != std::string::npos) {
+                size_t start = line.find(":") + 1;
+                size_t firstQuote = line.find("\"", start) + 1;
+                size_t lastQuote = line.find("\"", firstQuote);
+                config.exportSettings.defaultBuildType = line.substr(firstQuote, lastQuote - firstQuote);
+            }
+            else if (line.find("\"defaultPlatform\"") != std::string::npos) {
+                size_t start = line.find(":") + 1;
+                size_t firstQuote = line.find("\"", start) + 1;
+                size_t lastQuote = line.find("\"", firstQuote);
+                config.exportSettings.defaultPlatform = line.substr(firstQuote, lastQuote - firstQuote);
+            }
         }
         
         file.close();
@@ -114,26 +164,35 @@ namespace Haruka
             HARUKA_MOTOR_ERROR(ErrorCode::FILE_WRITE_ERROR, std::string("Cannot create project file: ") + filepath);
             return false;
         }
-        
         // Escribir JSON manual
         file << "{\n";
         file << "  \"name\": \"" << config.name << "\",\n";
         file << "  \"version\": \"" << config.version << "\",\n";
         file << "  \"engineVersion\": \"" << config.engineVersion << "\",\n";
         file << "  \"startScene\": \"" << config.startScene << "\",\n";
+        file << "  \"engineBinary\": \"" << config.engineBinary << "\",\n";
+        file << "  \"editorBinary\": \"" << config.editorBinary << "\",\n";
         file << "  \"scenes\": [\n";
-        
         for (size_t i = 0; i < config.scenes.size(); i++) {
             file << "    \"" << config.scenes[i] << "\"";
             if (i < config.scenes.size() - 1) file << ",";
             file << "\n";
         }
-        
         file << "  ],\n";
         file << "  \"assetsPath\": \"" << config.assetsPath << "\",\n";
-        file << "  \"outputPath\": \"" << config.outputPath << "\"\n";
+        file << "  \"outputPath\": \"" << config.outputPath << "\",\n";
+        file << "  \"shadersPath\": \"" << config.shadersPath << "\",\n";
+        file << "  \"exportSettings\": {\n";
+        file << "    \"author\": \"" << config.exportSettings.author << "\",\n";
+        file << "    \"description\": \"" << config.exportSettings.description << "\",\n";
+        file << "    \"defaultBuildType\": \"" << config.exportSettings.defaultBuildType << "\",\n";
+        file << "    \"defaultPlatform\": \"" << config.exportSettings.defaultPlatform << "\",\n";
+        file << "    \"includeDebugSymbols\": " << (config.exportSettings.includeDebugSymbols ? "true" : "false") << ",\n";
+        file << "    \"optimizeAssets\": " << (config.exportSettings.optimizeAssets ? "true" : "false") << ",\n";
+        file << "    \"stripUnusedContent\": " << (config.exportSettings.stripUnusedContent ? "true" : "false") << ",\n";
+        file << "    \"compressAssets\": " << (config.exportSettings.compressAssets ? "true" : "false") << "\n";
+        file << "  }\n";
         file << "}\n";
-        
         file.close();
         return true;
     }

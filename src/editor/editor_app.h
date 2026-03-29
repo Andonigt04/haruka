@@ -22,6 +22,7 @@
 #include "editor/panels/multi_scene_manager.h"
 #include "editor/panels/scripting_editor.h"
 #include "editor/panels/ui_builder.h"
+#include "editor/panels/export_panel.h"
 #include "menu_bar.h"
 #include <imgui.h>
 #include <memory>
@@ -34,6 +35,7 @@ public:
     ~EditorApplication();
     
     void run();
+    Haruka::Project* getProject() { return currentProject.get(); }
     
     friend class MenuBar;
 
@@ -65,6 +67,7 @@ private:
     SearchPanel searchPanel;
     ScriptingEditor scriptingEditor;
     UIBuilder uiBuilder;
+    ExportPanel exportPanel;
     
     // Gizmos
     int gizmoMode = 0;
@@ -134,6 +137,7 @@ private:
     bool isProjectCompiling = false;
 
     void exportGame();
+    void showExportDialog();
 
     // Auto-save system
     struct SceneFile {

@@ -565,9 +565,14 @@ void Application::cleanup() {
     glfwTerminate();
 }
 
-void Application::run() {
+void Application::run(const std::string& startScenePath) {
     create_window();
-    // TODO: necesario descomentar para produccion 
-    //init();
+    Haruka::Scene scene;
+    if (!startScenePath.empty()) {
+        scene.load(startScenePath);
+    } else {
+        scene = Haruka::Scene("DefaultScene");
+    }
+    init(scene);
     main_loop();
 }

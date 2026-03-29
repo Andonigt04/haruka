@@ -66,7 +66,7 @@ public:
     }
 
     // inicia el producto final
-    void run();
+    void run(const std::string& startScenePath);
     // inicia todo lo esencial - sobrecargado para recibir escena
     void init(Haruka::Scene& scene);
     // crea la ventana
