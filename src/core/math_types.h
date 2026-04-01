@@ -43,6 +43,22 @@ namespace Haruka {
 
         constexpr double GALACTIC_RADIUS = 50000.0 * LIGHT_YEAR; 
         constexpr double INTERGALACTIC_DISTANCE = 2.5e6 * LIGHT_YEAR;
+
+        // Visualización astronómica real: 1 unidad de render = 1 km
+        // (sin compresión global)
+        constexpr double RENDER_KM_PER_UNIT = 1.0;
+
+        inline double kmToRender(double km) {
+            return km / RENDER_KM_PER_UNIT;
+        }
+
+        inline glm::dvec3 kmToRender(const glm::dvec3& kmVec) {
+            return kmVec / RENDER_KM_PER_UNIT;
+        }
+
+        inline glm::vec3 kmToRender(const glm::vec3& kmVec) {
+            return kmVec / static_cast<float>(RENDER_KM_PER_UNIT);
+        }
     }
 };
 #endif

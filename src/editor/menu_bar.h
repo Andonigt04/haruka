@@ -16,6 +16,7 @@ private:
     
     void renderFileMenu();
     void renderEditMenu();
+    void renderObjectsMenu();
     void renderViewMenu();
     void renderPlayControls();
     void renderHelpMenu();

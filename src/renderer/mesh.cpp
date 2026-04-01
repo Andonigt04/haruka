@@ -23,6 +23,7 @@ Mesh::Mesh(const std::vector<glm::vec3>& vertices,
     this->index = indices;
     this->vertex.clear();
     this->textures.clear();
+    this->simpleVertexCount = static_cast<int>(vertices.size());
     setupSimpleMesh(vertices, normals, indices);
 }
 

@@ -3,6 +3,8 @@
 #include "core/math_types.h"
 #include "character.h"
 #include "core/scene.h"
+#include "renderer/terrain.h"
+#include "renderer/shader.h"
 #include <memory>
 
 namespace Haruka {
@@ -15,6 +17,10 @@ public:
     void init(Scene* scene, WorldSystem* worldSystem);
     void update(double dt);
     void render();
+
+    // Terreno planetario (gestionado por gameplay, no por Application)
+    void initTerrain(int size = 1024, float heightScale = 200.0f, int seed = 42);
+    void renderTerrain(Shader& shader, const glm::vec3& cameraPos);
     
     // API para agregar cuerpos celestes
     CelestialBody* addStar(const std::string& name, double mass = 1.989e30, double radius = Units::STAR_RADIUS_MEDIUM);
@@ -30,6 +36,7 @@ public:
     
     Character* getPlayer() { return player.get(); }
     void setPlayer(std::unique_ptr<Character> p) { player = std::move(p); }
+    Terrain* getTerrain() { return terrain.get(); }
     
     // Configuración
     void setTimeScale(double scale) { timeScale = scale; }
@@ -44,6 +51,7 @@ private:
     Scene* scene = nullptr;
     WorldSystem* worldSystem = nullptr;
     std::unique_ptr<Character> player;
+    std::unique_ptr<Terrain> terrain;
     
     CelestialBody* star = nullptr;
     std::vector<std::string> bodyNames;

@@ -12,9 +12,43 @@ PlanetarySystem::~PlanetarySystem() {}
 void PlanetarySystem::init(Scene* scene, WorldSystem* worldSystem) {
     this->scene = scene;
     this->worldSystem = worldSystem;
+
+    // Inicializar terreno por defecto desde la capa planetaria (gameplay)
+    initTerrain(512, 200.0f, 42);
     
     std::cout << "✓ Planetary System initialized (empty)" << std::endl;
     std::cout << "  Use addStar() and addPlanet() to populate the system" << std::endl;
+}
+
+void PlanetarySystem::initTerrain(int size, float heightScale, int seed) {
+    terrain = std::make_unique<Terrain>(size, heightScale);
+    terrain->setPosition(glm::vec3(-size * 0.5f, -10.0f, -size * 0.5f));
+    terrain->setScale(glm::vec3(10.0f, 1.0f, 10.0f));
+    terrain->generatePerlin(seed);
+    std::cout << "[PlanetarySystem] Terrain initialized: size=" << size
+              << " heightScale=" << heightScale << " seed=" << seed << std::endl;
+}
+
+void PlanetarySystem::renderTerrain(Shader& shader, const glm::vec3& cameraPos) {
+    if (!terrain) return;
+
+    // Asegurar texturas válidas para shaders deferred que esperan samplers
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    glActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+    shader.setInt("texture_diffuse1", 0);
+    shader.setInt("texture_specular1", 1);
+    shader.setInt("texture_emissive1", 2);
+
+    terrain->render(shader, cameraPos);
+}
+
+void PlanetarySystem::render() {
+    // Render explícito de terreno desde gameplay cuando el pipeline lo solicite.
 }
 
 CelestialBody* PlanetarySystem::addStar(const std::string& name, double mass, double radius) {
@@ -139,8 +173,11 @@ void PlanetarySystem::syncSceneWithOrbits() {
         }
         
         if (sceneObj) {
-            sceneObj->position = glm::dvec3(body.localPos.x, body.localPos.y, body.localPos.z);
-            sceneObj->scale = glm::dvec3(body.radius / 100000.0);
+            glm::dvec3 localKm(body.localPos.x, body.localPos.y, body.localPos.z);
+            double renderRadius = Units::kmToRender(static_cast<double>(body.radius));
+
+            sceneObj->position = Units::kmToRender(localKm);
+            sceneObj->scale = glm::dvec3(renderRadius);
             sceneObj->color = body.color;
         }
     }

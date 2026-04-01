@@ -1,5 +1,7 @@
 #include "world_system.h"
 
+namespace Haruka {
+
 WorldSystem::WorldSystem() : worldOrigin(0.0, 0.0, 0.0) {
     // Default LOD distances (in km)
     lodDistances[0] = 1000.0f;        // < 1,000 km = LOD 0
@@ -94,4 +96,6 @@ void WorldSystem::frustumCull(Haruka::WorldPos cameraPos, const glm::mat4& viewP
             body.visible = 0;
         }
     }
+}
+
 }

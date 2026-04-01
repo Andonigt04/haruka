@@ -43,9 +43,11 @@ void ViewportPanel::setScene(Haruka::Scene* scene) {
 
 void ViewportPanel::setCamera(Camera* cam) {
     camera = cam;
-    
-    // Registrar en MotorInstance cuando cambia la cámara
-    MotorInstance::getInstance().setCamera(cam);
+    if (camera) {
+        MotorInstance::getInstance().setCamera(camera);
+    } else {
+        std::cout << "[ViewportPanel] setCamera: cámara nula, no se registra en MotorInstance" << std::endl;
+    }
 }
 
 void ViewportPanel::recreateRenderTarget() {
@@ -68,7 +70,10 @@ glm::vec3 ViewportPanel::getRayFromMouse(const glm::mat4& proj, const glm::mat4&
 }
 
 int ViewportPanel::getHoveredObjectIndex(const glm::vec3& rayOrigin, const glm::vec3& rayDir, const glm::mat4& proj, const glm::mat4& view) {
-    if (!currentScene) return -1;
+    if (!renderTarget) {
+        std::cout << "[ViewportPanel] renderScene: renderTarget nullptr" << std::endl;
+        return -1;
+    }
 
     float closestDist = FLT_MAX;
     int closestIdx = -1;
@@ -85,7 +90,6 @@ int ViewportPanel::getHoveredObjectIndex(const glm::vec3& rayOrigin, const glm::
         if (glm::intersectRaySphere(rayOrigin, rayDir, center, radius, distance)) {
             if (distance < closestDist) {
                 closestDist = distance;
-                closestIdx = (int)i;
             }
         }
     }
@@ -99,7 +103,7 @@ void ViewportPanel::handleGizmoInput() {
     ImGuiIO& io = ImGui::GetIO();
 
     if (isViewportHovered && !io.WantCaptureMouse && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-        glm::mat4 proj = glm::perspective(glm::radians(45.0f), (float)width / (float)height, 0.1f, 1000000000.0f);
+        glm::mat4 proj = glm::perspective(glm::radians(45.0f), (float)width / (float)height, 0.1f, 1000000000000.0f);
         glm::mat4 view = camera->getViewMatrix();
 
         glm::vec3 rayDir = getRayFromMouse(proj, view);
@@ -126,7 +130,7 @@ void ViewportPanel::handleGizmoInput() {
             ImGuizmo::SetRect(viewportMin.x, viewportMin.y, viewportMax.x - viewportMin.x, viewportMax.y - viewportMin.y);
 
             glm::mat4 view = camera->getViewMatrix();
-            glm::mat4 proj = glm::perspective(glm::radians(45.0f), (float)width / (float)height, 0.1f, 1000000000.0f);
+            glm::mat4 proj = glm::perspective(glm::radians(45.0f), (float)width / (float)height, 0.1f, 1000000000000.0f);
 
             ImGuizmo::Manipulate(
                 glm::value_ptr(view), glm::value_ptr(proj),
@@ -155,7 +159,7 @@ void ViewportPanel::handleGizmoInput() {
                                            glm::vec3(0,0,1);
 
         if (gizmoMode == 0) { // MOVE
-            glm::mat4 proj = glm::perspective(glm::radians(45.0f), (float)width / (float)height, 0.1f, 1000000000.0f);
+            glm::mat4 proj = glm::perspective(glm::radians(45.0f), (float)width / (float)height, 0.1f, 1000000000000.0f);
             glm::mat4 view = camera->getViewMatrix();
 
             glm::vec3 rayDir = getRayFromMouse(proj, view);
@@ -237,45 +241,221 @@ void ViewportPanel::renderScene() {
     renderVertex_count = 0;
     renderDraw_calls = 0;
 
-    // El motor renderiza, solo copiar su textura
-    RenderTarget* motorTarget = MotorInstance::getInstance().getRenderTarget();
-    if (motorTarget && MotorInstance::getInstance().isMotorActive()) {
-        // Si el motor ya renderiza directo en este target, no hacer blit
-        if (motorTarget == renderTarget.get()) {
-            renderDraw_calls = 1;
-            renderVertex_count = 0;
+    // --- Render del motor vs render local ---
+    // Si quieres forzar render local en el editor, usa esta bandera:
+    #ifdef HARUKA_EDITOR
+    static bool forceLocalRender = false;
+    if (ImGui::IsKeyDown(ImGuiKey_LeftCtrl) && ImGui::IsKeyPressed(ImGuiKey_L)) {
+        forceLocalRender = !forceLocalRender;
+    }
+    #else
+    constexpr bool forceLocalRender = false;
+    #endif
 
+    RenderTarget* motorTarget = MotorInstance::getInstance().getRenderTarget();
+    bool motorActivo = MotorInstance::getInstance().isMotorActive();
+    bool motorTieneApp = (MotorInstance::getInstance().getApplication() != nullptr);
+    bool motorTieneCam = (MotorInstance::getInstance().getCamera() != nullptr);
+    bool motorRenderDirecto = (motorTarget && (motorTarget == renderTarget.get()));
+
+    auto computeSceneStats = [&](int& outVertices, int& outTriangles, int& outDrawCalls) {
+        outVertices = 0;
+        outTriangles = 0;
+        outDrawCalls = 0;
+        Haruka::Scene* sceneForStats = MotorInstance::getInstance().getScene();
+        if (!sceneForStats) sceneForStats = currentScene;
+        if (!sceneForStats) return;
+
+        for (const auto& obj : sceneForStats->getObjects()) {
+            if (obj.meshRenderer && obj.meshRenderer->getMesh()) {
+                outDrawCalls++;
+                outVertices += obj.meshRenderer->getMesh()->getVertexCount();
+                outTriangles += obj.meshRenderer->getMesh()->getTriangleCount();
+            }
+        }
+    };
+
+    bool useMotorOutput = playMode && motorTarget && motorActivo && motorTieneApp && motorTieneCam && !forceLocalRender;
+    if (useMotorOutput) {
+        if (motorRenderDirecto) {
+            // El motor ya renderiza directo en este target, no hacer nada más
+            int tris = 0;
+            computeSceneStats(renderVertex_count, tris, renderDraw_calls);
             if (statsPanel) {
                 statsPanel->setVertexCount(renderVertex_count);
                 statsPanel->setDrawCalls(renderDraw_calls);
-                statsPanel->setTriangleCount(0);
+                statsPanel->setTriangleCount(tris);
+            }
+            return;
+        } else {
+            // Copiar textura del motor al renderTarget del viewport
+            glBindFramebuffer(GL_READ_FRAMEBUFFER, motorTarget->getFBO());
+            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, renderTarget->getFBO());
+            glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL_COLOR_BUFFER_BIT, GL_LINEAR);
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            int tris = 0;
+            computeSceneStats(renderVertex_count, tris, renderDraw_calls);
+            if (statsPanel) {
+                statsPanel->setVertexCount(renderVertex_count);
+                statsPanel->setDrawCalls(renderDraw_calls);
+                statsPanel->setTriangleCount(tris);
             }
             return;
         }
-
-        // Copiar textura del motor al renderTarget del viewport
-        glBindFramebuffer(GL_READ_FRAMEBUFFER, motorTarget->getFBO());
-        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, renderTarget->getFBO());
-        glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL_COLOR_BUFFER_BIT, GL_LINEAR);
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
-        
-        renderDraw_calls = 1;
-        renderVertex_count = 0;
-        
-        if (statsPanel) {
-            statsPanel->setVertexCount(renderVertex_count);
-            statsPanel->setDrawCalls(renderDraw_calls);
-            statsPanel->setTriangleCount(0);
-        }
-        return;
     }
 
-    // Sin motor activo = viewport vacío
+    // Render local (editor o fallback)
     renderTarget->bindForWriting();
     glViewport(0, 0, width, height);
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    int localDrawCalls = 0;
+    int localVertices = 0;
+    int localTriangles = 0;
+    if (currentScene) {
+        bool shaderReady = true;
+        if (!sceneShader) {
+            try {
+                // Shader simple/estable para editor local
+                sceneShader = std::make_unique<Shader>("shaders/simple.vert", "shaders/light_cube.frag");
+            } catch (const std::exception& e) {
+                std::cerr << "[ViewportPanel] Error al crear sceneShader: " << e.what() << std::endl;
+                shaderReady = false;
+            }
+        }
+        if (!sceneShader) {
+            std::cerr << "[ViewportPanel] sceneShader es nullptr, abortando render local" << std::endl;
+            shaderReady = false;
+        }
+        if (shaderReady) {
+            if (!shadowSystem) {
+                shadowSystem = std::make_unique<Shadow>(2048, 2048);
+            }
+            if (!shadowDepthShader) {
+                shadowDepthShader = std::make_unique<Shader>("shaders/shadow.vert", "shaders/shadow.frag");
+            }
+
+            glm::vec3 sunPos(5000.0f, 5000.0f, -5000.0f);
+            glm::vec3 sunColor(1.0f, 1.0f, 0.95f);
+            float sunIntensity = 20.0f;
+            for (const auto& obj : currentScene->getObjects()) {
+                if (obj.type == "Light" || obj.type == "PointLight" || obj.type == "DirectionalLight") {
+                    sunPos = glm::vec3(obj.position);
+                    sunColor = glm::vec3(obj.color);
+                    sunIntensity = std::max((float)obj.intensity, 0.0f);
+                    break;
+                }
+            }
+
+            glm::vec3 sunDir = glm::normalize(sunPos);
+            glm::vec3 target = glm::vec3(0.0f);
+            glm::vec3 lightEye = target - sunDir * 50000.0f;
+            glm::mat4 lightView = glm::lookAt(lightEye, target, glm::vec3(0, 1, 0));
+            glm::mat4 lightProjection = glm::ortho(-12000.0f, 12000.0f, -12000.0f, 12000.0f, 1000.0f, 90000.0f);
+            glm::mat4 lightSpaceMatrix = lightProjection * lightView;
+
+            // Shadow depth pass
+            if (shadowSystem && shadowDepthShader) {
+                shadowSystem->bindForWriting();
+                glClear(GL_DEPTH_BUFFER_BIT);
+
+                glEnable(GL_POLYGON_OFFSET_FILL);
+                glPolygonOffset(2.5f, 8.0f);
+                glEnable(GL_CULL_FACE);
+                glCullFace(GL_FRONT);
+
+                shadowDepthShader->use();
+                shadowDepthShader->setMat4("lightView", lightView);
+                shadowDepthShader->setMat4("lightProjection", lightProjection);
+
+                for (const auto& obj : currentScene->getObjects()) {
+                    glm::mat4 modelMatrix = glm::mat4(1.0f);
+                    modelMatrix = glm::translate(modelMatrix, glm::vec3(obj.position));
+                    modelMatrix = glm::rotate(modelMatrix, glm::radians((float)obj.rotation.x), glm::vec3(1, 0, 0));
+                    modelMatrix = glm::rotate(modelMatrix, glm::radians((float)obj.rotation.y), glm::vec3(0, 1, 0));
+                    modelMatrix = glm::rotate(modelMatrix, glm::radians((float)obj.rotation.z), glm::vec3(0, 0, 1));
+                    modelMatrix = glm::scale(modelMatrix, glm::vec3(obj.scale));
+                    shadowDepthShader->setMat4("model", modelMatrix);
+
+                    if (obj.meshRenderer) {
+                        obj.meshRenderer->render(*shadowDepthShader);
+                    } else if (!obj.modelPath.empty()) {
+                        try {
+                            Model model(obj.modelPath);
+                            model.Draw(*shadowDepthShader);
+                        } catch (...) {}
+                    }
+                }
+
+                glCullFace(GL_BACK);
+                glDisable(GL_POLYGON_OFFSET_FILL);
+                shadowSystem->unbind();
+
+                // Restaurar el target del viewport tras el pass de sombras
+                renderTarget->bindForWriting();
+                glViewport(0, 0, width, height);
+            }
+
+            sceneShader->use();
+            sceneShader->setMat4("projection", glm::perspective(glm::radians(45.0f), (float)width / (float)height, 0.1f, 1000000000000.0f));
+            sceneShader->setMat4("view", camera ? camera->getViewMatrix() : glm::lookAt(glm::vec3(0.0f, 2.0f, 8.0f), glm::vec3(0.0f), glm::vec3(0, 1, 0)));
+            sceneShader->setMat4("lightSpaceMatrix", lightSpaceMatrix);
+            sceneShader->setVec3("sunDirection", sunDir);
+            float sunEnergy = std::clamp(sunIntensity * 0.01f, 0.2f, 2.0f);
+            sceneShader->setVec3("sunLightColor", sunColor * sunEnergy);
+            sceneShader->setFloat("ambientStrength", 0.12f);
+            if (shadowSystem) {
+                shadowSystem->bindForReading(3);
+                sceneShader->setInt("shadowMap", 3);
+                sceneShader->setBool("useShadowMap", true);
+            } else {
+                sceneShader->setBool("useShadowMap", false);
+            }
+            for (const auto& obj : currentScene->getObjects()) {
+                glm::mat4 modelMatrix = glm::mat4(1.0f);
+                modelMatrix = glm::translate(modelMatrix, glm::vec3(obj.position));
+                modelMatrix = glm::rotate(modelMatrix, glm::radians((float)obj.rotation.x), glm::vec3(1, 0, 0));
+                modelMatrix = glm::rotate(modelMatrix, glm::radians((float)obj.rotation.y), glm::vec3(0, 1, 0));
+                modelMatrix = glm::rotate(modelMatrix, glm::radians((float)obj.rotation.z), glm::vec3(0, 0, 1));
+                modelMatrix = glm::scale(modelMatrix, glm::vec3(obj.scale));
+                sceneShader->setMat4("model", modelMatrix);
+                glm::vec3 baseColor = glm::vec3(obj.color);
+                if (glm::length(baseColor) < 0.001f) baseColor = glm::vec3(0.8f);
+
+                const bool isLightObj = (obj.type == "Light" || obj.type == "PointLight" || obj.type == "DirectionalLight");
+                float emission = isLightObj ? std::max((float)obj.intensity, 0.0f) : 1.0f;
+                glm::vec3 c = isLightObj ? (baseColor * emission) : baseColor;
+                sceneShader->setVec3("lightColor", c);
+                if (obj.meshRenderer) {
+                    obj.meshRenderer->render(*sceneShader);
+                    localDrawCalls++;
+                    if (obj.meshRenderer->getMesh()) {
+                        localVertices += obj.meshRenderer->getMesh()->getVertexCount();
+                        localTriangles += obj.meshRenderer->getMesh()->getTriangleCount();
+                    }
+                    continue;
+                }
+                if (!obj.modelPath.empty()) {
+                    try {
+                        Model model(obj.modelPath);
+                        model.Draw(*sceneShader);
+                        localDrawCalls++;
+                        localVertices += model.getVertexCount();
+                        localTriangles += model.getTriangleCount();
+                    } catch (...) {}
+                }
+            }
+        }
+    }
     renderTarget->unbind();
+    renderDraw_calls = localDrawCalls;
+    renderVertex_count = localVertices;
+    if (statsPanel) {
+        statsPanel->setVertexCount(renderVertex_count);
+        statsPanel->setDrawCalls(renderDraw_calls);
+        statsPanel->setTriangleCount(localTriangles);
+    }
 }
 
 void ViewportPanel::updateCameraFromInput(float deltaTime) {

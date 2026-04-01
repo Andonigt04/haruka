@@ -1,3 +1,4 @@
+#include "core/game_interface.h"
 #include "application.h"
 
 #include <iostream>
@@ -26,6 +27,8 @@
 #include "physics/raycast_simple.h"
 #include "object_types.h"
 
+Haruka::GameInterface* gameInterface = nullptr;
+
 // Mouse input state
 struct MouseState {
     float lastX = 640.0f;
@@ -36,15 +39,7 @@ struct MouseState {
 static MouseState g_mouseState;
 
 namespace {
-struct SceneRenderItem {
-    glm::mat4 modelMatrix{1.0f};
-    glm::vec3 color{1.0f};
-    Haruka::MaterialComponent* material = nullptr;
-    std::shared_ptr<MeshRendererComponent> meshRenderer;
-    std::string modelPath;
-};
-
-std::vector<SceneRenderItem> g_sceneRenderQueue;
+std::vector<Haruka::SceneObject> g_sceneRenderQueue;
 }
 
 Application::Application() : _window(nullptr) {}
@@ -145,24 +140,13 @@ void Application::create_window() {
 void Application::init(Haruka::Scene& scene) {
     
     _currentScene = std::make_unique<Haruka::Scene>(scene);
-
-    // Buscar cámara en la escena
+    // Usar siempre la cámara de la interfaz de juego si está disponible
     Camera* sceneCamera = nullptr;
-    const auto& objects = _currentScene->getObjects();
-    for (const auto& obj : objects) {
-        if (obj.type == "Camera") {
-            sceneCamera = new Camera(obj.position);
-            std::cout << "✓ Camera found in scene at position: " << obj.position.x << ", " << obj.position.y << ", " << obj.position.z << std::endl;
-            break;
-        }
+    if (gameInterface && gameInterface->getCamera) {
+        sceneCamera = gameInterface->getCamera();
+        std::cout << (sceneCamera ? "✓ Camera from game interface" : "⚠ Game interface did not provide a camera") << std::endl;
     }
-    
-    // Si no hay cámara en la escena, usar default
-    if (!sceneCamera) {
-        sceneCamera = new Camera(Haruka::WorldPos(0.0f, 0.0f, 15.0f));
-        std::cout << "⚠ No camera found in scene, using default position" << std::endl;
-    }
-    
+
     _camera = std::unique_ptr<Camera>(sceneCamera);
 
     // Initialize rendering systems
@@ -175,7 +159,7 @@ void Application::init(Haruka::Scene& scene) {
     _gBuffer = std::make_unique<GBuffer>(_width, _height);
     _ssaoSystem = std::make_unique<SSAO>(_width, _height);
     _iblSystem = std::make_unique<IBL>();
-    _worldSystem = std::make_unique<WorldSystem>();
+    _worldSystem = std::make_unique<Haruka::WorldSystem>();
     _pointShadowSystem = std::make_unique<PointShadow>(1024);
 
     _lightingTarget = std::make_unique<RenderTarget>(_width, _height);
@@ -257,39 +241,10 @@ void Application::renderScene(Shader* shader) {
     }
     g_sceneRenderQueue.clear();
     if (!scene) return;
-    
     for (const auto& obj : scene->getObjects()) {
         Haruka::ObjectType objType = Haruka::stringToObjectType(obj.type);
-
-        if (!Haruka::isRenderableObjectType(objType)) {
-            continue;
-        }
-
-        glm::mat4 modelMatrix = glm::mat4(1.0f);
-        modelMatrix = glm::translate(modelMatrix, glm::vec3(obj.position));
-        modelMatrix = glm::rotate(modelMatrix, glm::radians((float)obj.rotation.x), glm::vec3(1, 0, 0));
-        modelMatrix = glm::rotate(modelMatrix, glm::radians((float)obj.rotation.y), glm::vec3(0, 1, 0));
-        modelMatrix = glm::rotate(modelMatrix, glm::radians((float)obj.rotation.z), glm::vec3(0, 0, 1));
-        modelMatrix = glm::scale(modelMatrix, glm::vec3(obj.scale));
-
-        SceneRenderItem item;
-        item.modelMatrix = modelMatrix;
-        item.color = glm::vec3(obj.color);
-        item.material = obj.material.get();
-
-        // MeshRenderer (componente de geometría almacenada)
-        if (obj.meshRenderer) {
-            item.meshRenderer = obj.meshRenderer;
-            g_sceneRenderQueue.push_back(std::move(item));
-            continue;
-        }
-
-        // Modelo externo
-        if (objType == Haruka::ObjectType::MODEL && !obj.modelPath.empty()) {
-            item.modelPath = obj.modelPath;
-            g_sceneRenderQueue.push_back(std::move(item));
-            continue;
-        }
+        if (!Haruka::isRenderableObjectType(objType)) continue;
+        g_sceneRenderQueue.push_back(obj);
     }
 }
 
@@ -321,7 +276,7 @@ void Application::renderFrameContent() {
     }
     if (!activeCamera) return;
 
-    glm::mat4 proj = glm::perspective(glm::radians(activeCamera->zoom), (float)_width / (float)_height, 0.1f, 10000000000.0f);
+    glm::mat4 proj = glm::perspective(glm::radians(activeCamera->zoom), (float)_width / (float)_height, 0.1f, 1000000000000.0f);
     glm::mat4 view = activeCamera->getViewMatrix();
 
     // ========== EDITOR MODE (Viewport) ==========
@@ -338,20 +293,44 @@ void Application::renderFrameContent() {
         _flatShader->setMat4("projection", proj);
         _flatShader->setMat4("view", view);
 
-        for (const auto& item : g_sceneRenderQueue) {
-            _flatShader->setMat4("model", item.modelMatrix);
-            glm::vec3 c = item.color;
-            if (glm::length(c) < 0.001f) c = glm::vec3(0.8f, 0.8f, 0.8f);
-            _flatShader->setVec3("lightColor", c);
+        glm::vec3 sunDir = glm::normalize(glm::vec3(0.3f, 0.6f, 0.7f));
+        glm::vec3 sunLightColor = glm::vec3(1.0f);
+        for (const auto& obj : g_sceneRenderQueue) {
+            if (obj.type == "Light" || obj.type == "PointLight" || obj.type == "DirectionalLight") {
+                glm::vec3 p = glm::vec3(obj.position);
+                if (glm::length(p) > 0.0001f) {
+                    sunDir = glm::normalize(p);
+                }
+                float sunEnergy = std::clamp(std::max((float)obj.intensity, 0.0f) * 0.01f, 0.2f, 2.0f);
+                sunLightColor = glm::vec3(obj.color) * sunEnergy;
+                break;
+            }
+        }
+        _flatShader->setVec3("sunDirection", sunDir);
+        _flatShader->setVec3("sunLightColor", sunLightColor);
+        _flatShader->setFloat("ambientStrength", 0.12f);
 
-            if (item.meshRenderer) {
-                item.meshRenderer->render(*_flatShader);
+        for (const auto& obj : g_sceneRenderQueue) {
+            glm::mat4 modelMatrix = glm::mat4(1.0f);
+            modelMatrix = glm::translate(modelMatrix, glm::vec3(obj.position));
+            modelMatrix = glm::rotate(modelMatrix, glm::radians((float)obj.rotation.x), glm::vec3(1, 0, 0));
+            modelMatrix = glm::rotate(modelMatrix, glm::radians((float)obj.rotation.y), glm::vec3(0, 1, 0));
+            modelMatrix = glm::rotate(modelMatrix, glm::radians((float)obj.rotation.z), glm::vec3(0, 0, 1));
+            modelMatrix = glm::scale(modelMatrix, glm::vec3(obj.scale));
+            _flatShader->setMat4("model", modelMatrix);
+            glm::vec3 baseColor = glm::vec3(obj.color);
+            if (glm::length(baseColor) < 0.001f) baseColor = glm::vec3(0.8f, 0.8f, 0.8f);
+            const bool isLightObj = (obj.type == "Light" || obj.type == "PointLight" || obj.type == "DirectionalLight");
+            float emission = isLightObj ? std::max((float)obj.intensity, 0.0f) : 1.0f;
+            glm::vec3 c = isLightObj ? (baseColor * emission) : baseColor;
+            _flatShader->setVec3("lightColor", c);
+            if (obj.meshRenderer) {
+                obj.meshRenderer->render(*_flatShader);
                 continue;
             }
-
-            if (!item.modelPath.empty()) {
+            if (!obj.modelPath.empty()) {
                 try {
-                    Model model(item.modelPath);
+                    Model model(obj.modelPath);
                     model.Draw(*_flatShader);
                 } catch (...) {
                     // Ignorar en fallback
@@ -390,7 +369,7 @@ void Application::renderFrameContent() {
 
     // Actualizar world system
     _worldSystem->updateLocalPositions(activeCamera->position);
-    _worldSystem->frustumCull(activeCamera->position, view * proj, 10000.0f * Haruka::Units::MEGAMETER);
+    _worldSystem->frustumCull(activeCamera->position, view * proj, 500000.0f * Haruka::Units::MEGAMETER);
 
     // ========== GEOMETRY PASS ==========
     _gBuffer->bindForWriting();
@@ -402,34 +381,43 @@ void Application::renderFrameContent() {
 
     renderScene();
 
-    for (const auto& item : g_sceneRenderQueue) {
-        _geomShader->setMat4("model", item.modelMatrix);
-        _geomShader->setVec3("color", item.color);
-
-        if (item.material) {
-            _geomShader->setVec3("material.albedo", item.material->albedo);
-            _geomShader->setFloat("material.roughness", item.material->roughness);
-            _geomShader->setFloat("material.metallic", item.material->metallic);
+    int drawCount = 0;
+    for (const auto& obj : g_sceneRenderQueue) {
+        glm::mat4 modelMatrix = glm::mat4(1.0f);
+        modelMatrix = glm::translate(modelMatrix, glm::vec3(obj.position));
+        modelMatrix = glm::rotate(modelMatrix, glm::radians((float)obj.rotation.x), glm::vec3(1, 0, 0));
+        modelMatrix = glm::rotate(modelMatrix, glm::radians((float)obj.rotation.y), glm::vec3(0, 1, 0));
+        modelMatrix = glm::rotate(modelMatrix, glm::radians((float)obj.rotation.z), glm::vec3(0, 0, 1));
+        modelMatrix = glm::scale(modelMatrix, glm::vec3(obj.scale));
+        _geomShader->setMat4("model", modelMatrix);
+        _geomShader->setVec3("color", glm::vec3(obj.color));
+        if (obj.material) {
+            _geomShader->setVec3("material.albedo", obj.material->albedo);
+            _geomShader->setFloat("material.roughness", obj.material->roughness);
+            _geomShader->setFloat("material.metallic", obj.material->metallic);
         }
-
-        if (item.meshRenderer) {
-            item.meshRenderer->render(*_geomShader);
+        if (obj.meshRenderer) {
+            std::cout << "[Motor] Dibujando meshRenderer para objeto: " << obj.name << std::endl;
+            obj.meshRenderer->render(*_geomShader);
+            drawCount++;
             continue;
         }
-
-        if (!item.modelPath.empty()) {
+        if (!obj.modelPath.empty()) {
             try {
-                Model model(item.modelPath);
+                std::cout << "[Motor] Dibujando modelo: " << obj.modelPath << std::endl;
+                Model model(obj.modelPath);
                 model.Draw(*_geomShader);
+                drawCount++;
             } catch (const std::exception& e) {
                 HARUKA_MOTOR_ERROR(
                     ErrorCode::MODEL_LOAD_FAILED,
-                    std::string("Failed to draw model ") + item.modelPath + ": " + e.what()
+                    std::string("Failed to draw model ") + obj.modelPath + ": " + e.what()
                 );
             }
             continue;
         }
     }
+    std::cout << "[Motor] Objetos dibujados en geometry pass: " << drawCount << std::endl;
 
     // Render celestial bodies with LOD
     for (const auto& body : _worldSystem->getBodies()) {
@@ -505,8 +493,9 @@ void Application::renderFrameContent() {
     auto culledLights = _lightCuller->cullLights(scene, view, proj, MAX_LIGHTS);
     
     _lightShader->setInt("numLights", culledLights.size());
-
+    std::cout << "[Motor] Luces enviadas a lighting pass: " << culledLights.size() << std::endl;
     for (size_t i = 0; i < culledLights.size(); i++) {
+        std::cout << "[Motor] Luz " << i << ": Pos " << culledLights[i].position.x << "," << culledLights[i].position.y << "," << culledLights[i].position.z << " Color " << culledLights[i].color.x << "," << culledLights[i].color.y << "," << culledLights[i].color.z << std::endl;
         _lightShader->setVec3("lights[" + std::to_string(i) + "].position", culledLights[i].position);
         _lightShader->setVec3("lights[" + std::to_string(i) + "].color", culledLights[i].color);
     }
@@ -544,18 +533,37 @@ void Application::renderFrameContent() {
     FrameMetrics metrics;
     metrics.fps = 60.0f;
     metrics.frameTimeMs = 16.67f;
-    metrics.drawCalls = 100;
+    metrics.drawCalls = 0;
+    metrics.totalTriangles = 0;
+    metrics.totalVertices = 0;
     metrics.totalLights = scene ? scene->getObjects().size() : 0;
     metrics.culledLights = _lightCuller ? _lightCuller->getCulledLights() : 0;
-    
+
     auto streamStats = AssetStreamer::getInstance().getStats();
     metrics.loadedAssets = streamStats.loadedAssets;
     metrics.pendingAssets = streamStats.pendingAssets;
     metrics.cacheUtilization = streamStats.cacheUtilization;
-    
+
     metrics.numCascades = 4;
     metrics.activeCascade = 0;
-    
+
+    // Recorrer la cola de render y sumar vértices/triángulos/draw calls
+    for (const auto& item : g_sceneRenderQueue) {
+        if (item.meshRenderer) {
+            // Suponiendo que meshRenderer tiene métodos para obtener stats
+            metrics.drawCalls++;
+            metrics.totalVertices += item.meshRenderer->getVertexCount();
+            metrics.totalTriangles += item.meshRenderer->getTriangleCount();
+        } else if (!item.modelPath.empty()) {
+            try {
+                Model model(item.modelPath);
+                metrics.drawCalls++;
+                metrics.totalVertices += model.getVertexCount();
+                metrics.totalTriangles += model.getTriangleCount();
+            } catch (...) {}
+        }
+    }
+
     DebugOverlay::getInstance().updateMetrics(metrics);
 }
 

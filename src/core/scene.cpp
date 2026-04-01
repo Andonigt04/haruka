@@ -6,6 +6,7 @@
 #include <iostream>
 #include <nlohmann/json.hpp>
 #include <dlfcn.h>
+#include "core/game_interface.h"
 #include "renderer/primitive_shapes.h"
 
 namespace Haruka {
@@ -207,10 +208,8 @@ SceneObject Scene::parseSceneObject(const nlohmann::json& o) {
     if (o.contains("meshRenderer")) {
         obj.meshRenderer = std::make_shared<MeshRendererComponent>();
         std::string meshType = o["meshRenderer"].value("meshType", "cube");
-        
         std::vector<glm::vec3> verts, norms;
         std::vector<unsigned int> indices;
-        
         if (meshType == "sphere") {
             float radius = o["meshRenderer"].value("radius", 1.0f);
             int segments = o["meshRenderer"].value("segments", 32);
@@ -220,9 +219,13 @@ SceneObject Scene::parseSceneObject(const nlohmann::json& o) {
             float size = o["meshRenderer"].value("size", 1.0f);
             PrimitiveShapes::createCube(size, verts, norms, indices);
         }
-        
         if (!verts.empty()) {
             obj.meshRenderer->setMesh(verts, norms, indices);
+            std::cout << "[Scene] Objeto '" << obj.name << "' meshRenderer: "
+                      << verts.size() << " vértices, "
+                      << indices.size() / 3 << " triángulos" << std::endl;
+        } else {
+            std::cout << "[Scene] Objeto '" << obj.name << "' meshRenderer: SIN MESH" << std::endl;
         }
     }
 
@@ -313,7 +316,7 @@ void Scene::executeInitializer(const std::string& scenePath) {
         pj.close();
     }
     std::string logicLib = "lib" + projectName + ".so";
-    std::filesystem::path libPath = projectRoot / logicLib;
+    std::filesystem::path libPath = "./" + logicLib;
     std::cout << "Loading initializer: " << libPath.string() << std::endl;
     void* handle = dlopen(libPath.c_str(), RTLD_LAZY);
     if (!handle) {
@@ -321,30 +324,58 @@ void Scene::executeInitializer(const std::string& scenePath) {
         return;
     }
 
+    // Buscar y ejecutar símbolo adecuado
     typedef void (*InitFunc)(Haruka::Scene*);
+    typedef Haruka::GameInterface* (*GetGameInterfaceFunc)();
     InitFunc initFunc = nullptr;
-    
-    const char* symbols[] = {
-        "_ZN9GameLogic15GameInitializer14initializeGameEPN6Haruka5SceneE",
-        "_ZN9GameLogic16GameInitializer16initializeGameEPN6Haruka5SceneE",
-        "initializeGame",
-        nullptr
-    };
-    
-    for (int i = 0; symbols[i] != nullptr; i++) {
-        initFunc = (InitFunc)dlsym(handle, symbols[i]);
-        if (initFunc) {
-            std::cout << "Found symbol: " << symbols[i] << std::endl;
-            initFunc(this);
-            std::cout << "Initializer executed successfully" << std::endl;
-            break;
+    GetGameInterfaceFunc getIface = nullptr;
+    bool initialized = false;
+
+    // 1. initializeGame clásico
+    initFunc = (InitFunc)dlsym(handle, "initializeGame");
+    if (initFunc) {
+        std::cout << "Found symbol: initializeGame" << std::endl;
+        initFunc(this);
+        std::cout << "Initializer executed successfully" << std::endl;
+        initialized = true;
+    }
+
+    // 2. getGameInterface moderno
+    if (!initialized) {
+        getIface = (GetGameInterfaceFunc)dlsym(handle, "getGameInterface");
+        if (getIface) {
+            std::cout << "Found symbol: getGameInterface" << std::endl;
+            Haruka::GameInterface* iface = getIface();
+            if (iface && iface->onInit) {
+                iface->onInit(this);
+                std::cout << "GameInterface->onInit executed successfully" << std::endl;
+                initialized = true;
+            }
         }
     }
 
-    if (!initFunc) {
+    // 3. Mangled names (backward compatibility)
+    if (!initialized) {
+        const char* mangled[] = {
+            "_ZN9GameLogic15GameInitializer14initializeGameEPN6Haruka5SceneE",
+            "_ZN9GameLogic16GameInitializer16initializeGameEPN6Haruka5SceneE",
+            nullptr
+        };
+        for (int i = 0; mangled[i] != nullptr; i++) {
+            initFunc = (InitFunc)dlsym(handle, mangled[i]);
+            if (initFunc) {
+                std::cout << "Found symbol: " << mangled[i] << std::endl;
+                initFunc(this);
+                std::cout << "Initializer executed successfully" << std::endl;
+                initialized = true;
+                break;
+            }
+        }
+    }
+
+    if (!initialized) {
         std::cerr << "Initializer function not found" << std::endl;
     }
-    
     dlclose(handle);
 }
 

@@ -44,11 +44,14 @@ public:
     void Draw(Shader &shader);
     void draw() const;  // Alias para compatibilidad
     size_t getIndexCount() const { return index.size(); }
+    int getVertexCount() const { return isSimpleGeometry ? simpleVertexCount : static_cast<int>(vertex.size()); }
+    int getTriangleCount() const { return static_cast<int>(index.size() / 3); }
 
 private:
     unsigned int VBO, EBO;
     GLuint nbo = 0;  // Normal buffer para geometria simple
     bool isSimpleGeometry = false;
+    int simpleVertexCount = 0;
     
     void setupMesh();
     void setupSimpleMesh(const std::vector<glm::vec3>& vertices,

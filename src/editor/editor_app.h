@@ -133,6 +133,8 @@ private:
     std::unique_ptr<Haruka::PlanetarySystem> planetarySystem;
     bool runningPlanetarySystem = false;
 
+    void createSceneObject(const std::string& type);
+
     void compileProject();
     bool isProjectCompiling = false;
 

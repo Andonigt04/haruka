@@ -623,7 +623,7 @@ target_link_libraries()" + name + R"(Logic PRIVATE ${HarukaEngineLib_LIBRARY})
 
 namespace GameLogic {
     // Definir el interfaz de juego
-    extern Haruka::GameInterface gameInterface;
+    extern Haruka::GameInterface* gameInterface;
 }
 )";
 
@@ -656,19 +656,6 @@ Haruka::Camera* gameGetCamera() {
 
 void gameOnShutdown() {
     std::cout << "Game shutting down..." << std::endl;
-}
-
-// Interfaz de juego - EXPORT para que el editor lo cargue
-namespace GameLogic {
-    Haruka::GameInterface gameInterface = {
-        .onInit = gameOnInit,
-        .onUpdate = gameOnUpdate,
-        .onShutdown = gameOnShutdown,
-        .getCamera = gameGetCamera,
-        .getScene = nullptr,
-        .name = ")" + name + R"(",
-        .version = "1.0.0"
-    };
 }
 
 // Función que el editor carga dinámicamente
@@ -931,4 +918,11 @@ void EditorApplication::deleteAllBackups(const std::string& filePath) {
 
 std::string EditorApplication::getFileType(const std::string& path) {
     return (path.find(".prefab") != std::string::npos) ? "Prefab" : "Scene";
+}
+
+void EditorApplication::createSceneObject(const std::string& type) {
+    if (!currentScene) return;
+    
+    sceneHierarchyPanel.createPrimitive(type, type);
+    sceneDirty = true;
 }

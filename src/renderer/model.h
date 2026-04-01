@@ -16,7 +16,19 @@ class Model
 {
 public:
     Model(const std::string &path) { loadModel(path); }
+    
     void Draw(Shader &shader);
+
+    int getVertexCount() const {
+        int total = 0;
+        for (const auto& mesh : meshes) total += mesh.getVertexCount();
+        return total;
+    }
+    int getTriangleCount() const {
+        int total = 0;
+        for (const auto& mesh : meshes) total += mesh.getTriangleCount();
+        return total;
+    }
 private:
     std::vector<Mesh> meshes;
     std::string directory;

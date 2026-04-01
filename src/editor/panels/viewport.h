@@ -4,6 +4,7 @@
 #include "core/scene.h"
 #include "renderer/shader.h"
 #include "renderer/render_target.h"
+#include "renderer/shadow.h"
 #include "renderer/motor_instance.h"
 #include "renderer/simple_mesh.h"
 #include "renderer/primitive_shapes.h"
@@ -81,6 +82,11 @@ private:
 
     // OpenGL/ImGui resources
     std::unique_ptr<RenderTarget> renderTarget;
+
+    // Shader para render local/editor
+    std::unique_ptr<Shader> sceneShader;
+    std::unique_ptr<Shader> shadowDepthShader;
+    std::unique_ptr<Shadow> shadowSystem;
 
     // Stats panel
     StatsPanel* statsPanel = nullptr;

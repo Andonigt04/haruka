@@ -1,5 +1,6 @@
 #include "scene_hierarchy.h"
 #include "core/error_reporter.h"
+#include "core/math_types.h"
 
 #include "renderer/primitive_shapes.h"
 #include "core/components/material_component.h"
@@ -8,6 +9,8 @@
 #include <glm/glm.hpp>
 #include <iostream>
 #include <cstdint>
+#include <algorithm>
+#include <cctype>
 
 void SceneHierarchyPanel::setScene(Haruka::Scene* scene) {
     currentScene = scene;
@@ -24,17 +27,68 @@ void SceneHierarchyPanel::setCommandHistory(CommandHistory* history) {
 void SceneHierarchyPanel::onImGuiRender() {
     ImGui::Begin("Scene Hierarchy");
     
-    if (ImGui::Button("Add Cube", ImVec2(-1, 0))) {
+    // Botón + para abrir navegador de objetos
+    if (ImGui::Button("+##AddObject", ImVec2(40, 0))) {
+        showObjectBrowser = true;
+        objectSearchBuffer[0] = '\0';
+    }
+    
+    ImGui::SameLine();
+    if (ImGui::Button("Cube", ImVec2(-1, 0))) {
         createPrimitive("Cube", "cube");
     }
-    if (ImGui::Button("Add Sphere", ImVec2(-1, 0))) {
-        createPrimitive("Sphere", "sphere");
+    
+    // Modal de búsqueda y selección de objetos
+    if (showObjectBrowser) {
+        ImGui::OpenPopup("Object Browser##Modal");
     }
-    if (ImGui::Button("Add Plane", ImVec2(-1, 0))) {
-        createPrimitive("Plane", "plane");
-    }
-    if (ImGui::Button("Add Light", ImVec2(-1, 0))) {
-        createPrimitive("Light", "light");
+    
+    if (ImGui::BeginPopupModal("Object Browser##Modal", &showObjectBrowser, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("Buscar objeto:");
+        ImGui::InputText("##ObjectSearch", objectSearchBuffer, sizeof(objectSearchBuffer));
+        ImGui::Separator();
+        
+        std::string searchStr = objectSearchBuffer;
+        std::transform(searchStr.begin(), searchStr.end(), searchStr.begin(), ::tolower);
+        
+        // Lista de tipos disponibles
+        std::vector<std::pair<std::string, std::string>> objectTypes = {
+            {"Cube", "cube"},
+            {"Sphere", "sphere"},
+            {"Plane", "plane"},
+            {"Capsule", "capsule"},
+            {"Light", "light"},
+            {"Point Light", "pointlight"},
+            {"Directional Light", "directionallight"},
+            {"Sun (Sistema de unidades)", "sun"},
+            {"Planet (Sistema de unidades)", "planet"},
+            {"Cylinder", "cylinder"},
+            {"Torus", "torus"},
+            {"Model Loader", "model"},
+        };
+        
+        ImGui::BeginChild("ObjectList", ImVec2(0, 200));
+        for (const auto& [displayName, type] : objectTypes) {
+            std::string lowerName = displayName;
+            std::transform(lowerName.begin(), lowerName.end(), lowerName.begin(), ::tolower);
+            
+            if (searchStr.empty() || lowerName.find(searchStr) != std::string::npos) {
+                if (ImGui::Selectable(displayName.c_str())) {
+                    createPrimitive(displayName, type);
+                    showObjectBrowser = false;
+                    ImGui::CloseCurrentPopup();
+                }
+            }
+        }
+        ImGui::EndChild();
+        
+        ImGui::Separator();
+        if (ImGui::Button("Cerrar##ObjectBrowser", ImVec2(120, 0))) {
+            showObjectBrowser = false;
+            ImGui::CloseCurrentPopup();
+        }
+        
+        ImGui::EndPopup();
     }
     
     ImGui::Separator();
@@ -60,9 +114,15 @@ void SceneHierarchyPanel::createPrimitive(const std::string& name, const std::st
     
     Haruka::SceneObject obj;
     obj.name = name + "_" + std::to_string(currentScene->getObjects().size());
-    obj.type = type == "light" ? "Light" : 
+    obj.type = type == "light" ? "Light" :
+               type == "pointlight" ? "PointLight" :
+               type == "directionallight" ? "DirectionalLight" :
                type == "cube" ? "Cube" :
-               type == "sphere" ? "Sphere" : "Plane";
+               type == "sphere" ? "Sphere" :
+               type == "capsule" ? "Capsule" :
+               type == "plane" ? "Plane" :
+               type == "sun" ? "Light" :
+               type == "planet" ? "Mesh" : "Mesh";
     obj.position = glm::dvec3(0, 0, 0);
     obj.rotation = glm::dvec3(0, 0, 0);
     obj.scale = glm::dvec3(1, 1, 1);
@@ -80,14 +140,52 @@ void SceneHierarchyPanel::createPrimitive(const std::string& name, const std::st
         PrimitiveShapes::createSphere(1.0f, 32, 32, verts, norms, indices);
         obj.material = std::make_shared<Haruka::MaterialComponent>();
         obj.material->albedo = glm::vec3(0.5f, 0.7f, 0.5f);
+    } else if (type == "capsule") {
+        PrimitiveShapes::createCube(0.5f, verts, norms, indices);  // Fallback
+        obj.material = std::make_shared<Haruka::MaterialComponent>();
+        obj.material->albedo = glm::vec3(0.6f, 0.6f, 0.8f);
+        obj.scale = glm::dvec3(0.5f, 2.0f, 0.5f);
     } else if (type == "plane") {
         PrimitiveShapes::createPlane(2.0f, 2.0f, 10, verts, norms, indices);
         obj.material = std::make_shared<Haruka::MaterialComponent>();
         obj.material->albedo = glm::vec3(0.7f, 0.7f, 0.7f);
-    } else if (type == "light") {
+    } else if (type == "light" || type == "pointlight") {
         PrimitiveShapes::createSphere(0.5f, 16, 16, verts, norms, indices);
         obj.material = std::make_shared<Haruka::MaterialComponent>();
         obj.material->albedo = glm::vec3(1.0f, 1.0f, 0.0f);
+        obj.color = glm::vec3(1.0f, 1.0f, 0.8f);
+        obj.intensity = 2.0f;
+    } else if (type == "directionallight") {
+        PrimitiveShapes::createCube(0.2f, verts, norms, indices);
+        obj.material = std::make_shared<Haruka::MaterialComponent>();
+        obj.material->albedo = glm::vec3(1.0f, 0.95f, 0.8f);
+        obj.color = glm::vec3(1.0f, 0.95f, 0.8f);
+        obj.intensity = 1.0f;
+    } else if (type == "sun") {
+        using namespace Haruka::Units;
+        const double sunRadiusKm = STAR_RADIUS_MEDIUM;
+        const double baseMeshRadius = 1.0;
+        const double sunScale = kmToRender(sunRadiusKm) / baseMeshRadius;
+        
+        PrimitiveShapes::createSphere(1.0f, 32, 32, verts, norms, indices);
+        obj.material = std::make_shared<Haruka::MaterialComponent>();
+        obj.material->albedo = glm::vec3(1.0f, 0.95f, 0.75f);
+        obj.color = glm::vec3(1.0f, 0.95f, 0.75f);
+        obj.intensity = 20.0f;
+        obj.scale = glm::dvec3(sunScale);
+        obj.type = "Light";
+    } else if (type == "planet") {
+        using namespace Haruka::Units;
+        const double planetRadiusKm = PLANETARY_RADIUS_MEDIUM;
+        const double baseMeshRadius = 1.0;
+        const double planetScale = kmToRender(planetRadiusKm) / baseMeshRadius;
+        
+        PrimitiveShapes::createSphere(1.0f, 48, 48, verts, norms, indices);
+        obj.material = std::make_shared<Haruka::MaterialComponent>();
+        obj.material->albedo = glm::vec3(0.25f, 0.45f, 1.0f);
+        obj.color = glm::vec3(0.25f, 0.45f, 1.0f);
+        obj.scale = glm::dvec3(planetScale);
+        obj.type = "Mesh";
     }
     
     obj.meshRenderer->setMesh(verts, norms, indices);

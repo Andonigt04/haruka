@@ -108,7 +108,7 @@ private:
     std::unique_ptr<SSAO> _ssaoSystem;
     std::unique_ptr<IBL> _iblSystem;
     std::unique_ptr<PointShadow> _pointShadowSystem;
-    std::unique_ptr<WorldSystem> _worldSystem;
+    std::unique_ptr<Haruka::WorldSystem> _worldSystem;
     std::unique_ptr<LightCuller> _lightCuller;
     std::unique_ptr<GPUInstancing> _instancing;
     std::unique_ptr<ComputePostProcess> _computePostProcess;

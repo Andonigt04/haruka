@@ -21,6 +21,8 @@ struct CelestialBody
     uint32_t lodLevel;
 };
 
+namespace Haruka {
+
 class WorldSystem {
 public:
     WorldSystem();
@@ -53,5 +55,6 @@ private:
     std::vector<CelestialBody> celestialBodies;
     float lodDistances[4];
 };
+}
 
 #endif

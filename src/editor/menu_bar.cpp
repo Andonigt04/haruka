@@ -11,6 +11,7 @@ void MenuBar::render() {
     
     renderFileMenu();
     renderEditMenu();
+    renderObjectsMenu();
     renderViewMenu();
     renderPlayControls();
     renderHelpMenu();
@@ -100,6 +101,64 @@ void MenuBar::renderEditMenu() {
         editorApp->commandHistory.redo();
     }
     
+    ImGui::EndMenu();
+}
+
+void MenuBar::renderObjectsMenu() {
+    if (!ImGui::BeginMenu("Objects")) return;
+
+    if (ImGui::MenuItem("Cube")) {
+        if (editorApp->currentScene) {
+            editorApp->createSceneObject("Cube");
+        }
+    }
+    if (ImGui::MenuItem("Sphere")) {
+        if (editorApp->currentScene) {
+            editorApp->createSceneObject("Sphere");
+        }
+    }
+    if (ImGui::MenuItem("Plane")) {
+        if (editorApp->currentScene) {
+            editorApp->createSceneObject("Plane");
+        }
+    }
+    if (ImGui::MenuItem("Capsule")) {
+        if (editorApp->currentScene) {
+            editorApp->createSceneObject("Capsule");
+        }
+    }
+
+    ImGui::Separator();
+
+    if (ImGui::MenuItem("Light")) {
+        if (editorApp->currentScene) {
+            editorApp->createSceneObject("Light");
+        }
+    }
+    if (ImGui::MenuItem("Point Light")) {
+        if (editorApp->currentScene) {
+            editorApp->createSceneObject("PointLight");
+        }
+    }
+    if (ImGui::MenuItem("Directional Light")) {
+        if (editorApp->currentScene) {
+            editorApp->createSceneObject("DirectionalLight");
+        }
+    }
+
+    ImGui::Separator();
+
+    if (ImGui::MenuItem("Sun (Sistema de unidades)")) {
+        if (editorApp->currentScene) {
+            editorApp->createSceneObject("SUN");
+        }
+    }
+    if (ImGui::MenuItem("Planet (Sistema de unidades)")) {
+        if (editorApp->currentScene) {
+            editorApp->createSceneObject("PLANET");
+        }
+    }
+
     ImGui::EndMenu();
 }
 

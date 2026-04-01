@@ -15,6 +15,7 @@ public:
     void setSelectedObjectIndex(int index);
     void setCommandHistory(CommandHistory* history);
     void onImGuiRender();
+    void createPrimitive(const std::string& name, const std::string& type);
 
     std::string currentProjectPath;
     
@@ -32,6 +33,8 @@ private:
     Haruka::Scene* currentScene = nullptr;
     CommandHistory* commandHistory = nullptr;
     int selectedObjectIndex = -1;
+    bool showObjectBrowser = false;
+    char objectSearchBuffer[256] = {0};
     
     void setProjectPath(const std::string& path) { currentProjectPath = path; }
     
@@ -45,5 +48,4 @@ private:
 
     void renderChildObject(const Haruka::SceneObject& child, size_t index);
     void showContextMenuChild(const Haruka::SceneObject& child);
-    void createPrimitive(const std::string& name, const std::string& type);
 };

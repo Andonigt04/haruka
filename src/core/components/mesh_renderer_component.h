@@ -19,6 +19,8 @@ public:
     void renderInspector();
     
     std::shared_ptr<SimpleMesh> getMesh() const { return mesh; }
+    int getVertexCount() const { return mesh ? mesh->getVertexCount() : 0; }
+    int getTriangleCount() const { return mesh ? mesh->getTriangleCount() : 0; }
     
 private:
     std::shared_ptr<SimpleMesh> mesh;
