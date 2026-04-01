@@ -120,6 +120,24 @@ namespace Haruka
                 size_t lastQuote = line.find("\"", firstQuote);
                 config.shadersPath = line.substr(firstQuote, lastQuote - firstQuote);
             }
+            else if (line.find("\"engineBinary\"") != std::string::npos) {
+                size_t start = line.find(":") + 1;
+                size_t firstQuote = line.find("\"", start) + 1;
+                size_t lastQuote = line.find("\"", firstQuote);
+                config.engineBinary = line.substr(firstQuote, lastQuote - firstQuote);
+            }
+            else if (line.find("\"editorBinary\"") != std::string::npos) {
+                size_t start = line.find(":") + 1;
+                size_t firstQuote = line.find("\"", start) + 1;
+                size_t lastQuote = line.find("\"", firstQuote);
+                config.editorBinary = line.substr(firstQuote, lastQuote - firstQuote);
+            }
+            else if (line.find("\"assetsPath\"") != std::string::npos) {
+                size_t start = line.find(":") + 1;
+                size_t firstQuote = line.find("\"", start) + 1;
+                size_t lastQuote = line.find("\"", firstQuote);
+                config.assetsPath = line.substr(firstQuote, lastQuote - firstQuote);
+            }
             // Parse outputPath
             else if (line.find("\"outputPath\"") != std::string::npos) {
                 size_t start = line.find(":") + 1;

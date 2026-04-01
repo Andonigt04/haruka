@@ -2,6 +2,7 @@
 #include <iostream>
 #include <cmath>
 #include <algorithm>
+#include <limits>
 
 namespace Haruka {
 
@@ -49,6 +50,39 @@ void PlanetarySystem::renderTerrain(Shader& shader, const glm::vec3& cameraPos) 
 
 void PlanetarySystem::render() {
     // Render explícito de terreno desde gameplay cuando el pipeline lo solicite.
+}
+
+void PlanetarySystem::setDetailedSurfaceData(const std::string& bodyName, std::shared_ptr<PlanetGenerator::PlanetData> data) {
+    if (!data) {
+        detailedSurfaceData.erase(bodyName);
+        return;
+    }
+    detailedSurfaceData[bodyName] = std::move(data);
+}
+
+double PlanetarySystem::getSurfaceRadiusAtDirection(const CelestialBody* body, const glm::dvec3& planetToPoint) const {
+    if (!body) return 0.0;
+
+    auto it = detailedSurfaceData.find(body->name);
+    if (it == detailedSurfaceData.end() || !it->second || it->second->vertices.empty()) {
+        return static_cast<double>(body->radius);
+    }
+
+    glm::dvec3 dir = glm::normalize(planetToPoint);
+    double bestDot = -std::numeric_limits<double>::infinity();
+    double localRadius = 1.0;
+
+    const auto& verts = it->second->vertices;
+    for (const auto& v : verts) {
+        glm::dvec3 vn = glm::normalize(glm::dvec3(v));
+        double d = glm::dot(vn, dir);
+        if (d > bestDot) {
+            bestDot = d;
+            localRadius = glm::length(glm::dvec3(v));
+        }
+    }
+
+    return static_cast<double>(body->radius) * localRadius;
 }
 
 CelestialBody* PlanetarySystem::addStar(const std::string& name, double mass, double radius) {
@@ -221,8 +255,9 @@ void PlanetarySystem::updatePlayerOnPlanet() {
     glm::dvec3 planetToPlayer = playerPos - planetPos;
     double distToPlanet = glm::length(planetToPlayer);
     
-    if (distToPlanet < closestPlanet->radius + 100.0) {
-        glm::dvec3 surfacePos = planetPos + glm::normalize(planetToPlayer) * (closestPlanet->radius + 2.0);
+    double localSurfaceRadius = getSurfaceRadiusAtDirection(closestPlanet, planetToPlayer);
+    if (distToPlanet < localSurfaceRadius + 100.0) {
+        glm::dvec3 surfacePos = planetPos + glm::normalize(planetToPlayer) * (localSurfaceRadius + 2.0);
         player->setPosition(surfacePos);
     }
 }
@@ -296,7 +331,7 @@ void PlanetarySystem::applyPlanetaryPhysics(double dt) {
         glm::dvec3 planetPos = glm::dvec3(closestPlanet->localPos.x, closestPlanet->localPos.y, closestPlanet->localPos.z);
         glm::dvec3 planetToPlayer = playerPos - planetPos;
         double distToPlanet = glm::length(planetToPlayer);
-        double surfaceDistance = closestPlanet->radius + 0.1; // 100 metros sobre la superficie
+        double surfaceDistance = getSurfaceRadiusAtDirection(closestPlanet, planetToPlayer) + 0.1; // 100 m sobre superficie detallada
         
         // Si está por debajo de la superficie, "aterrar"
         if (distToPlanet < surfaceDistance) {

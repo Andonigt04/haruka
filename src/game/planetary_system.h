@@ -3,9 +3,11 @@
 #include "core/math_types.h"
 #include "character.h"
 #include "core/scene.h"
+#include "game/planet_generator.h"
 #include "renderer/terrain.h"
 #include "renderer/shader.h"
 #include <memory>
+#include <unordered_map>
 
 namespace Haruka {
 
@@ -21,6 +23,7 @@ public:
     // Terreno planetario (gestionado por gameplay, no por Application)
     void initTerrain(int size = 1024, float heightScale = 200.0f, int seed = 42);
     void renderTerrain(Shader& shader, const glm::vec3& cameraPos);
+    void setDetailedSurfaceData(const std::string& bodyName, std::shared_ptr<PlanetGenerator::PlanetData> data);
     
     // API para agregar cuerpos celestes
     CelestialBody* addStar(const std::string& name, double mass = 1.989e30, double radius = Units::STAR_RADIUS_MEDIUM);
@@ -52,6 +55,7 @@ private:
     WorldSystem* worldSystem = nullptr;
     std::unique_ptr<Character> player;
     std::unique_ptr<Terrain> terrain;
+    std::unordered_map<std::string, std::shared_ptr<PlanetGenerator::PlanetData>> detailedSurfaceData;
     
     CelestialBody* star = nullptr;
     std::vector<std::string> bodyNames;
@@ -65,6 +69,7 @@ private:
     void updatePlayerOnPlanet();
     void updateWorldOrigin();
     void integrateOrbits(double dt);
+    double getSurfaceRadiusAtDirection(const CelestialBody* body, const glm::dvec3& planetToPoint) const;
 };
 
 }

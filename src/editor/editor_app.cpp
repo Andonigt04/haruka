@@ -25,6 +25,7 @@
 #include <sys/wait.h>
 #include <signal.h>
 #include <cerrno>
+#include <vector>
 
 EditorApplication::EditorApplication() : window(nullptr) {}
 
@@ -465,7 +466,39 @@ void EditorApplication::enterPlayMode() {
     }
 
     std::string logicLib = "lib" + currentProject->getConfig().name + ".so";
-    std::string libPath = projectPath + logicLib;
+    std::filesystem::path pProject(projectPath);
+
+    std::vector<std::filesystem::path> candidates;
+    candidates.push_back(pProject / logicLib);            // proyecto raíz
+    candidates.push_back(pProject / "build" / logicLib); // build del proyecto
+
+    // Ruta de salida configurable por proyecto
+    if (!currentProject->getConfig().outputPath.empty()) {
+        std::filesystem::path outPath(currentProject->getConfig().outputPath);
+        if (outPath.is_relative()) {
+            candidates.push_back(pProject / outPath / logicLib);
+        } else {
+            candidates.push_back(outPath / logicLib);
+        }
+    }
+
+    // Derivar build del engine desde engineBinary en project.hrk
+    if (!currentProject->getConfig().engineBinary.empty()) {
+        std::filesystem::path engineBin(currentProject->getConfig().engineBinary);
+        candidates.push_back(engineBin.parent_path() / logicLib);
+    }
+
+    std::string libPath;
+    for (const auto& c : candidates) {
+        if (std::filesystem::exists(c)) {
+            libPath = c.string();
+            break;
+        }
+    }
+    if (libPath.empty()) {
+        libPath = (pProject / logicLib).string(); // para mensaje de error/dlopen final
+    }
+
     gameLibHandle = dlopen(libPath.c_str(), RTLD_LAZY);
     
     if (gameLibHandle) {
