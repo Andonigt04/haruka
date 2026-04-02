@@ -21,6 +21,13 @@ public:
     int maxBackups = 5;
     bool showGridInViewport = true;
     float gridSize = 1.0f;
+
+    // Render quality & layer culling
+    int renderQualityPreset = 2; // 0=Low,1=Medium,2=High,3=Ultra
+    float layer2MaxDistance = 1200.0f;
+    float layer3MaxDistance = 3500.0f;
+    float layer4MaxDistance = 900.0f;
+    float layer5MaxDistance = 300.0f;
     
     // Project
     std::string projectName;

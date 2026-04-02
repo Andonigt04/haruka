@@ -40,6 +40,67 @@ static MouseState g_mouseState;
 
 namespace {
 std::vector<Haruka::SceneObject> g_sceneRenderQueue;
+Haruka::Scene* g_sceneForRender = nullptr;
+
+bool isSphereInsideCameraFrustum(
+    const glm::dvec3& center,
+    double radius,
+    const glm::dvec3& cameraPos,
+    const glm::dvec3& forward,
+    const glm::dvec3& right,
+    const glm::dvec3& up,
+    double fovYDegrees,
+    double aspect,
+    double nearPlane,
+    double farPlane
+) {
+    glm::dvec3 toObj = center - cameraPos;
+    double z = glm::dot(toObj, forward);
+
+    if (z + radius < nearPlane) return false;
+    if (z - radius > farPlane) return false;
+
+    double tanHalfY = std::tan(glm::radians(fovYDegrees) * 0.5);
+    double yLimit = z * tanHalfY;
+    double xLimit = yLimit * aspect;
+
+    double x = glm::dot(toObj, right);
+    double y = glm::dot(toObj, up);
+
+    if (std::abs(x) > xLimit + radius) return false;
+    if (std::abs(y) > yLimit + radius) return false;
+
+    return true;
+}
+
+}
+
+int Application::s_renderQualityPreset = 2;
+float Application::s_layerMaxDistance[6] = {
+    0.0f,
+    1.0e9f,  // layer 1: always
+    1200.0f, // layer 2: lowest details
+    3500.0f, // layer 3: medium details / clouds
+    900.0f,  // layer 4: buildings
+    300.0f   // layer 5: small props
+};
+
+void Application::setRenderQualityPreset(int preset) {
+    s_renderQualityPreset = std::clamp(preset, 0, 3);
+}
+
+int Application::getRenderQualityPreset() {
+    return s_renderQualityPreset;
+}
+
+void Application::setLayerMaxDistance(int layer, float distance) {
+    if (layer < 1 || layer > 5) return;
+    s_layerMaxDistance[layer] = std::max(0.0f, distance);
+}
+
+float Application::getLayerMaxDistance(int layer) {
+    if (layer < 1 || layer > 5) return 0.0f;
+    return s_layerMaxDistance[layer];
 }
 
 Application::Application() : _window(nullptr) {}
@@ -147,7 +208,15 @@ void Application::init(Haruka::Scene& scene) {
         std::cout << (sceneCamera ? "✓ Camera from game interface" : "⚠ Game interface did not provide a camera") << std::endl;
     }
 
-    _camera = std::unique_ptr<Camera>(sceneCamera);
+    if (sceneCamera) {
+        _camera = std::make_unique<Camera>(sceneCamera->position);
+        _camera->orientation = sceneCamera->orientation;
+        _camera->zoom = sceneCamera->zoom;
+        _camera->speed = sceneCamera->speed;
+        _camera->sensitivity = sceneCamera->sensitivity;
+    } else {
+        _camera = std::make_unique<Camera>(Haruka::WorldPos(0.0, 2.0, 8.0));
+    }
 
     // Initialize rendering systems
     _mainShader = std::make_unique<Shader>("shaders/simple.vert", "shaders/pbr.frag");
@@ -239,11 +308,72 @@ void Application::renderScene(Shader* shader) {
     if (!scene) {
         scene = _currentScene.get();
     }
+    g_sceneForRender = scene;
     g_sceneRenderQueue.clear();
     if (!scene) return;
+
+    Camera* activeCamera = MotorInstance::getInstance().getCamera();
+    if (!activeCamera) {
+        activeCamera = _camera.get();
+    }
+
+    const double nearPlane = 0.0001;
+    const double farPlane = 50000.0;
+    const double aspect = (_height > 0) ? static_cast<double>(_width) / static_cast<double>(_height) : (16.0 / 9.0);
+
+    glm::dvec3 camPos(0.0);
+    glm::dvec3 camForward(0.0, 0.0, -1.0);
+    glm::dvec3 camUp(0.0, 1.0, 0.0);
+    glm::dvec3 camRight(1.0, 0.0, 0.0);
+    bool canCullByFrustum = false;
+
+    if (activeCamera) {
+        camPos = glm::dvec3(activeCamera->position);
+        camForward = glm::normalize(glm::dvec3(activeCamera->getFront()));
+        camUp = glm::normalize(glm::dvec3(activeCamera->getUp()));
+        camRight = glm::normalize(glm::cross(camForward, camUp));
+        if (glm::length(camRight) > 1e-9) {
+            canCullByFrustum = true;
+        }
+    }
+
     for (const auto& obj : scene->getObjects()) {
         Haruka::ObjectType objType = Haruka::stringToObjectType(obj.type);
         if (!Haruka::isRenderableObjectType(objType)) continue;
+
+        if (canCullByFrustum) {
+            glm::dvec3 worldPos = obj.getWorldPosition(scene);
+            glm::dvec3 worldScale = obj.getWorldScale(scene);
+            double radius = 0.5 * glm::length(worldScale);
+            if (radius < 0.001) {
+                radius = 0.5;
+            }
+
+            int layer = std::clamp(obj.renderLayer, 1, 5);
+            if (layer != 1) {
+                static const double qualityMul[4] = {0.45, 0.70, 1.00, 1.35};
+                double dist = glm::length(worldPos - camPos);
+                double maxDist = static_cast<double>(s_layerMaxDistance[layer]) * qualityMul[s_renderQualityPreset];
+                if (dist - radius > maxDist) {
+                    continue;
+                }
+            }
+
+            if (!isSphereInsideCameraFrustum(
+                    worldPos,
+                    radius,
+                    camPos,
+                    camForward,
+                    camRight,
+                    camUp,
+                    static_cast<double>(activeCamera->zoom),
+                    aspect,
+                    nearPlane,
+                    farPlane)) {
+                continue;
+            }
+        }
+
         g_sceneRenderQueue.push_back(obj);
     }
 }
@@ -276,7 +406,7 @@ void Application::renderFrameContent() {
     }
     if (!activeCamera) return;
 
-    glm::mat4 proj = glm::perspective(glm::radians(activeCamera->zoom), (float)_width / (float)_height, 0.1f, 1000000000000.0f);
+    glm::mat4 proj = glm::perspective(glm::radians(activeCamera->zoom), (float)_width / (float)_height, 0.0001f, 50000.0f);
     glm::mat4 view = activeCamera->getViewMatrix();
 
     // ========== EDITOR MODE (Viewport) ==========
@@ -286,7 +416,7 @@ void Application::renderFrameContent() {
 
         editorTarget->bindForWriting();
         glEnable(GL_DEPTH_TEST);
-        glClearColor(0.06f, 0.06f, 0.09f, 1.0f);
+        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
         _flatShader->use();
@@ -297,7 +427,7 @@ void Application::renderFrameContent() {
         glm::vec3 sunLightColor = glm::vec3(1.0f);
         for (const auto& obj : g_sceneRenderQueue) {
             if (obj.type == "Light" || obj.type == "PointLight" || obj.type == "DirectionalLight") {
-                glm::vec3 p = glm::vec3(obj.position);
+                glm::vec3 p = glm::vec3(obj.getWorldPosition(g_sceneForRender));
                 if (glm::length(p) > 0.0001f) {
                     sunDir = glm::normalize(p);
                 }
@@ -311,12 +441,7 @@ void Application::renderFrameContent() {
         _flatShader->setFloat("ambientStrength", 0.12f);
 
         for (const auto& obj : g_sceneRenderQueue) {
-            glm::mat4 modelMatrix = glm::mat4(1.0f);
-            modelMatrix = glm::translate(modelMatrix, glm::vec3(obj.position));
-            modelMatrix = glm::rotate(modelMatrix, glm::radians((float)obj.rotation.x), glm::vec3(1, 0, 0));
-            modelMatrix = glm::rotate(modelMatrix, glm::radians((float)obj.rotation.y), glm::vec3(0, 1, 0));
-            modelMatrix = glm::rotate(modelMatrix, glm::radians((float)obj.rotation.z), glm::vec3(0, 0, 1));
-            modelMatrix = glm::scale(modelMatrix, glm::vec3(obj.scale));
+            glm::mat4 modelMatrix = g_sceneForRender ? obj.getWorldTransform(g_sceneForRender) : glm::mat4(1.0f);
             _flatShader->setMat4("model", modelMatrix);
             glm::vec3 baseColor = glm::vec3(obj.color);
             if (glm::length(baseColor) < 0.001f) baseColor = glm::vec3(0.8f, 0.8f, 0.8f);
@@ -357,8 +482,8 @@ void Application::renderFrameContent() {
         lightDir,
         activeCamera->position,
         glm::vec3(0.0f, 0.0f, -1.0f),
-        0.1f,
-        1000.0f,
+        0.0001f,
+        50000.0f,
         75.0f
     );
     
@@ -383,12 +508,7 @@ void Application::renderFrameContent() {
 
     int drawCount = 0;
     for (const auto& obj : g_sceneRenderQueue) {
-        glm::mat4 modelMatrix = glm::mat4(1.0f);
-        modelMatrix = glm::translate(modelMatrix, glm::vec3(obj.position));
-        modelMatrix = glm::rotate(modelMatrix, glm::radians((float)obj.rotation.x), glm::vec3(1, 0, 0));
-        modelMatrix = glm::rotate(modelMatrix, glm::radians((float)obj.rotation.y), glm::vec3(0, 1, 0));
-        modelMatrix = glm::rotate(modelMatrix, glm::radians((float)obj.rotation.z), glm::vec3(0, 0, 1));
-        modelMatrix = glm::scale(modelMatrix, glm::vec3(obj.scale));
+        glm::mat4 modelMatrix = g_sceneForRender ? obj.getWorldTransform(g_sceneForRender) : glm::mat4(1.0f);
         _geomShader->setMat4("model", modelMatrix);
         _geomShader->setVec3("color", glm::vec3(obj.color));
         if (obj.material) {

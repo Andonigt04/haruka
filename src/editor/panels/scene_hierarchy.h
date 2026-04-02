@@ -40,6 +40,7 @@ private:
     
     void renderObjectNode(int index);
     void reparentObject(int childIndex, int newParentIndex);
+    void createChildObject(int parentIndex, const std::string& primitiveType);
     void duplicateObject(int index);
     void showContextMenu(int index);
     

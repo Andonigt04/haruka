@@ -178,7 +178,6 @@ void MenuBar::renderViewMenu() {
     ImGui::MenuItem("Settings", nullptr, &editorApp->showSettings);
     ImGui::MenuItem("Asset Importer", nullptr, &editorApp->showAssetImporter);
     ImGui::MenuItem("Search Panel", nullptr, &editorApp->showSearchPanel);
-    ImGui::MenuItem("Scripting Editor", nullptr, &editorApp->showScriptingEditor);
     ImGui::MenuItem("UI Builder", nullptr, &editorApp->showUIBuilder);
     
     ImGui::Separator();

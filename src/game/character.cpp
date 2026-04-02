@@ -1,9 +1,40 @@
+#define GLM_ENABLE_EXPERIMENTAL
 #include "character.h"
 #include <GLFW/glfw3.h>
 #include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/quaternion.hpp>
 #include <iostream>
+#include <glm/gtx/quaternion.hpp>
 
 namespace Haruka {
+
+namespace {
+glm::dvec3 safeNormalize(const glm::dvec3& v, const glm::dvec3& fallback) {
+    double len = glm::length(v);
+    if (len < 1e-9) return fallback;
+    return v / len;
+}
+
+void buildSurfaceBasis(
+    const glm::dvec3& position,
+    const glm::quat& cameraOrientation,
+    glm::dvec3& outUp,
+    glm::dvec3& outForward,
+    glm::dvec3& outRight
+) {
+    outUp = safeNormalize(position, glm::dvec3(0.0, 1.0, 0.0));
+
+    glm::vec3 camForward3 = cameraOrientation * glm::vec3(0, 0, -1);
+    glm::dvec3 camForward = glm::dvec3(camForward3);
+
+    // Proyectar la cámara sobre el plano tangente del planeta
+    outForward = camForward - outUp * glm::dot(camForward, outUp);
+    outForward = safeNormalize(outForward, glm::cross(glm::dvec3(0.0, 0.0, 1.0), outUp));
+
+    outRight = glm::cross(outForward, outUp);
+    outRight = safeNormalize(outRight, glm::dvec3(1.0, 0.0, 0.0));
+}
+}
 
 Character::Character(const glm::dvec3& position, const std::string& userId)
     : userId(userId), position(position), velocity(0.0) {
@@ -71,18 +102,22 @@ void Character::processInput(GLFWwindow* window, float deltaTime) {
     
     // Movement
     float speed = sprinting ? runSpeed : (crouched ? crouchSpeed : walkSpeed);
+
+    glm::dvec3 up, surfaceForward, surfaceRight;
+    glm::dquat camOrientation = camera ? camera->orientation : glm::dquat(1.0, 0.0, 0.0, 0.0);
+    buildSurfaceBasis(position, camOrientation, up, surfaceForward, surfaceRight);
     
     if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) {
-        moveForward(speed * deltaTime);
+        position += surfaceForward * (double)(speed * deltaTime);
     }
     if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) {
-        moveForward(-speed * deltaTime);
+        position -= surfaceForward * (double)(speed * deltaTime);
     }
     if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) {
-        moveRight(-speed * deltaTime);
+        position -= surfaceRight * (double)(speed * deltaTime);
     }
     if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) {
-        moveRight(speed * deltaTime);
+        position += surfaceRight * (double)(speed * deltaTime);
     }
     
     // Jump
@@ -98,33 +133,11 @@ void Character::processInput(GLFWwindow* window, float deltaTime) {
 }
 
 void Character::moveForward(float amount) {
-    if (flightMode) {
-        // En modo vuelo, movimiento directo sin restricciones
-        position += glm::dvec3(forward) * (double)amount;
-    } else {
-        // En tierra, movimiento horizontal con fricción
-        glm::vec3 horizontalForward = glm::normalize(glm::vec3(forward.x, 0, forward.z));
-        if (glm::length(horizontalForward) > 0) {
-            glm::dvec3 move = glm::dvec3(horizontalForward) * (double)amount;
-            position.x += move.x;
-            position.z += move.z;
-        }
-    }
+    position += glm::dvec3(forward) * (double)amount;
 }
 
 void Character::moveRight(float amount) {
-    if (flightMode) {
-        // En modo vuelo, movimiento directo sin restricciones
-        position += glm::dvec3(right) * (double)amount;
-    } else {
-        // En tierra, movimiento horizontal con fricción
-        glm::vec3 horizontalRight = glm::normalize(glm::vec3(right.x, 0, right.z));
-        if (glm::length(horizontalRight) > 0) {
-            glm::dvec3 move = glm::dvec3(horizontalRight) * (double)amount;
-            position.x += move.x;
-            position.z += move.z;
-        }
-    }
+    position += glm::dvec3(right) * (double)amount;
 }
 
 void Character::jump() {
@@ -163,13 +176,34 @@ void Character::rotate(float yawDelta, float pitchDelta) {
 void Character::updateCamera() {
     if (!camera) return;
     
-    glm::dvec3 cameraPos = position + glm::dvec3(0, currentHeight * 0.9, 0);
+    glm::dvec3 up = safeNormalize(position, glm::dvec3(0.0, 1.0, 0.0));
+    glm::dvec3 cameraPos = position + up * (double)(currentHeight * 0.9f);
     camera->position = WorldPos(cameraPos.x, cameraPos.y, cameraPos.z);
-    
-    // Update camera orientation
-    glm::quat qPitch = glm::angleAxis(glm::radians(pitch), glm::vec3(1, 0, 0));
-    glm::quat qYaw = glm::angleAxis(glm::radians(yaw), glm::vec3(0, 1, 0));
-    camera->orientation = qYaw * qPitch;
+
+    // Orientación relativa al planeta (up local), para sensación humana sobre esfera
+    glm::dvec3 referenceForward = glm::dvec3(0.0, 0.0, -1.0);
+    if (std::abs(glm::dot(referenceForward, up)) > 0.95) {
+        referenceForward = glm::dvec3(1.0, 0.0, 0.0);
+    }
+
+    glm::dvec3 tangentForward = safeNormalize(referenceForward - up * glm::dot(referenceForward, up), glm::dvec3(1.0, 0.0, 0.0));
+    glm::dvec3 tangentRight = safeNormalize(glm::cross(tangentForward, up), glm::dvec3(0.0, 0.0, 1.0));
+
+    glm::dquat yawQ = glm::angleAxis(glm::radians((double)yaw), up);
+    glm::dvec3 forwardAfterYaw = glm::normalize(yawQ * tangentForward);
+    glm::dvec3 rightAfterYaw = safeNormalize(glm::cross(forwardAfterYaw, up), tangentRight);
+
+    glm::dquat pitchQ = glm::angleAxis(glm::radians((double)pitch), rightAfterYaw);
+    glm::dvec3 finalForward = glm::normalize(pitchQ * forwardAfterYaw);
+
+    glm::dvec3 finalRight = safeNormalize(glm::cross(finalForward, up), rightAfterYaw);
+    glm::dvec3 finalUp = safeNormalize(glm::cross(finalRight, finalForward), up);
+
+    glm::dmat3 basis;
+    basis[0] = finalRight;
+    basis[1] = finalUp;
+    basis[2] = -finalForward;
+    camera->orientation = glm::normalize(glm::quat_cast(basis));
 }
 
 void Character::updateState() {

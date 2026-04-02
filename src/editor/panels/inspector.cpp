@@ -52,6 +52,10 @@ void InspectorPanel::onImGuiRender() {
     }
 
     ImGui::Text("Type: %s", obj->type.c_str());
+    int renderLayer = obj->renderLayer;
+    if (ImGui::SliderInt("Render Layer", &renderLayer, 1, 5)) {
+        obj->renderLayer = renderLayer;
+    }
     ImGui::Separator();
 
     // Transform

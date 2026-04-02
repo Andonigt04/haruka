@@ -275,9 +275,9 @@ void ViewportPanel::renderScene() {
         }
     };
 
-    bool useMotorOutput = playMode && motorTarget && motorActivo && motorTieneApp && motorTieneCam && !forceLocalRender;
+    bool useMotorOutput = playMode && !forceLocalRender;
     if (useMotorOutput) {
-        if (motorRenderDirecto) {
+        if (motorTarget && motorRenderDirecto) {
             // El motor ya renderiza directo en este target, no hacer nada más
             int tris = 0;
             computeSceneStats(renderVertex_count, tris, renderDraw_calls);
@@ -287,7 +287,7 @@ void ViewportPanel::renderScene() {
                 statsPanel->setTriangleCount(tris);
             }
             return;
-        } else {
+        } else if (motorTarget) {
             // Copiar textura del motor al renderTarget del viewport
             glBindFramebuffer(GL_READ_FRAMEBUFFER, motorTarget->getFBO());
             glBindFramebuffer(GL_DRAW_FRAMEBUFFER, renderTarget->getFBO());
@@ -299,6 +299,14 @@ void ViewportPanel::renderScene() {
                 statsPanel->setVertexCount(renderVertex_count);
                 statsPanel->setDrawCalls(renderDraw_calls);
                 statsPanel->setTriangleCount(tris);
+            }
+            return;
+        } else {
+            // Sin render target del motor: mantener el viewport sin renderizar la ruta local inestable.
+            if (statsPanel) {
+                statsPanel->setVertexCount(0);
+                statsPanel->setDrawCalls(0);
+                statsPanel->setTriangleCount(0);
             }
             return;
         }
@@ -329,11 +337,14 @@ void ViewportPanel::renderScene() {
             shaderReady = false;
         }
         if (shaderReady) {
-            if (!shadowSystem) {
-                shadowSystem = std::make_unique<Shadow>(2048, 2048);
-            }
-            if (!shadowDepthShader) {
-                shadowDepthShader = std::make_unique<Shader>("shaders/shadow.vert", "shaders/shadow.frag");
+            const bool enableShadows = true;
+            if (enableShadows) {
+                if (!shadowSystem) {
+                    shadowSystem = std::make_unique<Shadow>(2048, 2048);
+                }
+                if (!shadowDepthShader) {
+                    shadowDepthShader = std::make_unique<Shader>("shaders/shadow.vert", "shaders/shadow.frag");
+                }
             }
 
             glm::vec3 sunPos(5000.0f, 5000.0f, -5000.0f);
@@ -341,7 +352,7 @@ void ViewportPanel::renderScene() {
             float sunIntensity = 20.0f;
             for (const auto& obj : currentScene->getObjects()) {
                 if (obj.type == "Light" || obj.type == "PointLight" || obj.type == "DirectionalLight") {
-                    sunPos = glm::vec3(obj.position);
+                    sunPos = glm::vec3(obj.getWorldPosition(currentScene));
                     sunColor = glm::vec3(obj.color);
                     sunIntensity = std::max((float)obj.intensity, 0.0f);
                     break;
@@ -349,19 +360,19 @@ void ViewportPanel::renderScene() {
             }
 
             glm::vec3 sunDir = glm::normalize(sunPos);
-            glm::vec3 target = glm::vec3(0.0f);
-            glm::vec3 lightEye = target - sunDir * 50000.0f;
+            glm::vec3 target = camera ? glm::vec3(camera->position) : glm::vec3(0.0f);
+            glm::vec3 lightEye = target - sunDir * 4000.0f;
             glm::mat4 lightView = glm::lookAt(lightEye, target, glm::vec3(0, 1, 0));
-            glm::mat4 lightProjection = glm::ortho(-12000.0f, 12000.0f, -12000.0f, 12000.0f, 1000.0f, 90000.0f);
+            glm::mat4 lightProjection = glm::ortho(-3000.0f, 3000.0f, -3000.0f, 3000.0f, 100.0f, 12000.0f);
             glm::mat4 lightSpaceMatrix = lightProjection * lightView;
 
             // Shadow depth pass
-            if (shadowSystem && shadowDepthShader) {
+            if (enableShadows && shadowSystem && shadowDepthShader) {
                 shadowSystem->bindForWriting();
                 glClear(GL_DEPTH_BUFFER_BIT);
 
                 glEnable(GL_POLYGON_OFFSET_FILL);
-                glPolygonOffset(2.5f, 8.0f);
+                glPolygonOffset(1.5f, 4.0f);
                 glEnable(GL_CULL_FACE);
                 glCullFace(GL_FRONT);
 
@@ -370,12 +381,7 @@ void ViewportPanel::renderScene() {
                 shadowDepthShader->setMat4("lightProjection", lightProjection);
 
                 for (const auto& obj : currentScene->getObjects()) {
-                    glm::mat4 modelMatrix = glm::mat4(1.0f);
-                    modelMatrix = glm::translate(modelMatrix, glm::vec3(obj.position));
-                    modelMatrix = glm::rotate(modelMatrix, glm::radians((float)obj.rotation.x), glm::vec3(1, 0, 0));
-                    modelMatrix = glm::rotate(modelMatrix, glm::radians((float)obj.rotation.y), glm::vec3(0, 1, 0));
-                    modelMatrix = glm::rotate(modelMatrix, glm::radians((float)obj.rotation.z), glm::vec3(0, 0, 1));
-                    modelMatrix = glm::scale(modelMatrix, glm::vec3(obj.scale));
+                    glm::mat4 modelMatrix = obj.getWorldTransform(currentScene);
                     shadowDepthShader->setMat4("model", modelMatrix);
 
                     if (obj.meshRenderer) {
@@ -398,14 +404,14 @@ void ViewportPanel::renderScene() {
             }
 
             sceneShader->use();
-            sceneShader->setMat4("projection", glm::perspective(glm::radians(45.0f), (float)width / (float)height, 0.1f, 1000000000000.0f));
+            sceneShader->setMat4("projection", glm::perspective(glm::radians(60.0f), (float)width / (float)height, 0.0001f, 50000.0f));
             sceneShader->setMat4("view", camera ? camera->getViewMatrix() : glm::lookAt(glm::vec3(0.0f, 2.0f, 8.0f), glm::vec3(0.0f), glm::vec3(0, 1, 0)));
             sceneShader->setMat4("lightSpaceMatrix", lightSpaceMatrix);
             sceneShader->setVec3("sunDirection", sunDir);
             float sunEnergy = std::clamp(sunIntensity * 0.01f, 0.2f, 2.0f);
             sceneShader->setVec3("sunLightColor", sunColor * sunEnergy);
             sceneShader->setFloat("ambientStrength", 0.12f);
-            if (shadowSystem) {
+            if (enableShadows && shadowSystem) {
                 shadowSystem->bindForReading(3);
                 sceneShader->setInt("shadowMap", 3);
                 sceneShader->setBool("useShadowMap", true);
@@ -413,12 +419,7 @@ void ViewportPanel::renderScene() {
                 sceneShader->setBool("useShadowMap", false);
             }
             for (const auto& obj : currentScene->getObjects()) {
-                glm::mat4 modelMatrix = glm::mat4(1.0f);
-                modelMatrix = glm::translate(modelMatrix, glm::vec3(obj.position));
-                modelMatrix = glm::rotate(modelMatrix, glm::radians((float)obj.rotation.x), glm::vec3(1, 0, 0));
-                modelMatrix = glm::rotate(modelMatrix, glm::radians((float)obj.rotation.y), glm::vec3(0, 1, 0));
-                modelMatrix = glm::rotate(modelMatrix, glm::radians((float)obj.rotation.z), glm::vec3(0, 0, 1));
-                modelMatrix = glm::scale(modelMatrix, glm::vec3(obj.scale));
+                glm::mat4 modelMatrix = obj.getWorldTransform(currentScene);
                 sceneShader->setMat4("model", modelMatrix);
                 glm::vec3 baseColor = glm::vec3(obj.color);
                 if (glm::length(baseColor) < 0.001f) baseColor = glm::vec3(0.8f);

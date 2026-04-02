@@ -11,6 +11,47 @@ namespace Haruka {
  */
 class PlanetGenerator {
 public:
+    enum class PlanetPreset {
+        EARTH_LIKE,
+        DESERT,
+        ICE
+    };
+
+    struct PlanetConfig {
+        float radius = 1.0f;
+        int subdivisions = 4;
+
+        // Seeds por capa
+        int seedBase = 42;
+        int seedContinents = 1337;
+        int seedMacro = 2024;
+        int seedDetail = 9001;
+
+        // Switches globales
+        bool enableContinents = true;
+
+        // Continentes / océanos
+        float seaLevel = 0.52f;
+        float continentFrequency = 1.2f;
+        float continentWarpStrength = 0.15f;
+        float continentHeightStrength = 0.20f;
+
+        // Macro relieve (cordilleras/mesetas)
+        float macroFrequency = 3.5f;
+        float macroHeightStrength = 0.12f;
+
+        // Micro detalle
+        float detailFrequency = 12.0f;
+        float detailHeightStrength = 0.02f;
+
+        // Ruido
+        int octavesContinents = 4;
+        int octavesMacro = 5;
+        int octavesDetail = 4;
+        float persistence = 0.5f;
+        float lacunarity = 2.0f;
+    };
+
     struct PlanetData {
         std::vector<glm::vec3> vertices;
         std::vector<glm::vec3> normals;
@@ -38,6 +79,9 @@ public:
         int octaves = 4
     );
 
+    static PlanetData generatePlanet(const PlanetConfig& config);
+    static PlanetConfig getPresetConfig(PlanetPreset preset);
+
 private:
     // Generar una cara del cubo
     static void generateFace(
@@ -45,12 +89,8 @@ private:
         glm::vec3 faceNormal,
         glm::vec3 right,
         glm::vec3 up,
-        int subdivisions,
-        float radius,
-        int seed,
-        float noiseScale,
-        float heightScale,
-        int octaves
+        const PlanetConfig& config,
+        int faceSeedOffset
     );
 };
 

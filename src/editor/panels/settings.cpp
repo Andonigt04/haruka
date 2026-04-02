@@ -1,4 +1,5 @@
 #include "settings.h"
+#include "core/application.h"
 #include <fstream>
 #include <nlohmann/json.hpp>
 #include <filesystem>
@@ -23,6 +24,23 @@ void SettingsPanel::onImGuiRender() {
             ImGui::SliderInt("Max Backups##editor", &maxBackups, 1, 20);
             ImGui::Checkbox("Show Grid in Viewport", &showGridInViewport);
             ImGui::SliderFloat("Grid Size##editor", &gridSize, 0.1f, 10.0f);
+        }
+
+        if (ImGui::CollapsingHeader("Rendering Quality", ImGuiTreeNodeFlags_DefaultOpen)) {
+            const char* qualityNames[] = {"Low", "Medium", "High", "Ultra"};
+            ImGui::Combo("Quality Preset", &renderQualityPreset, qualityNames, IM_ARRAYSIZE(qualityNames));
+
+            ImGui::SliderFloat("Layer 2 Max Distance", &layer2MaxDistance, 100.0f, 10000.0f, "%.0f");
+            ImGui::SliderFloat("Layer 3 Max Distance", &layer3MaxDistance, 200.0f, 25000.0f, "%.0f");
+            ImGui::SliderFloat("Layer 4 Max Distance", &layer4MaxDistance, 50.0f, 5000.0f, "%.0f");
+            ImGui::SliderFloat("Layer 5 Max Distance", &layer5MaxDistance, 20.0f, 2000.0f, "%.0f");
+            ImGui::TextDisabled("Layer 1 is always rendered (critical objects).");
+
+            Application::setRenderQualityPreset(renderQualityPreset);
+            Application::setLayerMaxDistance(2, layer2MaxDistance);
+            Application::setLayerMaxDistance(3, layer3MaxDistance);
+            Application::setLayerMaxDistance(4, layer4MaxDistance);
+            Application::setLayerMaxDistance(5, layer5MaxDistance);
         }
         
         if (ImGui::CollapsingHeader("Project", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -53,6 +71,11 @@ void SettingsPanel::save() {
     settings["editor"]["maxBackups"] = maxBackups;
     settings["editor"]["showGridInViewport"] = showGridInViewport;
     settings["editor"]["gridSize"] = gridSize;
+    settings["rendering"]["qualityPreset"] = renderQualityPreset;
+    settings["rendering"]["layer2MaxDistance"] = layer2MaxDistance;
+    settings["rendering"]["layer3MaxDistance"] = layer3MaxDistance;
+    settings["rendering"]["layer4MaxDistance"] = layer4MaxDistance;
+    settings["rendering"]["layer5MaxDistance"] = layer5MaxDistance;
     
     std::ofstream file("editor_settings.json");
     if (file.is_open()) {
@@ -87,6 +110,20 @@ void SettingsPanel::load() {
                 showGridInViewport = e.value("showGridInViewport", true);
                 gridSize = e.value("gridSize", 1.0f);
             }
+            if (settings.contains("rendering")) {
+                auto r = settings["rendering"];
+                renderQualityPreset = r.value("qualityPreset", 2);
+                layer2MaxDistance = r.value("layer2MaxDistance", 1200.0f);
+                layer3MaxDistance = r.value("layer3MaxDistance", 3500.0f);
+                layer4MaxDistance = r.value("layer4MaxDistance", 900.0f);
+                layer5MaxDistance = r.value("layer5MaxDistance", 300.0f);
+            }
+
+            Application::setRenderQualityPreset(renderQualityPreset);
+            Application::setLayerMaxDistance(2, layer2MaxDistance);
+            Application::setLayerMaxDistance(3, layer3MaxDistance);
+            Application::setLayerMaxDistance(4, layer4MaxDistance);
+            Application::setLayerMaxDistance(5, layer5MaxDistance);
             
             std::cout << "✓ Settings loaded" << std::endl;
         }

@@ -105,7 +105,7 @@ std::vector<LightCuller::CulledLight> LightCuller::cullLights(
     for (const auto& obj : objects) {
         if (obj.type == "PointLight" || obj.type == "DirectionalLight" || obj.type == "Light") {
             CulledLight light;
-            light.position = glm::vec3(obj.position);
+            light.position = glm::vec3(obj.getWorldPosition(scene));
             light.color = glm::vec3(obj.color) * glm::vec3(obj.intensity);
             
             // Calcular radio aproximado (30 unidades por defecto para point lights)

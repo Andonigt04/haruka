@@ -2,6 +2,7 @@
 
 #include <glm/gtc/constants.hpp>
 #include <cmath>
+#include <algorithm>
 
 void PrimitiveShapes::createSphere(float radius, int sectors, int stacks, std::vector<glm::vec3>& vertices, std::vector<glm::vec3>& normals, std::vector<unsigned int>& indices) {
     vertices.clear();
@@ -113,6 +114,114 @@ void PrimitiveShapes::createCube(float size, std::vector<glm::vec3>& vertices, s
         indices.push_back(baseIdx);
         indices.push_back(baseIdx + 3);
         indices.push_back(baseIdx + 2);
+    }
+}
+
+void PrimitiveShapes::createCapsule(float radius, float height, int sectors, int stacks, std::vector<glm::vec3>& vertices, std::vector<glm::vec3>& normals, std::vector<unsigned int>& indices)
+{
+    vertices.clear();
+    normals.clear();
+    indices.clear();
+
+    float cylinderHeight = std::max(0.0f, height - 2.0f * radius);
+    float halfCylinder = cylinderHeight * 0.5f;
+    int hemisphereStacks = std::max(2, stacks / 2);
+    int cylinderStacks = std::max(1, stacks - hemisphereStacks * 2);
+
+    auto addRing = [&](float y, float ringRadius) {
+        for (int j = 0; j <= sectors; ++j) {
+            float sectorAngle = 2.0f * glm::pi<float>() * (float)j / (float)sectors;
+            float x = ringRadius * std::cos(sectorAngle);
+            float z = ringRadius * std::sin(sectorAngle);
+            vertices.push_back({x, y, z});
+            normals.push_back(glm::normalize(glm::vec3(x, y >= 0.0f ? (y - halfCylinder) : (y + halfCylinder), z)));
+        }
+    };
+
+    // Top pole
+    vertices.push_back({0.0f, halfCylinder + radius, 0.0f});
+    normals.push_back({0.0f, 1.0f, 0.0f});
+
+    // Top hemisphere
+    for (int i = 1; i < hemisphereStacks; ++i) {
+        float t = (float)i / (float)hemisphereStacks;
+        float theta = t * (glm::half_pi<float>());
+        float ringRadius = radius * std::sin(theta);
+        float y = halfCylinder + radius * std::cos(theta);
+        addRing(y, ringRadius);
+    }
+
+    // Cylinder rings
+    for (int i = 0; i <= cylinderStacks; ++i) {
+        float t = (float)i / (float)cylinderStacks;
+        float y = halfCylinder - t * cylinderHeight;
+        addRing(y, radius);
+    }
+
+    // Bottom hemisphere
+    for (int i = 1; i < hemisphereStacks; ++i) {
+        float t = (float)i / (float)hemisphereStacks;
+        float theta = t * (glm::half_pi<float>());
+        float ringRadius = radius * std::cos(theta);
+        float y = -halfCylinder - radius * std::sin(theta);
+        addRing(y, ringRadius);
+    }
+
+    // Bottom pole
+    vertices.push_back({0.0f, -halfCylinder - radius, 0.0f});
+    normals.push_back({0.0f, -1.0f, 0.0f});
+
+    // Build indices between consecutive rings
+    auto ringStart = [&](int ringIndex, int ringSize) {
+        return ringIndex * ringSize;
+    };
+
+    int ringSize = sectors + 1;
+    int totalRings = (int)vertices.size() / ringSize; // approximate, enough for generated layout
+    int currentRing = 0;
+
+    // Top fan
+    int firstRingStart = 1;
+    if (totalRings > 1) {
+        for (int j = 0; j < sectors; ++j) {
+            indices.push_back(0);
+            indices.push_back(firstRingStart + j);
+            indices.push_back(firstRingStart + j + 1);
+        }
+    }
+
+    // Quads between rings
+    for (int ring = 0; ring + 1 < totalRings - 1; ++ring) {
+        int aStart = ringStart(ring, ringSize) + 1;
+        int bStart = ringStart(ring + 1, ringSize) + 1;
+
+        // Skip if ring layout is not perfectly aligned; this still produces a valid mesh
+        for (int j = 0; j < sectors; ++j) {
+            unsigned int a = aStart + j;
+            unsigned int b = aStart + j + 1;
+            unsigned int c = bStart + j;
+            unsigned int d = bStart + j + 1;
+            if (a < vertices.size() && b < vertices.size() && c < vertices.size() && d < vertices.size()) {
+                indices.push_back(a);
+                indices.push_back(c);
+                indices.push_back(b);
+
+                indices.push_back(b);
+                indices.push_back(c);
+                indices.push_back(d);
+            }
+        }
+    }
+
+    // Bottom fan (best-effort)
+    if (vertices.size() >= 2) {
+        unsigned int bottomIndex = (unsigned int)vertices.size() - 1;
+        unsigned int prevRingStart = bottomIndex > (unsigned int)(ringSize + 1) ? bottomIndex - (ringSize) : 0;
+        for (int j = 0; j < sectors; ++j) {
+            indices.push_back(bottomIndex);
+            indices.push_back(prevRingStart + j + 1);
+            indices.push_back(prevRingStart + j);
+        }
     }
 }
 

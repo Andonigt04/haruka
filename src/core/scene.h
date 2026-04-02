@@ -25,6 +25,7 @@ namespace Haruka
         glm::dvec3 scale = glm::dvec3(1.0);
         glm::dvec3 color = glm::dvec3(1.0);
         double intensity = 1.0;
+        int renderLayer = 1; // 1..5
         
         int parentIndex = -1;
         std::vector<int> childrenIndices;

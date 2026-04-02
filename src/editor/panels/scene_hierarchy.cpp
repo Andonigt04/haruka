@@ -1,3 +1,4 @@
+#define GLM_ENABLE_EXPERIMENTAL
 #include "scene_hierarchy.h"
 #include "core/error_reporter.h"
 #include "core/math_types.h"
@@ -11,6 +12,34 @@
 #include <cstdint>
 #include <algorithm>
 #include <cctype>
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtx/matrix_decompose.hpp>
+#include <glm/gtx/quaternion.hpp>
+
+namespace {
+glm::mat4 composeLocalTransform(const glm::dvec3& position, const glm::dvec3& rotation, const glm::dvec3& scale) {
+    glm::mat4 transform(1.0f);
+    transform = glm::translate(transform, glm::vec3(position));
+    transform = glm::rotate(transform, glm::radians((float)rotation.x), glm::vec3(1, 0, 0));
+    transform = glm::rotate(transform, glm::radians((float)rotation.y), glm::vec3(0, 1, 0));
+    transform = glm::rotate(transform, glm::radians((float)rotation.z), glm::vec3(0, 0, 1));
+    transform = glm::scale(transform, glm::vec3(scale));
+    return transform;
+}
+
+void decomposeTransform(const glm::mat4& transform, glm::dvec3& position, glm::dvec3& rotation, glm::dvec3& scale) {
+    glm::vec3 skew;
+    glm::vec4 perspective;
+    glm::vec3 translation;
+    glm::quat orientation;
+    glm::vec3 localScale;
+
+    glm::decompose(transform, localScale, orientation, translation, skew, perspective);
+    position = glm::dvec3(translation);
+    scale = glm::dvec3(localScale);
+    rotation = glm::dvec3(glm::degrees(glm::eulerAngles(orientation)));
+}
+}
 
 void SceneHierarchyPanel::setScene(Haruka::Scene* scene) {
     currentScene = scene;
@@ -141,10 +170,11 @@ void SceneHierarchyPanel::createPrimitive(const std::string& name, const std::st
         obj.material = std::make_shared<Haruka::MaterialComponent>();
         obj.material->albedo = glm::vec3(0.5f, 0.7f, 0.5f);
     } else if (type == "capsule") {
-        PrimitiveShapes::createCube(0.5f, verts, norms, indices);  // Fallback
+        PrimitiveShapes::createCapsule(0.5f, 2.0f, 24, 16, verts, norms, indices);
         obj.material = std::make_shared<Haruka::MaterialComponent>();
-        obj.material->albedo = glm::vec3(0.6f, 0.6f, 0.8f);
-        obj.scale = glm::dvec3(0.5f, 2.0f, 0.5f);
+        obj.material->albedo = glm::vec3(0.65f, 0.65f, 0.68f);
+        obj.color = glm::vec3(0.65f, 0.65f, 0.68f);
+        obj.scale = glm::dvec3(0.00095f);
     } else if (type == "plane") {
         PrimitiveShapes::createPlane(2.0f, 2.0f, 10, verts, norms, indices);
         obj.material = std::make_shared<Haruka::MaterialComponent>();
@@ -282,10 +312,22 @@ void SceneHierarchyPanel::showContextMenuChild(const Haruka::SceneObject& child)
 void SceneHierarchyPanel::reparentObject(int childIndex, int newParentIndex) {
     if (!currentScene || childIndex == newParentIndex) return;
     
-    auto& child = currentScene->getObjects()[childIndex];
+    auto& objects = currentScene->getObjects();
+    if (childIndex < 0 || childIndex >= (int)objects.size()) return;
+
+    auto& child = objects[childIndex];
+    glm::mat4 childWorld = composeLocalTransform(child.position, child.rotation, child.scale);
+    if (child.parentIndex >= 0 && child.parentIndex < (int)objects.size()) {
+        childWorld = objects[child.parentIndex].getWorldTransform(currentScene) * childWorld;
+    }
+
+    glm::mat4 parentWorld(1.0f);
+    if (newParentIndex >= 0 && newParentIndex < (int)objects.size()) {
+        parentWorld = objects[newParentIndex].getWorldTransform(currentScene);
+    }
     
     if (child.parentIndex >= 0) {
-        auto& oldParent = currentScene->getObjects()[child.parentIndex];
+        auto& oldParent = objects[child.parentIndex];
         oldParent.childrenIndices.erase(
             std::remove(oldParent.childrenIndices.begin(), oldParent.childrenIndices.end(), childIndex),
             oldParent.childrenIndices.end()
@@ -293,7 +335,46 @@ void SceneHierarchyPanel::reparentObject(int childIndex, int newParentIndex) {
     }
     
     child.parentIndex = newParentIndex;
-    currentScene->getObjects()[newParentIndex].childrenIndices.push_back(childIndex);
+    if (newParentIndex >= 0 && newParentIndex < (int)objects.size()) {
+        objects[newParentIndex].childrenIndices.push_back(childIndex);
+    }
+
+    glm::mat4 local = glm::inverse(parentWorld) * childWorld;
+    decomposeTransform(local, child.position, child.rotation, child.scale);
+}
+
+void SceneHierarchyPanel::createChildObject(int parentIndex, const std::string& primitiveType) {
+    if (!currentScene) return;
+    auto& objects = currentScene->getObjects();
+    if (parentIndex < 0 || parentIndex >= (int)objects.size()) return;
+
+    Haruka::SceneObject child;
+    child.name = primitiveType + "_child_" + std::to_string(objects.size());
+    child.type = primitiveType == "Light" ? "Light" : "Mesh";
+    child.position = glm::dvec3(0.0, 2.0, 0.0); // local offset respecto al padre
+    child.rotation = glm::dvec3(0.0);
+    child.scale = glm::dvec3(1.0);
+    child.color = primitiveType == "Light" ? glm::dvec3(1.0, 0.95, 0.8) : glm::dvec3(0.7);
+    child.intensity = primitiveType == "Light" ? 2.0 : 1.0;
+
+    child.meshRenderer = std::make_shared<MeshRendererComponent>();
+    std::vector<glm::vec3> verts, norms;
+    std::vector<unsigned int> indices;
+    if (primitiveType == "Sphere") {
+        PrimitiveShapes::createSphere(1.0f, 24, 24, verts, norms, indices);
+    } else if (primitiveType == "Light") {
+        PrimitiveShapes::createSphere(0.4f, 16, 16, verts, norms, indices);
+    } else {
+        PrimitiveShapes::createCube(1.0f, verts, norms, indices);
+    }
+    child.meshRenderer->setMesh(verts, norms, indices);
+    child.material = std::make_shared<Haruka::MaterialComponent>();
+    child.material->albedo = glm::vec3(child.color);
+
+    child.parentIndex = parentIndex;
+    currentScene->addObject(child);
+    int childIndex = (int)currentScene->getObjects().size() - 1;
+    currentScene->getObjects()[parentIndex].childrenIndices.push_back(childIndex);
 }
 
 void SceneHierarchyPanel::duplicateObject(int index) {
@@ -333,6 +414,13 @@ void SceneHierarchyPanel::showContextMenu(int index) {
         
         if (ImGui::MenuItem("Duplicate")) {
             duplicateObject(index);
+        }
+
+        if (ImGui::BeginMenu("Create Child")) {
+            if (ImGui::MenuItem("Cube")) createChildObject(index, "Cube");
+            if (ImGui::MenuItem("Sphere")) createChildObject(index, "Sphere");
+            if (ImGui::MenuItem("Light")) createChildObject(index, "Light");
+            ImGui::EndMenu();
         }
         
         if (ImGui::MenuItem("Delete")) {

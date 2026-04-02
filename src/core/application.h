@@ -54,15 +54,31 @@ public:
     Camera* getCamera() { return _camera.get(); }
     Haruka::Scene* getCurrentScene() { return _currentScene.get(); }
     RaycastSimple* getRaycastSystem() { return _raycastSystem.get(); }
+
+    // Render quality/layers (global editor-configurable)
+    static void setRenderQualityPreset(int preset);
+    static int getRenderQualityPreset();
+    static void setLayerMaxDistance(int layer, float distance);
+    static float getLayerMaxDistance(int layer);
     
     // Callbacks desde MotorInstance (cuando viewport cambia escena/cámara)
-    void onSceneChanged(Haruka::Scene* scene) { 
-        _currentScene.reset();
-        _currentScene = std::unique_ptr<Haruka::Scene>(scene);
+    void onSceneChanged(Haruka::Scene* scene) {
+        if (!scene) {
+            _currentScene.reset();
+            return;
+        }
+        _currentScene = std::make_unique<Haruka::Scene>(*scene);
     }
-    void onCameraChanged(Camera* cam) { 
-        _camera.reset();
-        _camera = std::unique_ptr<Camera>(cam);
+    void onCameraChanged(Camera* cam) {
+        if (!cam) {
+            _camera.reset();
+            return;
+        }
+        _camera = std::make_unique<Camera>(cam->position);
+        _camera->orientation = cam->orientation;
+        _camera->zoom = cam->zoom;
+        _camera->speed = cam->speed;
+        _camera->sensitivity = cam->sensitivity;
     }
 
     // inicia el producto final
@@ -138,6 +154,9 @@ private:
     unsigned int quadVAO = 0;
     unsigned int quadVBO = 0;
     void setupQuad();
+
+    static int s_renderQualityPreset; // 0=Low,1=Medium,2=High,3=Ultra
+    static float s_layerMaxDistance[6]; // layer 1..5
 };
 
 #endif

@@ -6,6 +6,46 @@
 
 namespace Haruka {
 
+namespace {
+constexpr double kPlayerCollisionRadiusKm = 0.00095; // ~0.95 m
+constexpr double kGroundEpsilonKm = 0.00150;         // ~1.5 m de separación visual/colisión
+constexpr double kTerminalFallSpeedKmS = 0.05;   // 50 m/s
+}
+
+namespace {
+bool rayTriangleIntersect(
+    const glm::dvec3& origin,
+    const glm::dvec3& dir,
+    const glm::dvec3& v0,
+    const glm::dvec3& v1,
+    const glm::dvec3& v2,
+    double& t
+) {
+    const double EPS = 1e-9;
+    glm::dvec3 edge1 = v1 - v0;
+    glm::dvec3 edge2 = v2 - v0;
+    glm::dvec3 h = glm::cross(dir, edge2);
+    double a = glm::dot(edge1, h);
+    if (a > -EPS && a < EPS) return false;
+
+    double f = 1.0 / a;
+    glm::dvec3 s = origin - v0;
+    double u = f * glm::dot(s, h);
+    if (u < 0.0 || u > 1.0) return false;
+
+    glm::dvec3 q = glm::cross(s, edge1);
+    double v = f * glm::dot(dir, q);
+    if (v < 0.0 || u + v > 1.0) return false;
+
+    double tmpT = f * glm::dot(edge2, q);
+    if (tmpT > EPS) {
+        t = tmpT;
+        return true;
+    }
+    return false;
+}
+}
+
 PlanetarySystem::PlanetarySystem() {}
 
 PlanetarySystem::~PlanetarySystem() {}
@@ -13,12 +53,6 @@ PlanetarySystem::~PlanetarySystem() {}
 void PlanetarySystem::init(Scene* scene, WorldSystem* worldSystem) {
     this->scene = scene;
     this->worldSystem = worldSystem;
-
-    // Inicializar terreno por defecto desde la capa planetaria (gameplay)
-    initTerrain(512, 200.0f, 42);
-    
-    std::cout << "✓ Planetary System initialized (empty)" << std::endl;
-    std::cout << "  Use addStar() and addPlanet() to populate the system" << std::endl;
 }
 
 void PlanetarySystem::initTerrain(int size, float heightScale, int seed) {
@@ -52,28 +86,52 @@ void PlanetarySystem::render() {
     // Render explícito de terreno desde gameplay cuando el pipeline lo solicite.
 }
 
-void PlanetarySystem::setDetailedSurfaceData(const std::string& bodyName, std::shared_ptr<PlanetGenerator::PlanetData> data) {
-    if (!data) {
-        detailedSurfaceData.erase(bodyName);
-        return;
-    }
-    detailedSurfaceData[bodyName] = std::move(data);
+void PlanetarySystem::setDetailedSurfaceData(const std::string& bodyName, const PlanetGenerator::PlanetData& data) {
+    detailedSurfaceData[bodyName] = data;
 }
 
 double PlanetarySystem::getSurfaceRadiusAtDirection(const CelestialBody* body, const glm::dvec3& planetToPoint) const {
     if (!body) return 0.0;
 
+    if (glm::length(planetToPoint) < 1e-9) {
+        return static_cast<double>(body->radius);
+    }
+
     auto it = detailedSurfaceData.find(body->name);
-    if (it == detailedSurfaceData.end() || !it->second || it->second->vertices.empty()) {
+    if (it == detailedSurfaceData.end() || it->second.vertices.empty()) {
         return static_cast<double>(body->radius);
     }
 
     glm::dvec3 dir = glm::normalize(planetToPoint);
+    const auto& data = it->second;
+
+    // Precisión alta: intersección rayo (centro->dir) contra triángulos de superficie
+    if (!data.indices.empty() && data.indices.size() % 3 == 0) {
+        const glm::dvec3 origin(0.0);
+        double closestT = std::numeric_limits<double>::infinity();
+
+        for (size_t i = 0; i + 2 < data.indices.size(); i += 3) {
+            const glm::dvec3 v0 = glm::dvec3(data.vertices[data.indices[i]]);
+            const glm::dvec3 v1 = glm::dvec3(data.vertices[data.indices[i + 1]]);
+            const glm::dvec3 v2 = glm::dvec3(data.vertices[data.indices[i + 2]]);
+
+            double t = 0.0;
+            if (rayTriangleIntersect(origin, dir, v0, v1, v2, t)) {
+                if (t < closestT) {
+                    closestT = t;
+                }
+            }
+        }
+
+        if (std::isfinite(closestT)) {
+            return static_cast<double>(body->radius) * closestT;
+        }
+    }
+
+    // Fallback: aproximación por vértice más alineado
     double bestDot = -std::numeric_limits<double>::infinity();
     double localRadius = 1.0;
-
-    const auto& verts = it->second->vertices;
-    for (const auto& v : verts) {
+    for (const auto& v : data.vertices) {
         glm::dvec3 vn = glm::normalize(glm::dvec3(v));
         double d = glm::dot(vn, dir);
         if (d > bestDot) {
@@ -149,9 +207,11 @@ void PlanetarySystem::update(double dt) {
     
     simulationTime += dt * timeScale;
     
-    integrateOrbits(dt);
-    updateWorldOrigin();
-    syncSceneWithOrbits();
+    // Modo seguro: no mutar la Scene del editor por frame desde gameplay.
+    // Esto evita invalidar punteros internos de panels/inspector y corrupción de heap.
+    // integrateOrbits(dt);
+    // updateWorldOrigin();
+    // syncSceneWithOrbits();
     applyPlanetaryPhysics(dt);
     updatePlayerOnPlanet();
     
@@ -224,16 +284,16 @@ CelestialBody* PlanetarySystem::findBody(const std::string& name) {
 CelestialBody* PlanetarySystem::getClosestPlanet() {
     if (!player) return nullptr;
     
-    glm::vec3 playerPos = player->getPosition();
+    glm::dvec3 playerPos = player->getPosition();
     CelestialBody* closest = nullptr;
-    float minDist = FLT_MAX;
+    double minDist = std::numeric_limits<double>::max();
     
     for (const auto& bodyName : bodyNames) {
         auto body = findBody(bodyName);
         if (!body || body->name == (star ? star->name : "")) continue;
         
-        glm::vec3 bodyPos = glm::vec3(body->localPos.x, body->localPos.y, body->localPos.z);
-        float dist = glm::length(playerPos - bodyPos);
+        glm::dvec3 bodyPos = body->worldPos;
+        double dist = glm::length(playerPos - bodyPos);
         
         if (dist < minDist) {
             minDist = dist;
@@ -251,13 +311,16 @@ void PlanetarySystem::updatePlayerOnPlanet() {
     if (!closestPlanet) return;
     
     glm::dvec3 playerPos = player->getPosition();
-    glm::dvec3 planetPos = glm::dvec3(closestPlanet->localPos.x, closestPlanet->localPos.y, closestPlanet->localPos.z);
+    glm::dvec3 planetPos = closestPlanet->worldPos;
     glm::dvec3 planetToPlayer = playerPos - planetPos;
     double distToPlanet = glm::length(planetToPlayer);
     
     double localSurfaceRadius = getSurfaceRadiusAtDirection(closestPlanet, planetToPlayer);
     if (distToPlanet < localSurfaceRadius + 100.0) {
-        glm::dvec3 surfacePos = planetPos + glm::normalize(planetToPlayer) * (localSurfaceRadius + 2.0);
+        glm::dvec3 n = (distToPlanet > 1e-9)
+            ? (planetToPlayer / distToPlanet)
+            : glm::dvec3(0.0, 1.0, 0.0);
+        glm::dvec3 surfacePos = planetPos + n * (localSurfaceRadius + kPlayerCollisionRadiusKm + kGroundEpsilonKm);
         player->setPosition(surfacePos);
     }
 }
@@ -282,8 +345,10 @@ double PlanetarySystem::calculateGravityAtPosition(const glm::dvec3& worldPos, g
             distance = body->radius * Units::KM;
         }
         
-        // F = G * M / r²
-        double acceleration = (G * body->mass) / (distance * distance);
+        // F = G * M / r² (distance está en km -> convertir a metros)
+        double distanceMeters = distance * 1000.0;
+        double accelerationMps2 = (G * body->mass) / (distanceMeters * distanceMeters);
+        double acceleration = accelerationMps2 / 1000.0; // km/s²
         
         // Acumular dirección ponderada
         if (distance > 0) {
@@ -304,51 +369,78 @@ void PlanetarySystem::applyPlanetaryPhysics(double dt) {
     }
     
     glm::dvec3 playerPos = player->getPosition();
+    glm::dvec3 currentVelocity = player->getVelocity();
+
+    // Saneado defensivo contra NaN/Inf
+    auto finite3 = [](const glm::dvec3& v) {
+        return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z);
+    };
+    if (!finite3(playerPos)) {
+        playerPos = glm::dvec3(0.0, 6373.0, 0.0);
+        player->setPosition(playerPos);
+    }
+    if (!finite3(currentVelocity)) {
+        currentVelocity = glm::dvec3(0.0);
+        player->setVelocity(currentVelocity);
+    }
+
     glm::dvec3 gravityDir;
     double gravityMagnitude = calculateGravityAtPosition(playerPos, gravityDir);
     
     // Aplicar gravedad al jugador
-    glm::dvec3 currentVelocity = player->getVelocity();
     
-    // Velocidad terminal (~50 m/s = 50 unidades km/s)
-    double terminalVelocity = 50.0 / Units::KM;
+    // Velocidad terminal realista (50 m/s = 0.05 km/s)
     double currentSpeed = glm::length(currentVelocity);
     
-    glm::dvec3 gravityAcceleration = gravityDir * gravityMagnitude * dt * timeScale;
+    // La gravedad del jugador debe usar tiempo real; timeScale queda para órbitas/simulación general.
+    glm::dvec3 gravityAcceleration = gravityDir * gravityMagnitude * dt;
     
-    // Limitar a velocidad terminal
-    if (currentSpeed > terminalVelocity) {
-        gravityAcceleration = glm::normalize(currentVelocity) * terminalVelocity;
-    } else {
-        currentVelocity += gravityAcceleration;
+    currentVelocity += gravityAcceleration;
+    currentSpeed = glm::length(currentVelocity);
+    if (currentSpeed > kTerminalFallSpeedKmS && currentSpeed > 1e-9) {
+        currentVelocity = glm::normalize(currentVelocity) * kTerminalFallSpeedKmS;
     }
     
     player->setVelocity(currentVelocity);
-    
-    // Raycast para detectar colisión con terreno
-    auto closestPlanet = getClosestPlanet();
-    if (closestPlanet) {
-        glm::dvec3 planetPos = glm::dvec3(closestPlanet->localPos.x, closestPlanet->localPos.y, closestPlanet->localPos.z);
-        glm::dvec3 planetToPlayer = playerPos - planetPos;
-        double distToPlanet = glm::length(planetToPlayer);
-        double surfaceDistance = getSurfaceRadiusAtDirection(closestPlanet, planetToPlayer) + 0.1; // 100 m sobre superficie detallada
-        
-        // Si está por debajo de la superficie, "aterrar"
-        if (distToPlanet < surfaceDistance) {
-            glm::dvec3 surfacePos = planetPos + glm::normalize(planetToPlayer) * surfaceDistance;
-            player->setPosition(surfacePos);
-            
-            // Detener velocidad que entra en el planeta
-            glm::dvec3 velocityNormal = glm::normalize(currentVelocity);
-            glm::dvec3 surfaceNormal = glm::normalize(planetToPlayer);
-            double inwardVelocity = glm::dot(velocityNormal, -surfaceNormal);
-            
-            if (inwardVelocity > 0) {
-                currentVelocity -= velocityNormal * inwardVelocity * 0.8; // Friction
-                player->setVelocity(currentVelocity);
+
+    // Integración con subpasos para evitar tunneling
+    int substeps = std::clamp((int)std::ceil((glm::length(currentVelocity) * dt) / 0.01), 1, 8);
+    double subDt = dt / static_cast<double>(substeps);
+
+    for (int i = 0; i < substeps; ++i) {
+        playerPos += currentVelocity * subDt;
+
+        auto closestPlanet = getClosestPlanet();
+        if (closestPlanet) {
+            glm::dvec3 planetPos = closestPlanet->worldPos;
+            glm::dvec3 planetToPlayer = playerPos - planetPos;
+            double distToPlanet = glm::length(planetToPlayer);
+            double surfaceDistance = getSurfaceRadiusAtDirection(closestPlanet, planetToPlayer)
+                                   + kPlayerCollisionRadiusKm
+                                   + kGroundEpsilonKm;
+
+            if (distToPlanet < surfaceDistance) {
+                glm::dvec3 n = (distToPlanet > 1e-9)
+                    ? (planetToPlayer / distToPlanet)
+                    : glm::dvec3(0.0, 1.0, 0.0);
+
+                playerPos = planetPos + n * surfaceDistance;
+
+                // Quitar componente hacia adentro
+                double inwardSpeed = glm::dot(currentVelocity, -n);
+                if (inwardSpeed > 0.0) {
+                    currentVelocity += n * inwardSpeed;
+                }
+
+                // Fricción tangencial
+                glm::dvec3 tangentialVelocity = currentVelocity - n * glm::dot(currentVelocity, n);
+                currentVelocity = tangentialVelocity * 0.98 + n * glm::max(0.0, glm::dot(currentVelocity, n));
             }
         }
     }
+
+    player->setPosition(playerPos);
+    player->setVelocity(currentVelocity);
 }
 
 void PlanetarySystem::setPlayerFlightMode(bool enabled) {

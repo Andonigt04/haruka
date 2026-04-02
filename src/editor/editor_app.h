@@ -20,7 +20,6 @@
 #include "editor/panels/asset_importer.h"
 #include "editor/panels/search_panel.h"
 #include "editor/panels/multi_scene_manager.h"
-#include "editor/panels/scripting_editor.h"
 #include "editor/panels/ui_builder.h"
 #include "editor/panels/export_panel.h"
 #include "menu_bar.h"
@@ -65,7 +64,6 @@ private:
     SettingsPanel settingsPanel;
     AssetImporter assetImporter;
     SearchPanel searchPanel;
-    ScriptingEditor scriptingEditor;
     UIBuilder uiBuilder;
     ExportPanel exportPanel;
     
@@ -90,7 +88,6 @@ private:
     bool showSettings = false;
     bool showAssetImporter = false;
     bool showSearchPanel = false;
-    bool showScriptingEditor = false;
     bool showUIBuilder = false;
     
     int width = 1600;

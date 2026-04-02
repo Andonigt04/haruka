@@ -10,13 +10,15 @@ ConsolePanel::~ConsolePanel() {}
 
 std::string ConsolePanel::getCurrentTimestamp() {
     auto now = std::time(nullptr);
-    auto tm = *std::localtime(&now);
+    std::tm tm{};
+    localtime_r(&now, &tm);
     std::ostringstream oss;
     oss << std::put_time(&tm, "%H:%M:%S");
     return oss.str();
 }
 
 void ConsolePanel::addLog(LogLevel level, const std::string& message) {
+    std::lock_guard<std::mutex> lock(logsMutex);
     LogEntry entry;
     entry.level = level;
     entry.message = message;
@@ -42,6 +44,7 @@ void ConsolePanel::error(const std::string& message) {
 }
 
 void ConsolePanel::clear() {
+    std::lock_guard<std::mutex> lock(logsMutex);
     logs.clear();
 }
 
@@ -80,7 +83,13 @@ void ConsolePanel::onImGuiRender() {
     
     std::string filter(filterBuffer);
     
-    for (const auto& log : logs) {
+    std::vector<LogEntry> snapshot;
+    {
+        std::lock_guard<std::mutex> lock(logsMutex);
+        snapshot = logs;
+    }
+
+    for (const auto& log : snapshot) {
         if (log.level == LogLevel::Info && !showInfo) continue;
         if (log.level == LogLevel::Warning && !showWarnings) continue;
         if (log.level == LogLevel::Error && !showErrors) continue;
@@ -118,6 +127,7 @@ StreamCapture::CaptureBuffer::CaptureBuffer(ConsolePanel* console, LogLevel leve
     : console(console), level(level), originalBuf(original) {}
 
 int StreamCapture::CaptureBuffer::overflow(int c) {
+    std::lock_guard<std::mutex> lock(bufferMutex);
     if (c != EOF) {
         buffer += static_cast<char>(c);
         if (c == '\n') {
@@ -125,17 +135,33 @@ int StreamCapture::CaptureBuffer::overflow(int c) {
                 buffer.pop_back();
             }
             if (!buffer.empty()) {
-                console->addLog(level, buffer);
+                if (console) {
+                    console->addLog(level, buffer);
+                }
             }
             buffer.clear();
         }
     }
-    return originalBuf->sputc(c);
+    return originalBuf ? originalBuf->sputc(c) : c;
 }
 
 std::streamsize StreamCapture::CaptureBuffer::xsputn(const char* s, std::streamsize n) {
+    std::lock_guard<std::mutex> lock(bufferMutex);
     for (std::streamsize i = 0; i < n; ++i) {
-        overflow(s[i]);
+        const int c = s[i];
+        buffer += static_cast<char>(c);
+        if (c == '\n') {
+            if (!buffer.empty() && buffer.back() == '\n') {
+                buffer.pop_back();
+            }
+            if (!buffer.empty() && console) {
+                console->addLog(level, buffer);
+            }
+            buffer.clear();
+        }
+        if (originalBuf) {
+            originalBuf->sputc(c);
+        }
     }
     return n;
 }

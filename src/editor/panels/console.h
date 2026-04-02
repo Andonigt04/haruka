@@ -5,6 +5,7 @@
 #include <string>
 #include <sstream>
 #include <iostream>
+#include <mutex>
 
 enum class LogLevel {
     Info,
@@ -33,6 +34,7 @@ public:
 
 private:
     std::vector<LogEntry> logs;
+    mutable std::mutex logsMutex;
     bool autoScroll = true;
     bool showInfo = true;
     bool showWarnings = true;
@@ -62,6 +64,7 @@ private:
         LogLevel level;
         std::streambuf* originalBuf;
         std::string buffer;
+        std::mutex bufferMutex;
     };
     
     std::ostream& stream;

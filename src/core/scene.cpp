@@ -1,3 +1,4 @@
+#define GLM_ENABLE_EXPERIMENTAL
 #include "scene.h"
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -8,8 +9,37 @@
 #include <dlfcn.h>
 #include "core/game_interface.h"
 #include "renderer/primitive_shapes.h"
+#include <glm/gtx/quaternion.hpp>
+#include <glm/gtx/matrix_decompose.hpp>
 
 namespace Haruka {
+
+namespace {
+glm::mat4 composeLocalTransform(const glm::dvec3& position, const glm::dvec3& rotation, const glm::dvec3& scale) {
+    glm::mat4 transform(1.0f);
+    transform = glm::translate(transform, glm::vec3(position));
+    transform = glm::rotate(transform, glm::radians((float)rotation.x), glm::vec3(1, 0, 0));
+    transform = glm::rotate(transform, glm::radians((float)rotation.y), glm::vec3(0, 1, 0));
+    transform = glm::rotate(transform, glm::radians((float)rotation.z), glm::vec3(0, 0, 1));
+    transform = glm::scale(transform, glm::vec3(scale));
+    return transform;
+}
+
+void decomposeTransform(const glm::mat4& transform, glm::dvec3& position, glm::dvec3& rotation, glm::dvec3& scale) {
+    glm::vec3 skew;
+    glm::vec4 perspective;
+    glm::vec3 translation;
+    glm::quat orientation;
+    glm::vec3 localScale;
+
+    glm::decompose(transform, localScale, orientation, translation, skew, perspective);
+    position = glm::dvec3(translation);
+    scale = glm::dvec3(localScale);
+
+    glm::vec3 euler = glm::degrees(glm::eulerAngles(orientation));
+    rotation = glm::dvec3(euler);
+}
+}
 
 Scene::Scene() : sceneName("Untitled") {}
 
@@ -40,6 +70,36 @@ SceneObject* Scene::getObject(const std::string& name) {
     return nullptr;
 }
 
+glm::mat4 SceneObject::getWorldTransform(const Scene* scene) const {
+    glm::mat4 localTransform = composeLocalTransform(position, rotation, scale);
+    if (!scene || parentIndex < 0 || parentIndex >= (int)scene->getObjects().size()) {
+        return localTransform;
+    }
+
+    const auto& parent = scene->getObjects()[parentIndex];
+    return parent.getWorldTransform(scene) * localTransform;
+}
+
+glm::dvec3 SceneObject::getWorldPosition(const Scene* scene) const {
+    glm::mat4 world = getWorldTransform(scene);
+    glm::vec4 origin = world * glm::vec4(0, 0, 0, 1);
+    return glm::dvec3(origin.x, origin.y, origin.z);
+}
+
+glm::dvec3 SceneObject::getWorldRotation(const Scene* scene) const {
+    glm::dvec3 worldPosition, worldRotation, worldScale;
+    glm::mat4 world = getWorldTransform(scene);
+    decomposeTransform(world, worldPosition, worldRotation, worldScale);
+    return worldRotation;
+}
+
+glm::dvec3 SceneObject::getWorldScale(const Scene* scene) const {
+    glm::dvec3 worldPosition, worldRotation, worldScale;
+    glm::mat4 world = getWorldTransform(scene);
+    decomposeTransform(world, worldPosition, worldRotation, worldScale);
+    return worldScale;
+}
+
 bool Scene::save(const std::string& filepath) {
     try {
         std::filesystem::path p(filepath);
@@ -68,6 +128,7 @@ bool Scene::save(const std::string& filepath) {
                 comp["scale"]    = {obj.scale.x, obj.scale.y, obj.scale.z};
                 comp["color"]    = {obj.color.x, obj.color.y, obj.color.z};
                 comp["intensity"] = obj.intensity;
+                comp["renderLayer"] = obj.renderLayer;
                 
                 if (obj.material) {
                     comp["material"] = obj.material->toJSON();
@@ -87,6 +148,7 @@ bool Scene::save(const std::string& filepath) {
                 o["scale"]    = {obj.scale.x, obj.scale.y, obj.scale.z};
                 o["color"]    = {obj.color.x, obj.color.y, obj.color.z};
                 o["intensity"] = obj.intensity;
+                o["renderLayer"] = obj.renderLayer;
                 o["parentIndex"] = obj.parentIndex;
                 o["childrenIndices"] = obj.childrenIndices;
 
@@ -145,6 +207,7 @@ bool Scene::load(const std::string& filepath) {
                         obj.color = {comp["color"][0], comp["color"][1], comp["color"][2]};
                     if (comp.contains("intensity"))
                         obj.intensity = comp["intensity"].get<double>();
+                    obj.renderLayer = std::clamp(comp.value("renderLayer", 1), 1, 5);
 
                     // Cargar material si existe
                     if (comp.contains("material")) {
@@ -194,6 +257,7 @@ SceneObject Scene::parseSceneObject(const nlohmann::json& o) {
         obj.color = {o["color"][0], o["color"][1], o["color"][2]};
     
     obj.intensity = o.value("intensity", 1.0);
+    obj.renderLayer = std::clamp(o.value("renderLayer", 1), 1, 5);
     obj.parentIndex = o.value("parentIndex", -1);
     if (o.contains("childrenIndices")) 
         obj.childrenIndices = o["childrenIndices"].get<std::vector<int>>();
@@ -219,6 +283,13 @@ SceneObject Scene::parseSceneObject(const nlohmann::json& o) {
             float size = o["meshRenderer"].value("size", 1.0f);
             PrimitiveShapes::createCube(size, verts, norms, indices);
         }
+        else if (meshType == "capsule") {
+            float radius = o["meshRenderer"].value("radius", 0.5f);
+            float height = o["meshRenderer"].value("height", 2.0f);
+            int segments = o["meshRenderer"].value("segments", 24);
+            int stacks = o["meshRenderer"].value("stacks", 16);
+            PrimitiveShapes::createCapsule(radius, height, segments, stacks, verts, norms, indices);
+        }
         if (!verts.empty()) {
             obj.meshRenderer->setMesh(verts, norms, indices);
             std::cout << "[Scene] Objeto '" << obj.name << "' meshRenderer: "
@@ -235,7 +306,7 @@ SceneObject Scene::parseSceneObject(const nlohmann::json& o) {
         std::string fileExt = filePath.substr(filePath.find_last_of(".") + 1);
         
         if (fileExt == "prefab") {
-            obj.type = "Prefab";
+            if (obj.type.empty()) obj.type = "Prefab";
             loadPrefabComponents(filePath, obj);
         } else if (fileExt == "scene") {
             obj.type = "Scene";
@@ -265,6 +336,42 @@ void Scene::loadPrefabComponents(const std::string& prefabPath, SceneObject& obj
             child.type = comp.value("type", "");
             child.properties = comp;
             child.modelPath = "";
+
+            // Aplicar componente principal del prefab al objeto padre
+            if (comp.contains("meshRenderer") && !obj.meshRenderer) {
+                obj.meshRenderer = std::make_shared<MeshRendererComponent>();
+                std::string meshType = comp["meshRenderer"].value("meshType", "cube");
+                std::vector<glm::vec3> verts, norms;
+                std::vector<unsigned int> indices;
+
+                if (meshType == "sphere") {
+                    float radius = comp["meshRenderer"].value("radius", 1.0f);
+                    int segments = comp["meshRenderer"].value("segments", 32);
+                    PrimitiveShapes::createSphere(radius, segments, segments, verts, norms, indices);
+                } else if (meshType == "cube") {
+                    float size = comp["meshRenderer"].value("size", 1.0f);
+                    PrimitiveShapes::createCube(size, verts, norms, indices);
+                } else if (meshType == "capsule") {
+                    float radius = comp["meshRenderer"].value("radius", 0.5f);
+                    float height = comp["meshRenderer"].value("height", 2.0f);
+                    int segments = comp["meshRenderer"].value("segments", 24);
+                    int stacks = comp["meshRenderer"].value("stacks", 16);
+                    PrimitiveShapes::createCapsule(radius, height, segments, stacks, verts, norms, indices);
+                }
+
+                if (!verts.empty()) {
+                    obj.meshRenderer->setMesh(verts, norms, indices);
+                }
+            }
+
+            if (comp.contains("material") && !obj.material) {
+                obj.material = std::make_shared<MaterialComponent>();
+                obj.material->fromJSON(comp["material"]);
+            }
+
+            if (comp.contains("color") && comp["color"].size() == 3) {
+                obj.color = {comp["color"][0], comp["color"][1], comp["color"][2]};
+            }
             
             // Heredar posición/rotación/escala del prefab padre
             if (comp.contains("position") && comp["position"].size() == 3) {
@@ -297,6 +404,7 @@ void Scene::executeInitializer(const std::string& scenePath) {
     in >> j;
     in.close();
     if (!j.contains("initializer")) return;
+    if (j["initializer"].is_string() && j["initializer"].get<std::string>().empty()) return;
     std::filesystem::path scenePath_fs(scenePath);
     std::filesystem::path projectRoot = scenePath_fs.parent_path().parent_path();
     std::string projectName = "";
