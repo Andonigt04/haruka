@@ -50,9 +50,12 @@ void StatsPanel::onImGuiRender() {
     
     // Rendering stats
     ImGui::Text("Rendering:");
-    ImGui::BulletText("Vertices: %d", vertexCount);
-    ImGui::BulletText("Triangles: %d", triangleCount);
-    ImGui::BulletText("Draw Calls: %d", drawCalls);
+    ImGui::BulletText("Vertices Rendered: %d", renderedVertexCount);
+    ImGui::BulletText("Vertices Total: %d", totalVertexCount);
+    ImGui::BulletText("Triangles Rendered: %d", renderedTriangleCount);
+    ImGui::BulletText("Triangles Total: %d", totalTriangleCount);
+    ImGui::BulletText("Draw Calls Rendered: %d", renderedDrawCalls);
+    ImGui::BulletText("Draw Calls Total: %d", totalDrawCalls);
     
     ImGui::Separator();
     

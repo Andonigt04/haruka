@@ -15,6 +15,37 @@
 namespace Haruka {
 
 namespace {
+template <typename Vec3T>
+nlohmann::json vec3ArrayToJson(const std::vector<Vec3T>& values) {
+    nlohmann::json result = nlohmann::json::array();
+    for (const auto& value : values) {
+        result.push_back({value.x, value.y, value.z});
+    }
+    return result;
+}
+
+std::vector<glm::vec3> jsonToVec3Array(const nlohmann::json& j) {
+    std::vector<glm::vec3> values;
+    if (!j.is_array()) return values;
+    values.reserve(j.size());
+    for (const auto& item : j) {
+        if (item.is_array() && item.size() == 3) {
+            values.emplace_back(item[0].get<float>(), item[1].get<float>(), item[2].get<float>());
+        }
+    }
+    return values;
+}
+
+std::vector<unsigned int> jsonToIndexArray(const nlohmann::json& j) {
+    std::vector<unsigned int> values;
+    if (!j.is_array()) return values;
+    values.reserve(j.size());
+    for (const auto& item : j) {
+        values.push_back(item.get<unsigned int>());
+    }
+    return values;
+}
+
 glm::mat4 composeLocalTransform(const glm::dvec3& position, const glm::dvec3& rotation, const glm::dvec3& scale) {
     glm::mat4 transform(1.0f);
     transform = glm::translate(transform, glm::vec3(position));
@@ -49,7 +80,9 @@ Scene::~Scene() {}
 
 void Scene::addObject(const SceneObject& obj) {
     objects.push_back(obj);
-    std::cout << "Object added: " << obj.name << std::endl;
+    if (obj.name.find("_chunk_") == std::string::npos) {
+        std::cout << "Object added: " << obj.name << std::endl;
+    }
 }
 
 void Scene::removeObject(const std::string& name) {
@@ -57,7 +90,9 @@ void Scene::removeObject(const std::string& name) {
         [&name](const SceneObject& o) { return o.name == name; });
     if (it != objects.end()) {
         objects.erase(it);
-        std::cout << "Object removed: " << name << std::endl;
+        if (name.find("_chunk_") == std::string::npos) {
+            std::cout << "Object removed: " << name << std::endl;
+        }
     }
 }
 
@@ -129,6 +164,16 @@ bool Scene::save(const std::string& filepath) {
                 comp["color"]    = {obj.color.x, obj.color.y, obj.color.z};
                 comp["intensity"] = obj.intensity;
                 comp["renderLayer"] = obj.renderLayer;
+                if (!obj.properties.is_null() && !obj.properties.empty()) {
+                    comp["properties"] = obj.properties;
+                }
+                if (obj.meshRenderer) {
+                    nlohmann::json mesh;
+                    mesh["vertices"] = vec3ArrayToJson(obj.meshRenderer->getSourceVertices());
+                    mesh["normals"] = vec3ArrayToJson(obj.meshRenderer->getSourceNormals());
+                    mesh["indices"] = obj.meshRenderer->getSourceIndices();
+                    comp["meshRenderer"] = mesh;
+                }
                 
                 if (obj.material) {
                     comp["material"] = obj.material->toJSON();
@@ -151,9 +196,20 @@ bool Scene::save(const std::string& filepath) {
                 o["renderLayer"] = obj.renderLayer;
                 o["parentIndex"] = obj.parentIndex;
                 o["childrenIndices"] = obj.childrenIndices;
+                if (!obj.properties.is_null() && !obj.properties.empty()) {
+                    o["properties"] = obj.properties;
+                }
 
                 if (obj.material) {
                     o["material"] = obj.material->toJSON();
+                }
+
+                if (obj.meshRenderer) {
+                    nlohmann::json mesh;
+                    mesh["vertices"] = vec3ArrayToJson(obj.meshRenderer->getSourceVertices());
+                    mesh["normals"] = vec3ArrayToJson(obj.meshRenderer->getSourceNormals());
+                    mesh["indices"] = obj.meshRenderer->getSourceIndices();
+                    o["meshRenderer"] = mesh;
                 }
 
                 j["objects"].push_back(o);
@@ -215,6 +271,23 @@ bool Scene::load(const std::string& filepath) {
                         obj.material->fromJSON(comp["material"]);
                     }
 
+                    if (comp.contains("properties")) {
+                        obj.properties = comp["properties"];
+                    }
+
+                    if (comp.contains("meshRenderer") && comp["meshRenderer"].is_object()) {
+                        const auto& mesh = comp["meshRenderer"];
+                        if (mesh.contains("vertices") && mesh.contains("indices")) {
+                            auto vertices = jsonToVec3Array(mesh["vertices"]);
+                            auto normals = mesh.contains("normals") ? jsonToVec3Array(mesh["normals"]) : std::vector<glm::vec3>{};
+                            auto indices = jsonToIndexArray(mesh["indices"]);
+                            if (!vertices.empty() && !indices.empty()) {
+                                obj.meshRenderer = std::make_shared<MeshRendererComponent>();
+                                obj.meshRenderer->setMesh(vertices, normals, indices);
+                            }
+                        }
+                    }
+
                     objects.push_back(obj);
                 }
             }
@@ -243,6 +316,7 @@ bool Scene::load(const std::string& filepath) {
 
 SceneObject Scene::parseSceneObject(const nlohmann::json& o) {
     SceneObject obj;
+    obj.properties = o;
     obj.name = o.value("name", "");
     obj.type = o.value("type", "");
     obj.modelPath = o.value("modelPath", "");
@@ -271,26 +345,47 @@ SceneObject Scene::parseSceneObject(const nlohmann::json& o) {
     // Cargar meshRenderer
     if (o.contains("meshRenderer")) {
         obj.meshRenderer = std::make_shared<MeshRendererComponent>();
-        std::string meshType = o["meshRenderer"].value("meshType", "cube");
+        const auto& meshJson = o["meshRenderer"];
         std::vector<glm::vec3> verts, norms;
         std::vector<unsigned int> indices;
-        if (meshType == "sphere") {
-            float radius = o["meshRenderer"].value("radius", 1.0f);
-            int segments = o["meshRenderer"].value("segments", 32);
-            PrimitiveShapes::createSphere(radius, segments, segments, verts, norms, indices);
-        } 
-        else if (meshType == "cube") {
-            float size = o["meshRenderer"].value("size", 1.0f);
-            PrimitiveShapes::createCube(size, verts, norms, indices);
+
+        if (meshJson.contains("vertices") && meshJson.contains("indices")) {
+            for (const auto& item : meshJson["vertices"]) {
+                if (item.is_array() && item.size() == 3) {
+                    verts.emplace_back(item[0].get<float>(), item[1].get<float>(), item[2].get<float>());
+                }
+            }
+            if (meshJson.contains("normals")) {
+                for (const auto& item : meshJson["normals"]) {
+                    if (item.is_array() && item.size() == 3) {
+                        norms.emplace_back(item[0].get<float>(), item[1].get<float>(), item[2].get<float>());
+                    }
+                }
+            }
+            for (const auto& item : meshJson["indices"]) {
+                indices.push_back(item.get<unsigned int>());
+            }
+        } else {
+            std::string meshType = meshJson.value("meshType", "cube");
+            if (meshType == "sphere") {
+                float radius = meshJson.value("radius", 1.0f);
+                int segments = meshJson.value("segments", 32);
+                PrimitiveShapes::createSphere(radius, segments, segments, verts, norms, indices);
+            }
+            else if (meshType == "cube") {
+                float size = meshJson.value("size", 1.0f);
+                PrimitiveShapes::createCube(size, verts, norms, indices);
+            }
+            else if (meshType == "capsule") {
+                float radius = meshJson.value("radius", 0.5f);
+                float height = meshJson.value("height", 2.0f);
+                int segments = meshJson.value("segments", 24);
+                int stacks = meshJson.value("stacks", 16);
+                PrimitiveShapes::createCapsule(radius, height, segments, stacks, verts, norms, indices);
+            }
         }
-        else if (meshType == "capsule") {
-            float radius = o["meshRenderer"].value("radius", 0.5f);
-            float height = o["meshRenderer"].value("height", 2.0f);
-            int segments = o["meshRenderer"].value("segments", 24);
-            int stacks = o["meshRenderer"].value("stacks", 16);
-            PrimitiveShapes::createCapsule(radius, height, segments, stacks, verts, norms, indices);
-        }
-        if (!verts.empty()) {
+
+        if (!verts.empty() && !indices.empty()) {
             obj.meshRenderer->setMesh(verts, norms, indices);
             std::cout << "[Scene] Objeto '" << obj.name << "' meshRenderer: "
                       << verts.size() << " vértices, "
@@ -340,26 +435,36 @@ void Scene::loadPrefabComponents(const std::string& prefabPath, SceneObject& obj
             // Aplicar componente principal del prefab al objeto padre
             if (comp.contains("meshRenderer") && !obj.meshRenderer) {
                 obj.meshRenderer = std::make_shared<MeshRendererComponent>();
-                std::string meshType = comp["meshRenderer"].value("meshType", "cube");
                 std::vector<glm::vec3> verts, norms;
                 std::vector<unsigned int> indices;
 
-                if (meshType == "sphere") {
-                    float radius = comp["meshRenderer"].value("radius", 1.0f);
-                    int segments = comp["meshRenderer"].value("segments", 32);
-                    PrimitiveShapes::createSphere(radius, segments, segments, verts, norms, indices);
-                } else if (meshType == "cube") {
-                    float size = comp["meshRenderer"].value("size", 1.0f);
-                    PrimitiveShapes::createCube(size, verts, norms, indices);
-                } else if (meshType == "capsule") {
-                    float radius = comp["meshRenderer"].value("radius", 0.5f);
-                    float height = comp["meshRenderer"].value("height", 2.0f);
-                    int segments = comp["meshRenderer"].value("segments", 24);
-                    int stacks = comp["meshRenderer"].value("stacks", 16);
-                    PrimitiveShapes::createCapsule(radius, height, segments, stacks, verts, norms, indices);
+                const auto& meshJson = comp["meshRenderer"];
+                if (meshJson.contains("vertices") && meshJson.contains("indices")) {
+                    verts = jsonToVec3Array(meshJson["vertices"]);
+                    if (meshJson.contains("normals")) {
+                        norms = jsonToVec3Array(meshJson["normals"]);
+                    }
+                    indices = jsonToIndexArray(meshJson["indices"]);
+                } else {
+                    std::string meshType = meshJson.value("meshType", "cube");
+
+                    if (meshType == "sphere") {
+                        float radius = meshJson.value("radius", 1.0f);
+                        int segments = meshJson.value("segments", 32);
+                        PrimitiveShapes::createSphere(radius, segments, segments, verts, norms, indices);
+                    } else if (meshType == "cube") {
+                        float size = meshJson.value("size", 1.0f);
+                        PrimitiveShapes::createCube(size, verts, norms, indices);
+                    } else if (meshType == "capsule") {
+                        float radius = meshJson.value("radius", 0.5f);
+                        float height = meshJson.value("height", 2.0f);
+                        int segments = meshJson.value("segments", 24);
+                        int stacks = meshJson.value("stacks", 16);
+                        PrimitiveShapes::createCapsule(radius, height, segments, stacks, verts, norms, indices);
+                    }
                 }
 
-                if (!verts.empty()) {
+                if (!verts.empty() && !indices.empty()) {
                     obj.meshRenderer->setMesh(verts, norms, indices);
                 }
             }

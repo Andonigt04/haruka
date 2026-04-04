@@ -36,6 +36,8 @@ public:
         const glm::vec3& lightDir,
         const glm::vec3& cameraPos,
         const glm::vec3& cameraForward,
+        const glm::vec3& cameraUp,
+        float aspect,
         float zNear,
         float zFar,
         float fov
@@ -50,6 +52,9 @@ public:
      * Obtener texture de shadow map para cascada
      */
     GLuint getShadowMapTexture(int cascade) const;
+    GLuint getFramebuffer(int cascade) const;
+    void bindForWriting(int cascade) const;
+    void bindForReading(int cascade, unsigned int textureUnit) const;
 
     /**
      * Obtener información de cascadas

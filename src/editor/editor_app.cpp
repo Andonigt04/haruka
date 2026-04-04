@@ -89,6 +89,7 @@ void EditorApplication::init() {
     inspectorPanel.setOnSceneChanged([this]() { sceneDirty = true; });
     projectBrowserPanel.setProject(currentProject.get());
     projectBrowserPanel.setScene(currentScene.get());
+    planetTerrainEditorPanel.setScene(currentScene.get());
     
     // ===== Camera Setup =====
     viewportCamera = std::make_unique<Camera>(Haruka::WorldPos(0.0f, 5.0f, 15.0f));
@@ -117,6 +118,7 @@ void EditorApplication::init() {
     sceneHierarchyPanel.setOnObjectSelectedByIndex([this](int index) {
         if (currentScene && index >= 0 && index < (int)currentScene->getObjects().size()) {
             inspectorPanel.setSelectedObjectIndex(index);
+            viewportPanel.setSelectedObjectIndex(index);
         }
     });
 
@@ -336,6 +338,14 @@ void EditorApplication::renderUI() {
             }
         }
 
+        if (showPlanetTerrainEditor) {
+            try {
+                planetTerrainEditorPanel.onImGuiRender();
+            } catch (const std::exception& e) {
+                HARUKA_EDITOR_ERROR(ErrorCode::EDITOR_INIT_FAILED, "PlanetTerrainEditor crash: " + std::string(e.what()));
+            }
+        }
+
         if (isPlayMode) ImGui::EndDisabled();
 
         // Viewport (siempre visible)
@@ -347,6 +357,20 @@ void EditorApplication::renderUI() {
             }
         }
         viewportPanel.setGizmoMode(gizmoMode);
+
+        if (currentScene) {
+            int selectedIndex = viewportPanel.getSelectedObjectIndex();
+            if (selectedIndex >= 0 && selectedIndex < (int)currentScene->getObjects().size()) {
+                const auto& obj = currentScene->getObjects()[selectedIndex];
+                if (obj.properties.is_object() && obj.properties.contains("terrainEditor")) {
+                    const auto& te = obj.properties["terrainEditor"];
+                    if (te.value("isChunk", false)) {
+                        planetTerrainEditorPanel.setSelectedChunkId(te.value("chunkId", -1));
+                        planetTerrainEditorPanel.setTargetObjectName(te.value("source", obj.name));
+                    }
+                }
+            }
+        }
 
         if (showDemoWindow) {
             ImGui::ShowDemoWindow(&showDemoWindow);
@@ -485,10 +509,12 @@ void EditorApplication::enterPlayMode() {
             }
             
             currentScene->load(fullScenePath);
+            planetTerrainEditorPanel.setScene(currentScene.get());
             
             // Resetear selección
             sceneHierarchyPanel.setSelectedObjectIndex(-1);
             inspectorPanel.setSelectedObjectIndex(-1);
+            viewportPanel.setSelectedObjectIndex(-1);
             
             std::cout << "Scene loaded: " << startScenePath << std::endl;
         }
@@ -589,6 +615,7 @@ void EditorApplication::exitPlayMode() {
 
     if (std::filesystem::exists(playModeBackupPath)) {
         currentScene->load(playModeBackupPath);
+        planetTerrainEditorPanel.setScene(currentScene.get());
     }
     
     viewportPanel.setCamera(viewportCamera.get());
@@ -683,6 +710,7 @@ void EditorApplication::createNewProject(const std::string& name, const std::str
         sceneHierarchyPanel.setScene(currentScene.get());
         inspectorPanel.setScene(currentScene.get());
         viewportPanel.setScene(currentScene.get());
+        planetTerrainEditorPanel.setScene(currentScene.get());
 
         std::cout << "✓ Project created from template: " << projectPath << std::endl;
     } catch (const std::exception& e) {
@@ -784,6 +812,7 @@ void EditorApplication::loadFile(const std::string& path) {
         sceneHierarchyPanel.setScene(currentScene.get());
         inspectorPanel.setScene(currentScene.get());
         viewportPanel.setScene(currentScene.get());
+        planetTerrainEditorPanel.setScene(currentScene.get());
         
         // Resetear selección a ningún objeto
         sceneHierarchyPanel.setSelectedObjectIndex(-1);

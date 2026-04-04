@@ -1,7 +1,6 @@
 #pragma once
 
 #include "core/scene.h"
-#include "editor/panels/prefabs_panel.h"
 #include "editor/commands/command_history.h"
 #include <imgui.h>
 #include <glm/glm.hpp>

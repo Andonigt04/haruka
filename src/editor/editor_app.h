@@ -14,7 +14,6 @@
 #include "editor/panels/stats.h"
 #include "editor/commands/command_history.h"
 #include "game/ingame_chat.h"
-#include "editor/panels/prefabs_panel.h"
 #include "game/planetary_system.h"
 #include "editor/panels/settings.h"
 #include "editor/panels/asset_importer.h"
@@ -22,6 +21,7 @@
 #include "editor/panels/multi_scene_manager.h"
 #include "editor/panels/ui_builder.h"
 #include "editor/panels/export_panel.h"
+#include "editor/panels/planet_terrain_editor.h"
 #include "menu_bar.h"
 #include <imgui.h>
 #include <memory>
@@ -66,6 +66,7 @@ private:
     SearchPanel searchPanel;
     UIBuilder uiBuilder;
     ExportPanel exportPanel;
+    PlanetTerrainEditorPanel planetTerrainEditorPanel;
     
     // Gizmos
     int gizmoMode = 0;
@@ -89,6 +90,7 @@ private:
     bool showAssetImporter = false;
     bool showSearchPanel = false;
     bool showUIBuilder = false;
+    bool showPlanetTerrainEditor = true;
     
     int width = 1600;
     int height = 900;

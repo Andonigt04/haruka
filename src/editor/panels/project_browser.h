@@ -9,9 +9,6 @@
 #include <functional>
 #include <chrono>
 
-namespace Haruka {
-    class PrefabsPanel;
-}
 
 struct FileItem {
     std::string name;
@@ -30,15 +27,10 @@ public:
     void onImGuiRender();
 
     void setOnFileLoad(std::function<void(const std::string&)> cb) { onFileLoad = std::move(cb); }
-    void setOnPrefabLoad(std::function<void(const std::string&)> cb);
-    void setOnPrefabSave(std::function<void(const std::string&)> cb);
 
 private:
     Haruka::Project* currentProject = nullptr;
     Haruka::Scene* currentScene = nullptr;
-
-    std::unique_ptr<Haruka::PrefabsPanel> prefabsPanel;
-
     std::string selectedPath;
     std::string selectedExtension;
     std::string draggedPath;

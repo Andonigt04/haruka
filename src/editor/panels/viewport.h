@@ -4,7 +4,6 @@
 #include "core/scene.h"
 #include "renderer/shader.h"
 #include "renderer/render_target.h"
-#include "renderer/shadow.h"
 #include "renderer/motor_instance.h"
 #include "renderer/simple_mesh.h"
 #include "renderer/primitive_shapes.h"
@@ -50,6 +49,8 @@ public:
     void setStatsPanel(StatsPanel* panel) { statsPanel = panel; }
     void setPlayMode(bool play) { playMode = play; }
     void setGizmoMode(int mode) { gizmoMode = mode; }
+    void setSelectedObjectIndex(int index) { selectedObjectIndex = index; }
+    int getSelectedObjectIndex() const { return selectedObjectIndex; }
 
 private:
     // Motor app instance owned by the viewport when running in editor mode
@@ -85,8 +86,6 @@ private:
 
     // Shader para render local/editor
     std::unique_ptr<Shader> sceneShader;
-    std::unique_ptr<Shader> shadowDepthShader;
-    std::unique_ptr<Shadow> shadowSystem;
 
     // Stats panel
     StatsPanel* statsPanel = nullptr;

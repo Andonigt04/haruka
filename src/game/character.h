@@ -48,12 +48,15 @@ public:
     // State
     glm::dvec3 getPosition() const { return position; }
     glm::dvec3 getVelocity() const { return velocity; }
+    glm::dvec3 getUpDirection() const { return upDirection; }
     CharacterState getState() const { return state; }
     std::string getUserId() const { return userId; }
 
     void setPosition(glm::dvec3 newPosition) { position = newPosition; }
     void setVelocity(glm::dvec3 newVelocity) { velocity = newVelocity; }
     void setState(CharacterState newState) { state = newState; }
+    void setUpDirection(const glm::dvec3& newUp) { upDirection = newUp; }
+    void setPitchLimits(float minPitchDeg, float maxPitchDeg) { minPitch = minPitchDeg; maxPitch = maxPitchDeg; }
     
     bool isGrounded() const { return grounded; }
     bool isSprinting() const { return sprinting; }
@@ -87,6 +90,10 @@ private:
     
     float yaw = -90.0f;
     float pitch = 0.0f;
+    float minPitch = -85.0f;
+    float maxPitch = 85.0f;
+
+    glm::dvec3 upDirection = glm::dvec3(0.0, 1.0, 0.0);
     
     bool grounded = false;
     bool sprinting = false;
@@ -111,6 +118,8 @@ private:
     void updateState();
     void checkGrounded();
     bool shouldSyncToServer();
+
+    glm::dvec3 getEffectiveUp() const;
 };
 
 }

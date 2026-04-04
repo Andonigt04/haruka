@@ -386,6 +386,10 @@ void PlanetarySystem::applyPlanetaryPhysics(double dt) {
 
     glm::dvec3 gravityDir;
     double gravityMagnitude = calculateGravityAtPosition(playerPos, gravityDir);
+
+    if (gravityMagnitude > 1e-12 && glm::length(gravityDir) > 1e-12) {
+        player->setUpDirection(-glm::normalize(gravityDir));
+    }
     
     // Aplicar gravedad al jugador
     

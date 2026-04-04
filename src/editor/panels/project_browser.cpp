@@ -1,5 +1,4 @@
 #include "project_browser.h"
-#include "prefabs_panel.h"
 #include <iostream>
 #include <filesystem>
 #include <algorithm>
@@ -11,7 +10,6 @@ namespace fs = std::filesystem;
 using namespace std::chrono;
 
 ProjectBrowserPanel::ProjectBrowserPanel() {
-    prefabsPanel = std::make_unique<Haruka::PrefabsPanel>();
     lastRefreshTime = steady_clock::now();
 }
 
@@ -19,12 +17,10 @@ void ProjectBrowserPanel::setProject(Haruka::Project* project) {
     currentProject = project;
     lastProjectPath = project ? project->getPath() : "";
     needsRefresh = true;
-    if (prefabsPanel) prefabsPanel->setProject(project);
 }
 
 void ProjectBrowserPanel::setScene(Haruka::Scene* scene) {
     currentScene = scene;
-    if (prefabsPanel) prefabsPanel->setScene(scene);
 }
 
 std::string ProjectBrowserPanel::getFileExtension(const std::string& filename) {
@@ -376,12 +372,3 @@ void ProjectBrowserPanel::onImGuiRender() {
 
     ImGui::End();
 }
-
-void ProjectBrowserPanel::setOnPrefabLoad(std::function<void(const std::string&)> cb) {
-    if (prefabsPanel) prefabsPanel->setOnPrefabLoad(std::move(cb));
-}
-
-void ProjectBrowserPanel::setOnPrefabSave(std::function<void(const std::string&)> cb) {
-    if (prefabsPanel) prefabsPanel->setOnPrefabSave(std::move(cb));
-}
-

@@ -8,6 +8,80 @@
 #include <ImGuizmo.h>
 #include <glm/gtc/type_ptr.hpp>
 
+namespace {
+std::unordered_map<std::string, std::shared_ptr<Model>> g_modelCache;
+
+bool isRenderDisabledByEditor(const Haruka::SceneObject& obj) {
+    if (!obj.properties.is_object()) return false;
+    if (!obj.properties.contains("terrainEditor")) return false;
+    const auto& te = obj.properties["terrainEditor"];
+    return te.value("disableRender", false);
+}
+
+void buildPrimitiveMeshFromProperties(Haruka::SceneObject& obj) {
+    if (!obj.meshRenderer) {
+        obj.meshRenderer = std::make_shared<MeshRendererComponent>();
+    }
+    if (!obj.meshRenderer || obj.meshRenderer->isResident()) return;
+    if (!obj.properties.contains("meshRenderer")) return;
+
+    const auto& mr = obj.properties["meshRenderer"];
+    std::string meshType = mr.value("meshType", "");
+    std::vector<glm::vec3> verts, norms;
+    std::vector<unsigned int> indices;
+
+    if (meshType == "cube") {
+        PrimitiveShapes::createCube(mr.value("size", 1.0f), verts, norms, indices);
+    } else if (meshType == "sphere") {
+        float radius = mr.value("radius", 1.0f);
+        int segments = mr.value("segments", 32);
+        PrimitiveShapes::createSphere(radius, segments, segments, verts, norms, indices);
+    } else if (meshType == "capsule") {
+        PrimitiveShapes::createCapsule(
+            mr.value("radius", 0.5f),
+            mr.value("height", 2.0f),
+            mr.value("segments", 24),
+            mr.value("stacks", 16),
+            verts, norms, indices);
+    } else if (meshType == "plane") {
+        PrimitiveShapes::createPlane(
+            mr.value("width", 2.0f),
+            mr.value("height", 2.0f),
+            mr.value("subdivisions", 10),
+            verts, norms, indices);
+    }
+
+    if (!verts.empty()) {
+        obj.meshRenderer->setMesh(verts, norms, indices);
+    }
+}
+
+void maybeReleasePrimitiveMesh(Haruka::SceneObject& obj) {
+    if (obj.meshRenderer && obj.meshRenderer->isResident()) {
+        obj.meshRenderer->releaseMesh();
+    }
+}
+
+std::shared_ptr<Model> getOrLoadModelCached(const std::string& path) {
+    auto it = g_modelCache.find(path);
+    if (it != g_modelCache.end()) {
+        return it->second;
+    }
+
+    try {
+        auto model = std::make_shared<Model>(path);
+        g_modelCache[path] = model;
+        return model;
+    } catch (...) {
+        return nullptr;
+    }
+}
+
+void releaseModelFromCache(const std::string& path) {
+    g_modelCache.erase(path);
+}
+}
+
 ViewportPanel::ViewportPanel() {}
 
 ViewportPanel::~ViewportPanel() = default;
@@ -81,6 +155,7 @@ int ViewportPanel::getHoveredObjectIndex(const glm::vec3& rayOrigin, const glm::
     const auto& objects = currentScene->getObjects();
     for (size_t i = 0; i < objects.size(); i++) {
         const auto& obj = objects[i];
+        if (isRenderDisabledByEditor(obj)) continue;
         
         // Bounding sphere (radio 0.5 * escala)
         glm::vec3 center = glm::vec3(obj.position);
@@ -90,6 +165,7 @@ int ViewportPanel::getHoveredObjectIndex(const glm::vec3& rayOrigin, const glm::
         if (glm::intersectRaySphere(rayOrigin, rayDir, center, radius, distance)) {
             if (distance < closestDist) {
                 closestDist = distance;
+                closestIdx = static_cast<int>(i);
             }
         }
     }
@@ -267,10 +343,21 @@ void ViewportPanel::renderScene() {
         if (!sceneForStats) return;
 
         for (const auto& obj : sceneForStats->getObjects()) {
-            if (obj.meshRenderer && obj.meshRenderer->getMesh()) {
+            if (isRenderDisabledByEditor(obj)) continue;
+            if (obj.meshRenderer) {
                 outDrawCalls++;
-                outVertices += obj.meshRenderer->getMesh()->getVertexCount();
-                outTriangles += obj.meshRenderer->getMesh()->getTriangleCount();
+                outVertices += obj.meshRenderer->getVertexCount();
+                outTriangles += obj.meshRenderer->getTriangleCount();
+                continue;
+            }
+            if (!obj.modelPath.empty()) {
+                try {
+                    auto model = getOrLoadModelCached(obj.modelPath);
+                    if (!model) continue;
+                    outDrawCalls++;
+                    outVertices += model->getVertexCount();
+                    outTriangles += model->getTriangleCount();
+                } catch (...) {}
             }
         }
     };
@@ -279,12 +366,13 @@ void ViewportPanel::renderScene() {
     if (useMotorOutput) {
         if (motorTarget && motorRenderDirecto) {
             // El motor ya renderiza directo en este target, no hacer nada más
-            int tris = 0;
-            computeSceneStats(renderVertex_count, tris, renderDraw_calls);
             if (statsPanel) {
-                statsPanel->setVertexCount(renderVertex_count);
-                statsPanel->setDrawCalls(renderDraw_calls);
-                statsPanel->setTriangleCount(tris);
+                statsPanel->setVertexCount(Application::getLastRenderedVertices());
+                statsPanel->setDrawCalls(Application::getLastRenderedDrawCalls());
+                statsPanel->setTriangleCount(Application::getLastRenderedTriangles());
+                statsPanel->setTotalVertexCount(Application::getLastTotalVertices());
+                statsPanel->setTotalDrawCalls(Application::getLastTotalDrawCalls());
+                statsPanel->setTotalTriangleCount(Application::getLastTotalTriangles());
             }
             return;
         } else if (motorTarget) {
@@ -293,12 +381,13 @@ void ViewportPanel::renderScene() {
             glBindFramebuffer(GL_DRAW_FRAMEBUFFER, renderTarget->getFBO());
             glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL_COLOR_BUFFER_BIT, GL_LINEAR);
             glBindFramebuffer(GL_FRAMEBUFFER, 0);
-            int tris = 0;
-            computeSceneStats(renderVertex_count, tris, renderDraw_calls);
             if (statsPanel) {
-                statsPanel->setVertexCount(renderVertex_count);
-                statsPanel->setDrawCalls(renderDraw_calls);
-                statsPanel->setTriangleCount(tris);
+                statsPanel->setVertexCount(Application::getLastRenderedVertices());
+                statsPanel->setDrawCalls(Application::getLastRenderedDrawCalls());
+                statsPanel->setTriangleCount(Application::getLastRenderedTriangles());
+                statsPanel->setTotalVertexCount(Application::getLastTotalVertices());
+                statsPanel->setTotalDrawCalls(Application::getLastTotalDrawCalls());
+                statsPanel->setTotalTriangleCount(Application::getLastTotalTriangles());
             }
             return;
         } else {
@@ -307,6 +396,9 @@ void ViewportPanel::renderScene() {
                 statsPanel->setVertexCount(0);
                 statsPanel->setDrawCalls(0);
                 statsPanel->setTriangleCount(0);
+                statsPanel->setTotalVertexCount(0);
+                statsPanel->setTotalDrawCalls(0);
+                statsPanel->setTotalTriangleCount(0);
             }
             return;
         }
@@ -321,7 +413,12 @@ void ViewportPanel::renderScene() {
     int localDrawCalls = 0;
     int localVertices = 0;
     int localTriangles = 0;
+    int totalVertices = 0;
+    int totalTriangles = 0;
+    int totalDrawCalls = 0;
+    computeSceneStats(totalVertices, totalTriangles, totalDrawCalls);
     if (currentScene) {
+        glm::dvec3 camPos = camera ? glm::dvec3(camera->position) : glm::dvec3(0.0);
         bool shaderReady = true;
         if (!sceneShader) {
             try {
@@ -337,20 +434,17 @@ void ViewportPanel::renderScene() {
             shaderReady = false;
         }
         if (shaderReady) {
+            Application* motorApp = MotorInstance::getInstance().getApplication();
+            CascadedShadowMap* cascadedShadow = motorApp ? motorApp->getCascadedShadowMap() : nullptr;
+            Shader* cascadeShadowShader = motorApp ? motorApp->getCascadedShadowShader() : nullptr;
+
             const bool enableShadows = true;
-            if (enableShadows) {
-                if (!shadowSystem) {
-                    shadowSystem = std::make_unique<Shadow>(2048, 2048);
-                }
-                if (!shadowDepthShader) {
-                    shadowDepthShader = std::make_unique<Shader>("shaders/shadow.vert", "shaders/shadow.frag");
-                }
-            }
 
             glm::vec3 sunPos(5000.0f, 5000.0f, -5000.0f);
             glm::vec3 sunColor(1.0f, 1.0f, 0.95f);
             float sunIntensity = 20.0f;
             for (const auto& obj : currentScene->getObjects()) {
+                if (isRenderDisabledByEditor(obj)) continue;
                 if (obj.type == "Light" || obj.type == "PointLight" || obj.type == "DirectionalLight") {
                     sunPos = glm::vec3(obj.getWorldPosition(currentScene));
                     sunColor = glm::vec3(obj.color);
@@ -360,65 +454,104 @@ void ViewportPanel::renderScene() {
             }
 
             glm::vec3 sunDir = glm::normalize(sunPos);
-            glm::vec3 target = camera ? glm::vec3(camera->position) : glm::vec3(0.0f);
-            glm::vec3 lightEye = target - sunDir * 4000.0f;
-            glm::mat4 lightView = glm::lookAt(lightEye, target, glm::vec3(0, 1, 0));
-            glm::mat4 lightProjection = glm::ortho(-3000.0f, 3000.0f, -3000.0f, 3000.0f, 100.0f, 12000.0f);
-            glm::mat4 lightSpaceMatrix = lightProjection * lightView;
+            glm::mat4 cameraView = camera ? camera->getViewMatrix() : glm::lookAt(glm::vec3(0.0f, 2.0f, 8.0f), glm::vec3(0.0f), glm::vec3(0, 1, 0));
+            float camDist = camera ? glm::length(glm::vec3(camera->position)) : 1000.0f;
+            float nearPlane = std::clamp(camDist * 0.001f, 0.5f, 20.0f);
+            float farPlane = std::max(200000.0f, camDist * 400.0f);
+            if (currentScene && currentScene->getObject("Sun")) {
+                const auto* sunObj = currentScene->getObject("Sun");
+                glm::vec3 sunPosObj = glm::vec3(sunObj->getWorldPosition(currentScene));
+                float sunDistance = glm::length(sunPosObj - (camera ? glm::vec3(camera->position) : glm::vec3(0.0f)));
+                float sunRadius = std::max(std::abs((float)sunObj->scale.x), std::max(std::abs((float)sunObj->scale.y), std::abs((float)sunObj->scale.z)));
+                farPlane = std::max(farPlane, sunDistance + sunRadius * 3.0f);
+                farPlane = std::min(farPlane, 300000000.0f);
+            }
+
+            if (enableShadows && cascadedShadow) {
+                glm::vec3 camForward = camera ? camera->getFront() : glm::vec3(0.0f, 0.0f, -1.0f);
+                glm::vec3 camUp = camera ? camera->getUp() : glm::vec3(0.0f, 1.0f, 0.0f);
+                cascadedShadow->updateCascades(
+                    -sunDir,
+                    camera ? glm::vec3(camera->position) : glm::vec3(0.0f),
+                    camForward,
+                    camUp,
+                    (float)width / (float)height,
+                    nearPlane,
+                    farPlane,
+                    60.0f);
+            }
 
             // Shadow depth pass
-            if (enableShadows && shadowSystem && shadowDepthShader) {
-                shadowSystem->bindForWriting();
-                glClear(GL_DEPTH_BUFFER_BIT);
-
-                glEnable(GL_POLYGON_OFFSET_FILL);
-                glPolygonOffset(1.5f, 4.0f);
+            if (enableShadows && cascadedShadow && cascadeShadowShader) {
                 glEnable(GL_CULL_FACE);
                 glCullFace(GL_FRONT);
+                glEnable(GL_POLYGON_OFFSET_FILL);
+                glPolygonOffset(1.5f, 4.0f);
 
-                shadowDepthShader->use();
-                shadowDepthShader->setMat4("lightView", lightView);
-                shadowDepthShader->setMat4("lightProjection", lightProjection);
+                cascadeShadowShader->use();
+                for (int cascade = 0; cascade < cascadedShadow->getNumCascades(); ++cascade) {
+                    cascadedShadow->bindForWriting(cascade);
+                    glClear(GL_DEPTH_BUFFER_BIT);
 
-                for (const auto& obj : currentScene->getObjects()) {
-                    glm::mat4 modelMatrix = obj.getWorldTransform(currentScene);
-                    shadowDepthShader->setMat4("model", modelMatrix);
+                    cascadeShadowShader->setMat4("lightSpaceMatrix", cascadedShadow->getCascadeMatrix(cascade));
 
-                    if (obj.meshRenderer) {
-                        obj.meshRenderer->render(*shadowDepthShader);
-                    } else if (!obj.modelPath.empty()) {
-                        try {
-                            Model model(obj.modelPath);
-                            model.Draw(*shadowDepthShader);
-                        } catch (...) {}
+                    for (const auto& obj : currentScene->getObjects()) {
+                        if (isRenderDisabledByEditor(obj)) continue;
+                        glm::mat4 modelMatrix = obj.getWorldTransform(currentScene);
+                        cascadeShadowShader->setMat4("model", modelMatrix);
+
+                        if (obj.meshRenderer && obj.meshRenderer->isResident()) {
+                            obj.meshRenderer->render(*cascadeShadowShader);
+                        } else if (!obj.modelPath.empty()) {
+                            try {
+                                auto model = getOrLoadModelCached(obj.modelPath);
+                                if (model) model->Draw(*cascadeShadowShader);
+                            } catch (...) {}
+                        }
                     }
                 }
 
                 glCullFace(GL_BACK);
                 glDisable(GL_POLYGON_OFFSET_FILL);
-                shadowSystem->unbind();
-
-                // Restaurar el target del viewport tras el pass de sombras
+                glBindFramebuffer(GL_FRAMEBUFFER, 0);
                 renderTarget->bindForWriting();
                 glViewport(0, 0, width, height);
             }
 
             sceneShader->use();
-            sceneShader->setMat4("projection", glm::perspective(glm::radians(60.0f), (float)width / (float)height, 0.0001f, 50000.0f));
-            sceneShader->setMat4("view", camera ? camera->getViewMatrix() : glm::lookAt(glm::vec3(0.0f, 2.0f, 8.0f), glm::vec3(0.0f), glm::vec3(0, 1, 0)));
-            sceneShader->setMat4("lightSpaceMatrix", lightSpaceMatrix);
+            sceneShader->setMat4("projection", glm::perspective(glm::radians(60.0f), (float)width / (float)height, nearPlane, farPlane));
+            sceneShader->setMat4("view", cameraView);
+            sceneShader->setMat4("lightSpaceMatrix", glm::mat4(1.0f));
+            if (cascadedShadow) {
+                sceneShader->setInt("numCascades", cascadedShadow->getNumCascades());
+                for (int i = 0; i < cascadedShadow->getNumCascades(); ++i) {
+                    sceneShader->setMat4("cascadeLightSpaceMatrices[" + std::to_string(i) + "]", cascadedShadow->getCascadeMatrix(i));
+                    sceneShader->setFloat("cascadeSplits[" + std::to_string(i) + "]", cascadedShadow->getCascadeInfo(i).zFar);
+                    cascadedShadow->bindForReading(i, 7 + i);
+                    sceneShader->setInt("cascadeShadowMaps[" + std::to_string(i) + "]", 7 + i);
+                }
+            } else {
+                sceneShader->setInt("numCascades", 0);
+            }
             sceneShader->setVec3("sunDirection", sunDir);
             float sunEnergy = std::clamp(sunIntensity * 0.01f, 0.2f, 2.0f);
             sceneShader->setVec3("sunLightColor", sunColor * sunEnergy);
             sceneShader->setFloat("ambientStrength", 0.12f);
-            if (enableShadows && shadowSystem) {
-                shadowSystem->bindForReading(3);
-                sceneShader->setInt("shadowMap", 3);
-                sceneShader->setBool("useShadowMap", true);
-            } else {
-                sceneShader->setBool("useShadowMap", false);
-            }
-            for (const auto& obj : currentScene->getObjects()) {
+            sceneShader->setBool("useShadowMap", false);
+            for (auto& obj : currentScene->getObjectsMutable()) {
+                if (isRenderDisabledByEditor(obj)) continue;
+                int layer = std::clamp(obj.renderLayer, 1, 5);
+                double unloadDistance = Application::getLayerMaxDistance(layer);
+                if (obj.meshRenderer && layer >= 4) {
+                    glm::dvec3 worldPos = obj.getWorldPosition(currentScene);
+                    double dist = glm::length(worldPos - camPos);
+                    if (dist > unloadDistance * 1.15) {
+                        maybeReleasePrimitiveMesh(obj);
+                    } else if (!obj.meshRenderer->isResident() && dist < unloadDistance * 0.85) {
+                        buildPrimitiveMeshFromProperties(obj);
+                    }
+                }
+
                 glm::mat4 modelMatrix = obj.getWorldTransform(currentScene);
                 sceneShader->setMat4("model", modelMatrix);
                 glm::vec3 baseColor = glm::vec3(obj.color);
@@ -428,23 +561,61 @@ void ViewportPanel::renderScene() {
                 float emission = isLightObj ? std::max((float)obj.intensity, 0.0f) : 1.0f;
                 glm::vec3 c = isLightObj ? (baseColor * emission) : baseColor;
                 sceneShader->setVec3("lightColor", c);
-                if (obj.meshRenderer) {
+                if (obj.meshRenderer && obj.meshRenderer->isResident()) {
                     obj.meshRenderer->render(*sceneShader);
                     localDrawCalls++;
-                    if (obj.meshRenderer->getMesh()) {
-                        localVertices += obj.meshRenderer->getMesh()->getVertexCount();
-                        localTriangles += obj.meshRenderer->getMesh()->getTriangleCount();
-                    }
+                    localVertices += obj.meshRenderer->getResidentVertexCount();
+                    localTriangles += obj.meshRenderer->getResidentTriangleCount();
                     continue;
                 }
                 if (!obj.modelPath.empty()) {
                     try {
-                        Model model(obj.modelPath);
-                        model.Draw(*sceneShader);
-                        localDrawCalls++;
-                        localVertices += model.getVertexCount();
-                        localTriangles += model.getTriangleCount();
+                        auto model = getOrLoadModelCached(obj.modelPath);
+                        if (model) {
+                            model->Draw(*sceneShader);
+                            localDrawCalls++;
+                            localVertices += model->getVertexCount();
+                            localTriangles += model->getTriangleCount();
+                        }
                     } catch (...) {}
+                }
+            }
+
+            // Outline amarillo del objeto seleccionado
+            if (selectedObjectIndex >= 0 && selectedObjectIndex < (int)currentScene->getObjects().size()) {
+                const auto& selObj = currentScene->getObjects()[selectedObjectIndex];
+                if (!isRenderDisabledByEditor(selObj)) {
+                    glDisable(GL_CULL_FACE);
+                    glEnable(GL_DEPTH_TEST);
+                    glDepthFunc(GL_LEQUAL);
+                    glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+                    glLineWidth(3.0f);
+
+                    sceneShader->use();
+                    sceneShader->setMat4("projection", glm::perspective(glm::radians(60.0f), (float)width / (float)height, nearPlane, farPlane));
+                    sceneShader->setMat4("view", cameraView);
+                    sceneShader->setVec3("sunDirection", sunDir);
+                    sceneShader->setVec3("sunLightColor", glm::vec3(1.0f));
+                    sceneShader->setFloat("ambientStrength", 1.0f);
+                    sceneShader->setBool("useShadowMap", false);
+                    sceneShader->setVec3("lightColor", glm::vec3(1.0f, 1.0f, 0.0f));
+
+                    glm::mat4 outlineModel = selObj.getWorldTransform(currentScene);
+                    outlineModel = outlineModel * glm::scale(glm::mat4(1.0f), glm::vec3(1.003f));
+                    sceneShader->setMat4("model", outlineModel);
+
+                    if (selObj.meshRenderer && selObj.meshRenderer->isResident()) {
+                        selObj.meshRenderer->render(*sceneShader);
+                    } else if (!selObj.modelPath.empty()) {
+                        try {
+                            auto model = getOrLoadModelCached(selObj.modelPath);
+                            if (model) model->Draw(*sceneShader);
+                        } catch (...) {}
+                    }
+
+                    glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+                    glLineWidth(1.0f);
+                    glDepthFunc(GL_LESS);
                 }
             }
         }
@@ -456,6 +627,9 @@ void ViewportPanel::renderScene() {
         statsPanel->setVertexCount(renderVertex_count);
         statsPanel->setDrawCalls(renderDraw_calls);
         statsPanel->setTriangleCount(localTriangles);
+        statsPanel->setTotalVertexCount(totalVertices);
+        statsPanel->setTotalDrawCalls(totalDrawCalls);
+        statsPanel->setTotalTriangleCount(totalTriangles);
     }
 }
 

@@ -12,6 +12,15 @@ void MeshRendererComponent::setMesh(const std::vector<glm::vec3>& vertices,
                                     const std::vector<glm::vec3>& normals,
                                     const std::vector<unsigned int>& indices) {
     mesh = std::make_shared<SimpleMesh>(vertices, normals, indices);
+    sourceVertices = vertices;
+    sourceNormals = normals;
+    sourceIndices = indices;
+    cachedVertexCount = static_cast<int>(vertices.size());
+    cachedTriangleCount = static_cast<int>(indices.size() / 3);
+}
+
+void MeshRendererComponent::releaseMesh() {
+    mesh.reset();
 }
 
 void MeshRendererComponent::render(Shader& shader) const {

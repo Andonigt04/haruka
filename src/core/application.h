@@ -56,10 +56,25 @@ public:
     RaycastSimple* getRaycastSystem() { return _raycastSystem.get(); }
 
     // Render quality/layers (global editor-configurable)
-    static void setRenderQualityPreset(int preset);
-    static int getRenderQualityPreset();
-    static void setLayerMaxDistance(int layer, float distance);
-    static float getLayerMaxDistance(int layer);
+    static void setRenderQualityPreset(int preset) { s_renderQualityPreset = std::clamp(preset, 0, 3); }
+    static int getRenderQualityPreset() { return s_renderQualityPreset; }
+    static void setLayerMaxDistance(int layer, float distance) {
+        if (layer < 1 || layer > 5) return;
+        s_layerMaxDistance[layer] = std::max(0.0f, distance);
+    }
+    static float getLayerMaxDistance(int layer) {
+        if (layer < 1 || layer > 5) return 0.0f;
+        return s_layerMaxDistance[layer];
+    }
+    static int getLastRenderedVertices() { return s_lastRenderedVertices; }
+    static int getLastRenderedTriangles() { return s_lastRenderedTriangles; }
+    static int getLastRenderedDrawCalls() { return s_lastRenderedDrawCalls; }
+    static int getLastTotalVertices() { return s_lastTotalVertices; }
+    static int getLastTotalTriangles() { return s_lastTotalTriangles; }
+    static int getLastTotalDrawCalls() { return s_lastTotalDrawCalls; }
+
+    CascadedShadowMap* getCascadedShadowMap() { return _cascadedShadow.get(); }
+    Shader* getCascadedShadowShader() { return _cascadeShadowShader.get(); }
     
     // Callbacks desde MotorInstance (cuando viewport cambia escena/cámara)
     void onSceneChanged(Haruka::Scene* scene) {
@@ -145,6 +160,7 @@ private:
     std::unique_ptr<Shader> _lightShader;
     std::unique_ptr<Shader> _compositeShader;
     std::unique_ptr<Shader> _flatShader;
+    std::unique_ptr<Shader> _cascadeShadowShader;
     
     // Timing
     float deltaTime = 0.0f;
@@ -155,8 +171,21 @@ private:
     unsigned int quadVBO = 0;
     void setupQuad();
 
-    static int s_renderQualityPreset; // 0=Low,1=Medium,2=High,3=Ultra
-    static float s_layerMaxDistance[6]; // layer 1..5
+    inline static int s_renderQualityPreset = 2; // 0=Low,1=Medium,2=High,3=Ultra
+    inline static float s_layerMaxDistance[6] = {
+        0.0f,
+        1.0e9f,  // layer 1: always
+        1200.0f, // layer 2: lowest details
+        3500.0f, // layer 3: medium details / clouds
+        900.0f,  // layer 4: buildings
+        300.0f   // layer 5: small props
+    };
+    inline static int s_lastRenderedVertices = 0;
+    inline static int s_lastRenderedTriangles = 0;
+    inline static int s_lastRenderedDrawCalls = 0;
+    inline static int s_lastTotalVertices = 0;
+    inline static int s_lastTotalTriangles = 0;
+    inline static int s_lastTotalDrawCalls = 0;
 };
 
 #endif

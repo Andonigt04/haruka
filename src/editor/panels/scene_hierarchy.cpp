@@ -163,30 +163,48 @@ void SceneHierarchyPanel::createPrimitive(const std::string& name, const std::st
     
     if (type == "cube") {
         PrimitiveShapes::createCube(1.0f, verts, norms, indices);
+        obj.properties["meshRenderer"]["meshType"] = "cube";
         obj.material = std::make_shared<Haruka::MaterialComponent>();
         obj.material->albedo = glm::vec3(0.8f, 0.8f, 0.8f);
     } else if (type == "sphere") {
         PrimitiveShapes::createSphere(1.0f, 32, 32, verts, norms, indices);
+        obj.properties["meshRenderer"]["meshType"] = "sphere";
+        obj.properties["meshRenderer"]["radius"] = 1.0f;
+        obj.properties["meshRenderer"]["segments"] = 32;
         obj.material = std::make_shared<Haruka::MaterialComponent>();
         obj.material->albedo = glm::vec3(0.5f, 0.7f, 0.5f);
     } else if (type == "capsule") {
         PrimitiveShapes::createCapsule(0.5f, 2.0f, 24, 16, verts, norms, indices);
+        obj.properties["meshRenderer"]["meshType"] = "capsule";
+        obj.properties["meshRenderer"]["radius"] = 0.5f;
+        obj.properties["meshRenderer"]["height"] = 2.0f;
+        obj.properties["meshRenderer"]["segments"] = 24;
+        obj.properties["meshRenderer"]["stacks"] = 16;
         obj.material = std::make_shared<Haruka::MaterialComponent>();
         obj.material->albedo = glm::vec3(0.65f, 0.65f, 0.68f);
         obj.color = glm::vec3(0.65f, 0.65f, 0.68f);
         obj.scale = glm::dvec3(0.00095f);
     } else if (type == "plane") {
         PrimitiveShapes::createPlane(2.0f, 2.0f, 10, verts, norms, indices);
+        obj.properties["meshRenderer"]["meshType"] = "plane";
+        obj.properties["meshRenderer"]["width"] = 2.0f;
+        obj.properties["meshRenderer"]["height"] = 2.0f;
+        obj.properties["meshRenderer"]["subdivisions"] = 10;
         obj.material = std::make_shared<Haruka::MaterialComponent>();
         obj.material->albedo = glm::vec3(0.7f, 0.7f, 0.7f);
     } else if (type == "light" || type == "pointlight") {
         PrimitiveShapes::createSphere(0.5f, 16, 16, verts, norms, indices);
+        obj.properties["meshRenderer"]["meshType"] = "sphere";
+        obj.properties["meshRenderer"]["radius"] = 0.5f;
+        obj.properties["meshRenderer"]["segments"] = 16;
         obj.material = std::make_shared<Haruka::MaterialComponent>();
         obj.material->albedo = glm::vec3(1.0f, 1.0f, 0.0f);
         obj.color = glm::vec3(1.0f, 1.0f, 0.8f);
         obj.intensity = 2.0f;
     } else if (type == "directionallight") {
         PrimitiveShapes::createCube(0.2f, verts, norms, indices);
+        obj.properties["meshRenderer"]["meshType"] = "cube";
+        obj.properties["meshRenderer"]["size"] = 0.2f;
         obj.material = std::make_shared<Haruka::MaterialComponent>();
         obj.material->albedo = glm::vec3(1.0f, 0.95f, 0.8f);
         obj.color = glm::vec3(1.0f, 0.95f, 0.8f);
@@ -198,6 +216,9 @@ void SceneHierarchyPanel::createPrimitive(const std::string& name, const std::st
         const double sunScale = kmToRender(sunRadiusKm) / baseMeshRadius;
         
         PrimitiveShapes::createSphere(1.0f, 32, 32, verts, norms, indices);
+        obj.properties["meshRenderer"]["meshType"] = "sphere";
+        obj.properties["meshRenderer"]["radius"] = 1.0f;
+        obj.properties["meshRenderer"]["segments"] = 32;
         obj.material = std::make_shared<Haruka::MaterialComponent>();
         obj.material->albedo = glm::vec3(1.0f, 0.95f, 0.75f);
         obj.color = glm::vec3(1.0f, 0.95f, 0.75f);
@@ -211,6 +232,9 @@ void SceneHierarchyPanel::createPrimitive(const std::string& name, const std::st
         const double planetScale = kmToRender(planetRadiusKm) / baseMeshRadius;
         
         PrimitiveShapes::createSphere(1.0f, 48, 48, verts, norms, indices);
+        obj.properties["meshRenderer"]["meshType"] = "sphere";
+        obj.properties["meshRenderer"]["radius"] = 1.0f;
+        obj.properties["meshRenderer"]["segments"] = 48;
         obj.material = std::make_shared<Haruka::MaterialComponent>();
         obj.material->albedo = glm::vec3(0.25f, 0.45f, 1.0f);
         obj.color = glm::vec3(0.25f, 0.45f, 1.0f);
@@ -362,10 +386,18 @@ void SceneHierarchyPanel::createChildObject(int parentIndex, const std::string& 
     std::vector<unsigned int> indices;
     if (primitiveType == "Sphere") {
         PrimitiveShapes::createSphere(1.0f, 24, 24, verts, norms, indices);
+        child.properties["meshRenderer"]["meshType"] = "sphere";
+        child.properties["meshRenderer"]["radius"] = 1.0f;
+        child.properties["meshRenderer"]["segments"] = 24;
     } else if (primitiveType == "Light") {
         PrimitiveShapes::createSphere(0.4f, 16, 16, verts, norms, indices);
+        child.properties["meshRenderer"]["meshType"] = "sphere";
+        child.properties["meshRenderer"]["radius"] = 0.4f;
+        child.properties["meshRenderer"]["segments"] = 16;
     } else {
         PrimitiveShapes::createCube(1.0f, verts, norms, indices);
+        child.properties["meshRenderer"]["meshType"] = "cube";
+        child.properties["meshRenderer"]["size"] = 1.0f;
     }
     child.meshRenderer->setMesh(verts, norms, indices);
     child.material = std::make_shared<Haruka::MaterialComponent>();

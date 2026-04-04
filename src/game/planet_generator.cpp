@@ -1,8 +1,12 @@
 #include "planet_generator.h"
 #include "noise_generator.h"
+#include <glad/glad.h>
 #include <glm/glm.hpp>
 #include <glm/gtc/constants.hpp>
 #include <algorithm>
+#include <filesystem>
+#include <fstream>
+#include <iostream>
 #include <limits>
 
 namespace Haruka {
@@ -15,6 +19,100 @@ float saturate(float v) {
 float smoothstep(float edge0, float edge1, float x) {
     float t = saturate((x - edge0) / (edge1 - edge0));
     return t * t * (3.0f - 2.0f * t);
+}
+
+bool readTextFile(const std::string& path, std::string& outText) {
+    std::ifstream in(path);
+    if (!in.is_open()) return false;
+    outText.assign((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    return true;
+}
+
+GLuint compileComputeProgram(const std::string& source) {
+    const char* src = source.c_str();
+    GLuint cs = glCreateShader(GL_COMPUTE_SHADER);
+    glShaderSource(cs, 1, &src, nullptr);
+    glCompileShader(cs);
+
+    GLint ok = GL_FALSE;
+    glGetShaderiv(cs, GL_COMPILE_STATUS, &ok);
+    if (!ok) {
+        GLchar log[2048] = {};
+        glGetShaderInfoLog(cs, sizeof(log), nullptr, log);
+        std::cerr << "[PlanetGenerator][GPU] Compute compile error: " << log << std::endl;
+        glDeleteShader(cs);
+        return 0;
+    }
+
+    GLuint prog = glCreateProgram();
+    glAttachShader(prog, cs);
+    glLinkProgram(prog);
+    glDeleteShader(cs);
+
+    glGetProgramiv(prog, GL_LINK_STATUS, &ok);
+    if (!ok) {
+        GLchar log[2048] = {};
+        glGetProgramInfoLog(prog, sizeof(log), nullptr, log);
+        std::cerr << "[PlanetGenerator][GPU] Program link error: " << log << std::endl;
+        glDeleteProgram(prog);
+        return 0;
+    }
+
+    return prog;
+}
+
+void buildBaseCubeSphere(
+    float radius,
+    int subdivisions,
+    std::vector<glm::vec3>& vertices,
+    std::vector<unsigned int>& indices
+) {
+    vertices.clear();
+    indices.clear();
+
+    const int gridSize = 1 << subdivisions;
+    const float step = 2.0f / static_cast<float>(gridSize);
+
+    struct FaceBasis {
+        glm::vec3 n;
+        glm::vec3 r;
+        glm::vec3 u;
+    };
+
+    const FaceBasis faces[6] = {
+        {glm::vec3( 1, 0, 0), glm::vec3( 0, 0,-1), glm::vec3(0,1,0)},
+        {glm::vec3(-1, 0, 0), glm::vec3( 0, 0, 1), glm::vec3(0,1,0)},
+        {glm::vec3( 0, 1, 0), glm::vec3( 1, 0, 0), glm::vec3(0,0,-1)},
+        {glm::vec3( 0,-1, 0), glm::vec3( 1, 0, 0), glm::vec3(0,0, 1)},
+        {glm::vec3( 0, 0, 1), glm::vec3( 1, 0, 0), glm::vec3(0,1,0)},
+        {glm::vec3( 0, 0,-1), glm::vec3(-1, 0, 0), glm::vec3(0,1,0)}
+    };
+
+    for (int f = 0; f < 6; ++f) {
+        const int vertexOffset = static_cast<int>(vertices.size());
+        const auto& fb = faces[f];
+
+        for (int i = 0; i <= gridSize; ++i) {
+            for (int j = 0; j <= gridSize; ++j) {
+                const float x = -1.0f + i * step;
+                const float y = -1.0f + j * step;
+                glm::vec3 cube = fb.n + fb.r * x + fb.u * y;
+                vertices.push_back(glm::normalize(cube) * radius);
+            }
+        }
+
+        const int stride = gridSize + 1;
+        for (int i = 0; i < gridSize; ++i) {
+            for (int j = 0; j < gridSize; ++j) {
+                const int a = vertexOffset + i * stride + j;
+                const int b = a + 1;
+                const int c = a + stride;
+                const int d = c + 1;
+                indices.push_back(a); indices.push_back(c); indices.push_back(b);
+                indices.push_back(b); indices.push_back(c); indices.push_back(d);
+            }
+        }
+    }
 }
 }
 
@@ -40,9 +138,13 @@ void PlanetGenerator::generateFace(
             glm::vec3 cubePos = faceNormal + right * u + up * v;
             glm::vec3 normalized = glm::normalize(cubePos);
 
-            // ---- Capa 1: continentes y océanos ----
+            // ---- Capa 1: base negativa global ----
+            float baseNegativeRatio = std::max(0.0f, config.baseNegativeDepthKm) / std::max(1.0f, config.baseRadiusKm);
+            float baseDelta = -baseNegativeRatio;
+
+            // ---- Capa 2: continentes y océanos ----
             float continentHeight = 0.0f;
-            float continentMask = 1.0f;
+            float continentMask = 0.0f;
             float coastMask = 1.0f;
             if (config.enableContinents) {
                 float wx = NoiseGenerator::fBm(normalized,
@@ -84,41 +186,48 @@ void PlanetGenerator::generateFace(
                 // Máscara de costa: cerca de costa reducimos amplitudes de macro/micro
                 coastMask = smoothstep(0.03f, 0.18f, std::abs(signedContinent));
 
-                // Tierra positiva y océano ligeramente hundido, sin romper la base esférica
+                // Tierra positiva y océano ligeramente hundido respecto a la base negativa.
+                // Continentes deben ser suaves: amplitud mucho más pequeña que las montañas.
                 float landPart = std::max(0.0f, signedContinent);
-                float oceanPart = std::min(0.0f, signedContinent) * 0.18f;
+                float oceanPart = std::min(0.0f, signedContinent) * 0.12f;
                 continentHeight = (landPart + oceanPart) * config.continentHeightStrength;
+                continentMask = smoothstep(-0.10f, 0.10f, signedContinent);
             }
 
-            // ---- Capa 2: montañas principales ----
-            float macro = NoiseGenerator::fBm(normalized,
-                                              config.seedMacro + faceSeedOffset,
-                                              config.octavesMacro,
-                                              config.persistence,
-                                              config.lacunarity,
-                                              config.macroFrequency);
-            float macro01 = (macro + 1.0f) * 0.5f;
-            float mountainMask = smoothstep(0.48f, 0.72f, macro01);
-            float mountainRidge = 1.0f - std::abs(2.0f * macro01 - 1.0f);
-            float macroHeight = mountainMask * mountainRidge * config.macroHeightStrength * (0.25f + 0.75f * continentMask) * coastMask;
+            // ---- Capa 3: montañas principales ----
+            float macroHeight = 0.0f;
+            float detailHeight = 0.0f;
+            if (config.enableMountains) {
+                float macro = NoiseGenerator::fBm(normalized,
+                                                  config.seedMacro + faceSeedOffset,
+                                                  config.octavesMacro,
+                                                  config.persistence,
+                                                  config.lacunarity,
+                                                  config.macroFrequency);
+                float macro01 = (macro + 1.0f) * 0.5f;
+                float mountainMask = smoothstep(0.48f, 0.72f, macro01);
+                float mountainRidge = 1.0f - std::abs(2.0f * macro01 - 1.0f);
+                // Montañas fuertes solo sobre tierra; en zonas de costa, su influencia baja.
+                float landInfluence = config.enableContinents ? (0.20f + 0.80f * continentMask) : 1.0f;
+                macroHeight = mountainMask * mountainRidge * config.macroHeightStrength * landInfluence * coastMask;
 
-            // ---- Capa 3: detalle fino de montañas ----
-            float detail = NoiseGenerator::fBm(normalized,
-                                               config.seedDetail + faceSeedOffset,
-                                               config.octavesDetail,
-                                               config.persistence,
-                                               config.lacunarity,
-                                               config.detailFrequency);
-            float detailSigned = detail * 0.5f + 0.5f;
-            float detailMask = smoothstep(0.35f, 0.80f, macro01);
-            float detailHeight = detailMask * detailSigned * config.detailHeightStrength * (0.4f + 0.6f * continentMask) * coastMask;
+                // ---- Capa 3: detalle fino de montañas ----
+                float detail = NoiseGenerator::fBm(normalized,
+                                                   config.seedDetail + faceSeedOffset,
+                                                   config.octavesDetail,
+                                                   config.persistence,
+                                                   config.lacunarity,
+                                                   config.detailFrequency);
+                float detailSigned = detail * 0.5f + 0.5f;
+                float detailMask = smoothstep(0.35f, 0.80f, macro01);
+                detailHeight = detailMask * detailSigned * config.detailHeightStrength * landInfluence * coastMask;
+            }
 
-            float totalDelta = continentHeight + macroHeight + detailHeight;
-            // Compresión muy suave para conservar definición sin picos extremos
-            totalDelta = std::tanh(totalDelta * 1.4f) / 1.4f;
+            float totalDelta = baseDelta + continentHeight + macroHeight + detailHeight;
 
-            // La esfera base (radio = 1.0) es el mínimo absoluto del terreno
-            float height = 1.0f + std::max(0.0f, totalDelta);
+            // La esfera base puede descender globalmente (nivel negativo para planetas genéricos)
+            float height = 1.0f + totalDelta;
+            height = std::max(0.2f, height);
 
             glm::vec3 vertex = normalized * config.radius * height;
             glm::vec3 normal = glm::normalize(vertex);
@@ -166,6 +275,8 @@ PlanetGenerator::PlanetData PlanetGenerator::generatePlanet(
     PlanetConfig cfg;
     cfg.radius = radius;
     cfg.subdivisions = subdivisions;
+    cfg.baseRadiusKm = 6371.0f;
+    cfg.baseNegativeDepthKm = 11.0f;
     cfg.seedBase = seed;
     cfg.seedContinents = seed + 100;
     cfg.seedMacro = seed + 200;
@@ -178,6 +289,21 @@ PlanetGenerator::PlanetData PlanetGenerator::generatePlanet(
 }
 
 PlanetGenerator::PlanetData PlanetGenerator::generatePlanet(const PlanetConfig& config) {
+    PlanetData resultData;
+    
+    // Intentar generar con GPU si está habilitado
+    if (config.useGPU) {
+        if (tryGeneratePlanetGPU(config, resultData)) {
+                std::cout << "[PlanetGenerator] GPU generation success: "
+                          << resultData.vertices.size() << " verts, "
+                          << (resultData.indices.size() / 3) << " tris" << std::endl;
+            return resultData;  // GPU generación exitosa
+        }
+            std::cout << "[PlanetGenerator] GPU generation failed, falling back to CPU." << std::endl;
+        // Si GPU falla, fallback a CPU (ver abajo)
+    }
+    
+    // Path CPU (fallback o si GPU está deshabilitada)
     PlanetData planet;
     planet.radius = config.radius;
     planet.minHeight = std::numeric_limits<float>::max();
@@ -218,6 +344,8 @@ PlanetGenerator::PlanetData PlanetGenerator::generatePlanet(const PlanetConfig& 
 
 PlanetGenerator::PlanetConfig PlanetGenerator::getPresetConfig(PlanetPreset preset) {
     PlanetConfig cfg;
+    cfg.baseRadiusKm = 6371.0f;
+    cfg.baseNegativeDepthKm = 11.0f;
 
     switch (preset) {
         case PlanetPreset::EARTH_LIKE:
@@ -256,6 +384,158 @@ PlanetGenerator::PlanetConfig PlanetGenerator::getPresetConfig(PlanetPreset pres
     }
 
     return cfg;
+}
+
+bool PlanetGenerator::tryGeneratePlanetGPU(const PlanetConfig& config, PlanetData& outData) {
+    // Requiere contexto GL válido
+    if (!glGetString(GL_VERSION)) {
+        std::cerr << "[PlanetGenerator][GPU] No GL context available." << std::endl;
+        return false;
+    }
+
+    // Construir malla base cube-sphere (sin deformación) y luego deformar en GPU
+    std::vector<glm::vec3> baseVertices;
+    std::vector<unsigned int> indices;
+    buildBaseCubeSphere(config.radius, config.subdivisions, baseVertices, indices);
+    if (baseVertices.empty() || indices.empty()) {
+        std::cerr << "[PlanetGenerator][GPU] Base cube-sphere generation failed." << std::endl;
+        return false;
+    }
+
+    std::string shaderCode;
+    const std::string shaderPathA = "shaders/planet_generation.comp";
+    const std::string shaderPathB = "src/renderer/shaders/planet_generation.comp";
+    if (!readTextFile(shaderPathA, shaderCode) && !readTextFile(shaderPathB, shaderCode)) {
+        std::cerr << "[PlanetGenerator][GPU] Compute shader not found." << std::endl;
+        return false;
+    }
+
+    GLuint program = compileComputeProgram(shaderCode);
+    if (!program) {
+        return false;
+    }
+
+    std::vector<glm::vec4> in(baseVertices.size());
+    std::vector<glm::vec4> out(baseVertices.size(), glm::vec4(0.0f));
+    std::vector<glm::vec4> outNormals(baseVertices.size(), glm::vec4(0.0f));
+    for (size_t i = 0; i < baseVertices.size(); ++i) {
+        in[i] = glm::vec4(baseVertices[i], 1.0f);
+    }
+
+    GLuint ssboIn = 0, ssboOut = 0, ssboNormals = 0;
+    glGenBuffers(1, &ssboIn);
+    glGenBuffers(1, &ssboOut);
+    glGenBuffers(1, &ssboNormals);
+
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboIn);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, in.size() * sizeof(glm::vec4), in.data(), GL_STATIC_DRAW);
+
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboOut);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, out.size() * sizeof(glm::vec4), out.data(), GL_DYNAMIC_READ);
+
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboNormals);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, outNormals.size() * sizeof(glm::vec4), outNormals.data(), GL_DYNAMIC_READ);
+
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, ssboIn);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, ssboOut);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, ssboNormals);
+
+    glUseProgram(program);
+    const GLint locSeaLevel = glGetUniformLocation(program, "u_seaLevel");
+    const GLint locLegacyRelief = glGetUniformLocation(program, "u_reliefAmplitude");
+    if (locSeaLevel < 0) {
+        std::cerr << "[PlanetGenerator][GPU] Incompatible compute shader uniforms detected";
+        if (locLegacyRelief >= 0) {
+            std::cerr << " (legacy shader loaded)";
+        }
+        std::cerr << ". Falling back to CPU." << std::endl;
+        glDeleteBuffers(1, &ssboIn);
+        glDeleteBuffers(1, &ssboOut);
+        glDeleteBuffers(1, &ssboNormals);
+        glDeleteProgram(program);
+        return false;
+    }
+
+    glUniform1i(glGetUniformLocation(program, "u_numVertices"), static_cast<int>(baseVertices.size()));
+    glUniform1f(locSeaLevel, config.seaLevel);
+    glUniform1f(glGetUniformLocation(program, "u_continentFrequency"), config.continentFrequency);
+    glUniform1f(glGetUniformLocation(program, "u_continentWarpStrength"), config.continentWarpStrength);
+    glUniform1f(glGetUniformLocation(program, "u_continentHeightStrength"), config.continentHeightStrength);
+    glUniform1i(glGetUniformLocation(program, "u_octavesContinents"), config.octavesContinents);
+    glUniform1f(glGetUniformLocation(program, "u_macroFrequency"), config.macroFrequency);
+    glUniform1f(glGetUniformLocation(program, "u_macroHeightStrength"), config.macroHeightStrength);
+    glUniform1i(glGetUniformLocation(program, "u_octavesMacro"), config.octavesMacro);
+    glUniform1f(glGetUniformLocation(program, "u_detailFrequency"), config.detailFrequency);
+    glUniform1f(glGetUniformLocation(program, "u_detailHeightStrength"), config.detailHeightStrength);
+    glUniform1i(glGetUniformLocation(program, "u_octavesDetail"), config.octavesDetail);
+    glUniform1f(glGetUniformLocation(program, "u_persistence"), config.persistence);
+    glUniform1f(glGetUniformLocation(program, "u_lacunarity"), config.lacunarity);
+    glUniform1i(glGetUniformLocation(program, "u_seedBase"), config.seedBase);
+    glUniform1i(glGetUniformLocation(program, "u_seedContinents"), config.seedContinents);
+    glUniform1i(glGetUniformLocation(program, "u_seedMacro"), config.seedMacro);
+    glUniform1i(glGetUniformLocation(program, "u_seedDetail"), config.seedDetail);
+    glUniform1f(glGetUniformLocation(program, "u_baseRadiusKm"), std::max(1.0f, config.baseRadiusKm));
+    glUniform1f(glGetUniformLocation(program, "u_baseNegativeDepthKm"), std::max(0.0f, config.baseNegativeDepthKm));
+    glUniform1i(glGetUniformLocation(program, "u_enableContinents"), config.enableContinents ? 1 : 0);
+    glUniform1i(glGetUniformLocation(program, "u_enableMountains"), config.enableMountains ? 1 : 0);
+
+    const GLuint localSize = 256;
+    const GLuint groups = static_cast<GLuint>((baseVertices.size() + localSize - 1) / localSize);
+    glDispatchCompute(groups, 1, 1);
+    glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_BUFFER_UPDATE_BARRIER_BIT);
+
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboOut);
+    if (out.size() > 0) {
+        glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, out.size() * sizeof(glm::vec4), out.data());
+    }
+
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboNormals);
+    if (outNormals.size() > 0) {
+        glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, outNormals.size() * sizeof(glm::vec4), outNormals.data());
+    }
+
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+
+    glDeleteBuffers(1, &ssboIn);
+    glDeleteBuffers(1, &ssboOut);
+    glDeleteBuffers(1, &ssboNormals);
+    glDeleteProgram(program);
+
+    outData.vertices.resize(out.size());
+    outData.normals.resize(outNormals.size());
+    outData.indices = std::move(indices);
+    outData.radius = config.radius;
+    outData.minHeight = std::numeric_limits<float>::max();
+    outData.maxHeight = std::numeric_limits<float>::lowest();
+
+    if (out.size() != outNormals.size()) {
+        std::cerr << "[PlanetGenerator][GPU] Size mismatch: vertices=" << out.size() << " normals=" << outNormals.size() << std::endl;
+        glDeleteBuffers(1, &ssboIn);
+        glDeleteBuffers(1, &ssboOut);
+        glDeleteBuffers(1, &ssboNormals);
+        glDeleteProgram(program);
+        return false;
+    }
+
+    for (size_t i = 0; i < out.size(); ++i) {
+        outData.vertices[i] = glm::vec3(out[i]);
+        glm::vec3 n = glm::vec3(outNormals[i]);
+        outData.normals[i] = glm::length(n) > 1e-6f ? glm::normalize(n) : glm::normalize(outData.vertices[i]);
+
+        float h = glm::length(outData.vertices[i]);
+        outData.minHeight = std::min(outData.minHeight, h);
+        outData.maxHeight = std::max(outData.maxHeight, h);
+    }
+
+    if (outData.vertices.empty() || outData.indices.empty()) {
+        return false;
+    }
+    if (outData.minHeight == std::numeric_limits<float>::max()) {
+        outData.minHeight = config.radius;
+        outData.maxHeight = config.radius;
+    }
+
+    return true;
 }
 
 }

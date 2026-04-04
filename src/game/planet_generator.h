@@ -20,6 +20,10 @@ public:
     struct PlanetConfig {
         float radius = 1.0f;
         int subdivisions = 4;
+        float baseRadiusKm = 6371.0f;
+
+        // Capa 1: base negativa global (descenso del planeta)
+        float baseNegativeDepthKm = 11.0f;
 
         // Seeds por capa
         int seedBase = 42;
@@ -29,20 +33,22 @@ public:
 
         // Switches globales
         bool enableContinents = true;
+        bool enableMountains = true;
+        bool useGPU = true;  // Generar en GPU si está disponible
 
         // Continentes / océanos
         float seaLevel = 0.52f;
         float continentFrequency = 1.2f;
         float continentWarpStrength = 0.15f;
-        float continentHeightStrength = 0.20f;
+        float continentHeightStrength = 0.06f;
 
         // Macro relieve (cordilleras/mesetas)
         float macroFrequency = 3.5f;
-        float macroHeightStrength = 0.12f;
+        float macroHeightStrength = 0.16f;
 
         // Micro detalle
         float detailFrequency = 12.0f;
-        float detailHeightStrength = 0.02f;
+        float detailHeightStrength = 0.035f;
 
         // Ruido
         int octavesContinents = 4;
@@ -81,6 +87,9 @@ public:
 
     static PlanetData generatePlanet(const PlanetConfig& config);
     static PlanetConfig getPresetConfig(PlanetPreset preset);
+
+    // Generación con compute shader (GPU)
+    static bool tryGeneratePlanetGPU(const PlanetConfig& config, PlanetData& outData);
 
 private:
     // Generar una cara del cubo

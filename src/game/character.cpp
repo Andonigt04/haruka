@@ -4,6 +4,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
 #include <iostream>
+#include <algorithm>
 #include <glm/gtx/quaternion.hpp>
 
 namespace Haruka {
@@ -16,13 +17,13 @@ glm::dvec3 safeNormalize(const glm::dvec3& v, const glm::dvec3& fallback) {
 }
 
 void buildSurfaceBasis(
-    const glm::dvec3& position,
+    const glm::dvec3& gravityUp,
     const glm::quat& cameraOrientation,
     glm::dvec3& outUp,
     glm::dvec3& outForward,
     glm::dvec3& outRight
 ) {
-    outUp = safeNormalize(position, glm::dvec3(0.0, 1.0, 0.0));
+    outUp = safeNormalize(gravityUp, glm::dvec3(0.0, 1.0, 0.0));
 
     glm::vec3 camForward3 = cameraOrientation * glm::vec3(0, 0, -1);
     glm::dvec3 camForward = glm::dvec3(camForward3);
@@ -47,6 +48,7 @@ Character::Character(const glm::dvec3& position, const std::string& userId)
     
     forward = glm::vec3(0, 0, -1);
     right = glm::vec3(1, 0, 0);
+    upDirection = safeNormalize(position, glm::dvec3(0.0, 1.0, 0.0));
     
     lastSyncPos = position;
     lastSyncRot = glm::vec3(yaw, pitch, 0);
@@ -105,7 +107,7 @@ void Character::processInput(GLFWwindow* window, float deltaTime) {
 
     glm::dvec3 up, surfaceForward, surfaceRight;
     glm::dquat camOrientation = camera ? camera->orientation : glm::dquat(1.0, 0.0, 0.0, 0.0);
-    buildSurfaceBasis(position, camOrientation, up, surfaceForward, surfaceRight);
+    buildSurfaceBasis(getEffectiveUp(), camOrientation, up, surfaceForward, surfaceRight);
     
     if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) {
         position += surfaceForward * (double)(speed * deltaTime);
@@ -160,8 +162,9 @@ void Character::rotate(float yawDelta, float pitchDelta) {
     
     yaw += yawDelta * mouseSensitivity;
     pitch += pitchDelta * mouseSensitivity;
-    
-    pitch = glm::clamp(pitch, -89.0f, 89.0f);
+
+    if (minPitch > maxPitch) std::swap(minPitch, maxPitch);
+    pitch = glm::clamp(pitch, minPitch, maxPitch);
     
     // Update forward/right vectors
     glm::vec3 direction;
@@ -175,8 +178,8 @@ void Character::rotate(float yawDelta, float pitchDelta) {
 
 void Character::updateCamera() {
     if (!camera) return;
-    
-    glm::dvec3 up = safeNormalize(position, glm::dvec3(0.0, 1.0, 0.0));
+
+    glm::dvec3 up = getEffectiveUp();
     glm::dvec3 cameraPos = position + up * (double)(currentHeight * 0.9f);
     camera->position = WorldPos(cameraPos.x, cameraPos.y, cameraPos.z);
 
@@ -204,6 +207,14 @@ void Character::updateCamera() {
     basis[1] = finalUp;
     basis[2] = -finalForward;
     camera->orientation = glm::normalize(glm::quat_cast(basis));
+}
+
+glm::dvec3 Character::getEffectiveUp() const {
+    glm::dvec3 up = safeNormalize(upDirection, glm::dvec3(0.0, 1.0, 0.0));
+    if (glm::length(up) < 1e-9) {
+        up = safeNormalize(position, glm::dvec3(0.0, 1.0, 0.0));
+    }
+    return up;
 }
 
 void Character::updateState() {

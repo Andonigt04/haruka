@@ -4,6 +4,7 @@
 #include <iostream>
 #include <cmath>
 #include <unordered_set>
+#include <unordered_map>
 #include <glm/gtc/matrix_transform.hpp>
 
 #include "renderer/mesh.h"
@@ -41,66 +42,136 @@ static MouseState g_mouseState;
 namespace {
 std::vector<Haruka::SceneObject> g_sceneRenderQueue;
 Haruka::Scene* g_sceneForRender = nullptr;
+std::unordered_map<std::string, std::shared_ptr<Model>> g_modelCache;
+
+bool isRenderDisabledByEditor(const Haruka::SceneObject& obj) {
+    if (!obj.properties.is_object()) return false;
+    if (!obj.properties.contains("terrainEditor")) return false;
+    const auto& te = obj.properties["terrainEditor"];
+    return te.value("disableRender", false);
+}
+
+void buildPrimitiveMeshFromProperties(Haruka::SceneObject& obj) {
+    if (!obj.meshRenderer) {
+        obj.meshRenderer = std::make_shared<MeshRendererComponent>();
+    }
+    if (!obj.meshRenderer || obj.meshRenderer->isResident()) return;
+    if (!obj.properties.contains("meshRenderer")) return;
+
+    const auto& mr = obj.properties["meshRenderer"];
+    std::string meshType = mr.value("meshType", "");
+    std::vector<glm::vec3> verts, norms;
+    std::vector<unsigned int> indices;
+
+    if (meshType == "cube") {
+        float size = mr.value("size", 1.0f);
+        PrimitiveShapes::createCube(size, verts, norms, indices);
+    } else if (meshType == "sphere") {
+        float radius = mr.value("radius", 1.0f);
+        int segments = mr.value("segments", 32);
+        PrimitiveShapes::createSphere(radius, segments, segments, verts, norms, indices);
+    } else if (meshType == "capsule") {
+        float radius = mr.value("radius", 0.5f);
+        float height = mr.value("height", 2.0f);
+        int segments = mr.value("segments", 24);
+        int stacks = mr.value("stacks", 16);
+        PrimitiveShapes::createCapsule(radius, height, segments, stacks, verts, norms, indices);
+    } else if (meshType == "plane") {
+        float width = mr.value("width", 2.0f);
+        float height = mr.value("height", 2.0f);
+        int subdivisions = mr.value("subdivisions", 10);
+        PrimitiveShapes::createPlane(width, height, subdivisions, verts, norms, indices);
+    }
+
+    if (!verts.empty()) {
+        obj.meshRenderer->setMesh(verts, norms, indices);
+    }
+}
+
+void maybeReleasePrimitiveMesh(Haruka::SceneObject& obj) {
+    if (obj.meshRenderer && obj.meshRenderer->isResident()) {
+        obj.meshRenderer->releaseMesh();
+    }
+}
+
+std::shared_ptr<Model> getOrLoadModel(const std::string& path) {
+    auto it = g_modelCache.find(path);
+    if (it != g_modelCache.end()) {
+        return it->second;
+    }
+
+    try {
+        auto model = std::make_shared<Model>(path);
+        g_modelCache[path] = model;
+        return model;
+    } catch (...) {
+        return nullptr;
+    }
+}
+
+void releaseModelFromCache(const std::string& path) {
+    g_modelCache.erase(path);
+}
 
 bool isSphereInsideCameraFrustum(
     const glm::dvec3& center,
     double radius,
-    const glm::dvec3& cameraPos,
-    const glm::dvec3& forward,
-    const glm::dvec3& right,
-    const glm::dvec3& up,
-    double fovYDegrees,
-    double aspect,
-    double nearPlane,
-    double farPlane
+    const glm::mat4& viewProj
 ) {
-    glm::dvec3 toObj = center - cameraPos;
-    double z = glm::dot(toObj, forward);
+    // Extracción de planos del frustum en espacio mundo desde VP
+    glm::vec4 planes[6];
 
-    if (z + radius < nearPlane) return false;
-    if (z - radius > farPlane) return false;
+    // left, right, bottom, top, near, far
+    planes[0] = glm::vec4(
+        viewProj[0][3] + viewProj[0][0],
+        viewProj[1][3] + viewProj[1][0],
+        viewProj[2][3] + viewProj[2][0],
+        viewProj[3][3] + viewProj[3][0]);
+    planes[1] = glm::vec4(
+        viewProj[0][3] - viewProj[0][0],
+        viewProj[1][3] - viewProj[1][0],
+        viewProj[2][3] - viewProj[2][0],
+        viewProj[3][3] - viewProj[3][0]);
+    planes[2] = glm::vec4(
+        viewProj[0][3] + viewProj[0][1],
+        viewProj[1][3] + viewProj[1][1],
+        viewProj[2][3] + viewProj[2][1],
+        viewProj[3][3] + viewProj[3][1]);
+    planes[3] = glm::vec4(
+        viewProj[0][3] - viewProj[0][1],
+        viewProj[1][3] - viewProj[1][1],
+        viewProj[2][3] - viewProj[2][1],
+        viewProj[3][3] - viewProj[3][1]);
+    planes[4] = glm::vec4(
+        viewProj[0][3] + viewProj[0][2],
+        viewProj[1][3] + viewProj[1][2],
+        viewProj[2][3] + viewProj[2][2],
+        viewProj[3][3] + viewProj[3][2]);
+    planes[5] = glm::vec4(
+        viewProj[0][3] - viewProj[0][2],
+        viewProj[1][3] - viewProj[1][2],
+        viewProj[2][3] - viewProj[2][2],
+        viewProj[3][3] - viewProj[3][2]);
 
-    double tanHalfY = std::tan(glm::radians(fovYDegrees) * 0.5);
-    double yLimit = z * tanHalfY;
-    double xLimit = yLimit * aspect;
+    glm::vec3 c = glm::vec3(center);
+    float r = static_cast<float>(radius);
 
-    double x = glm::dot(toObj, right);
-    double y = glm::dot(toObj, up);
+    for (int i = 0; i < 6; ++i) {
+        glm::vec3 n(planes[i].x, planes[i].y, planes[i].z);
+        float len = glm::length(n);
+        if (len < 1e-6f) continue;
 
-    if (std::abs(x) > xLimit + radius) return false;
-    if (std::abs(y) > yLimit + radius) return false;
+        n /= len;
+        float d = planes[i].w / len;
+        float dist = glm::dot(n, c) + d;
+        if (dist < -r) {
+            return false;
+        }
+    }
 
     return true;
 }
 
-}
-
-int Application::s_renderQualityPreset = 2;
-float Application::s_layerMaxDistance[6] = {
-    0.0f,
-    1.0e9f,  // layer 1: always
-    1200.0f, // layer 2: lowest details
-    3500.0f, // layer 3: medium details / clouds
-    900.0f,  // layer 4: buildings
-    300.0f   // layer 5: small props
-};
-
-void Application::setRenderQualityPreset(int preset) {
-    s_renderQualityPreset = std::clamp(preset, 0, 3);
-}
-
-int Application::getRenderQualityPreset() {
-    return s_renderQualityPreset;
-}
-
-void Application::setLayerMaxDistance(int layer, float distance) {
-    if (layer < 1 || layer > 5) return;
-    s_layerMaxDistance[layer] = std::max(0.0f, distance);
-}
-
-float Application::getLayerMaxDistance(int layer) {
-    if (layer < 1 || layer > 5) return 0.0f;
-    return s_layerMaxDistance[layer];
 }
 
 Application::Application() : _window(nullptr) {}
@@ -261,7 +332,7 @@ void Application::init(Haruka::Scene& scene) {
 
     // Inicializar Cascaded Shadow Maps
     _cascadedShadow = std::make_unique<CascadedShadowMap>();
-    _cascadedShadow->init(0.1f, 100.0f, 0.5f);  // zNear, zFar, lambda
+    _cascadedShadow->init(0.1f, 300000000.0f, 0.75f);  // zNear, zFar, lambda
 
     // Inicializar Virtual Texturing
     _virtualTexturing = std::make_unique<VirtualTexturing>();
@@ -299,6 +370,7 @@ void Application::init(Haruka::Scene& scene) {
     _lightShader = std::make_unique<Shader>("shaders/screenquad.vert", "shaders/deferred_light.frag");
     _compositeShader = std::make_unique<Shader>("shaders/screenquad.vert", "shaders/bloom_composite.frag");
     _flatShader = std::make_unique<Shader>("shaders/simple.vert", "shaders/light_cube.frag");
+    _cascadeShadowShader = std::make_unique<Shader>("shaders/shadow.vert", "shaders/shadow.frag");
 }
 
 void Application::renderScene(Shader* shader) {
@@ -318,38 +390,67 @@ void Application::renderScene(Shader* shader) {
     }
 
     const double nearPlane = 0.0001;
-    const double farPlane = 50000.0;
+    const double farPlane = 300000000.0;
     const double aspect = (_height > 0) ? static_cast<double>(_width) / static_cast<double>(_height) : (16.0 / 9.0);
 
     glm::dvec3 camPos(0.0);
-    glm::dvec3 camForward(0.0, 0.0, -1.0);
-    glm::dvec3 camUp(0.0, 1.0, 0.0);
-    glm::dvec3 camRight(1.0, 0.0, 0.0);
+    glm::mat4 viewProj(1.0f);
     bool canCullByFrustum = false;
 
     if (activeCamera) {
         camPos = glm::dvec3(activeCamera->position);
-        camForward = glm::normalize(glm::dvec3(activeCamera->getFront()));
-        camUp = glm::normalize(glm::dvec3(activeCamera->getUp()));
-        camRight = glm::normalize(glm::cross(camForward, camUp));
-        if (glm::length(camRight) > 1e-9) {
-            canCullByFrustum = true;
-        }
+        glm::mat4 proj = glm::perspective(glm::radians(activeCamera->zoom), static_cast<float>(aspect), static_cast<float>(nearPlane), static_cast<float>(farPlane));
+        glm::mat4 view = activeCamera->getViewMatrix();
+        viewProj = proj * view;
+        canCullByFrustum = true;
     }
 
-    for (const auto& obj : scene->getObjects()) {
+    for (auto& obj : scene->getObjectsMutable()) {
+        if (isRenderDisabledByEditor(obj)) continue;
         Haruka::ObjectType objType = Haruka::stringToObjectType(obj.type);
         if (!Haruka::isRenderableObjectType(objType)) continue;
 
+        int layer = std::clamp(obj.renderLayer, 1, 5);
+        glm::dvec3 worldPos = obj.getWorldPosition(scene);
+        glm::dvec3 worldScale = obj.getWorldScale(scene);
+        double maxScale = std::max(std::abs(worldScale.x), std::max(std::abs(worldScale.y), std::abs(worldScale.z)));
+        const bool isHugeBody = (maxScale > 1000.0) || (obj.name == "Earth") || (obj.name == "Sun");
+
+        // Cuerpos gigantes (Earth/Sun) nunca se descargan ni se reconstruyen
+        if (!isHugeBody) {
+            double unloadDistance = static_cast<double>(s_layerMaxDistance[layer]);
+            double loadDistance = unloadDistance * 0.85;
+
+            if (layer >= 4 && obj.meshRenderer) {
+                double dist = glm::length(worldPos - camPos);
+                if (dist > unloadDistance * 1.15) {
+                    maybeReleasePrimitiveMesh(obj);
+                } else if (!obj.meshRenderer->isResident() && dist < loadDistance) {
+                    buildPrimitiveMeshFromProperties(obj);
+                }
+            }
+
+            if (layer >= 4 && !obj.modelPath.empty()) {
+                double dist = glm::length(worldPos - camPos);
+                if (dist > unloadDistance * 1.15) {
+                    releaseModelFromCache(obj.modelPath);
+                }
+            }
+        }
+
+        // Cuerpos gigantes siempre se renderizan sin culling
+        if (isHugeBody) {
+            g_sceneRenderQueue.push_back(obj);
+            continue;
+        }
+
+        // Para objetos normales, aplicar culling por frustum y distancia
         if (canCullByFrustum) {
-            glm::dvec3 worldPos = obj.getWorldPosition(scene);
-            glm::dvec3 worldScale = obj.getWorldScale(scene);
-            double radius = 0.5 * glm::length(worldScale);
+            double radius = std::max(0.5 * glm::length(worldScale), maxScale);
             if (radius < 0.001) {
                 radius = 0.5;
             }
 
-            int layer = std::clamp(obj.renderLayer, 1, 5);
             if (layer != 1) {
                 static const double qualityMul[4] = {0.45, 0.70, 1.00, 1.35};
                 double dist = glm::length(worldPos - camPos);
@@ -362,19 +463,54 @@ void Application::renderScene(Shader* shader) {
             if (!isSphereInsideCameraFrustum(
                     worldPos,
                     radius,
-                    camPos,
-                    camForward,
-                    camRight,
-                    camUp,
-                    static_cast<double>(activeCamera->zoom),
-                    aspect,
-                    nearPlane,
-                    farPlane)) {
+                    viewProj)) {
                 continue;
             }
         }
 
         g_sceneRenderQueue.push_back(obj);
+    }
+
+    // Contadores de total vs renderizado real
+    s_lastTotalVertices = 0;
+    s_lastTotalTriangles = 0;
+    s_lastTotalDrawCalls = 0;
+    for (const auto& obj : scene->getObjects()) {
+        if (isRenderDisabledByEditor(obj)) continue;
+        Haruka::ObjectType objType = Haruka::stringToObjectType(obj.type);
+        if (!Haruka::isRenderableObjectType(objType)) continue;
+        if (obj.meshRenderer) {
+            s_lastTotalDrawCalls++;
+            s_lastTotalVertices += obj.meshRenderer->getVertexCount();
+            s_lastTotalTriangles += obj.meshRenderer->getTriangleCount();
+        } else if (!obj.modelPath.empty()) {
+            try {
+                auto model = getOrLoadModel(obj.modelPath);
+                if (!model) continue;
+                s_lastTotalDrawCalls++;
+                s_lastTotalVertices += model->getVertexCount();
+                s_lastTotalTriangles += model->getTriangleCount();
+            } catch (...) {}
+        }
+    }
+
+    s_lastRenderedVertices = 0;
+    s_lastRenderedTriangles = 0;
+    s_lastRenderedDrawCalls = 0;
+    for (const auto& obj : g_sceneRenderQueue) {
+        if (obj.meshRenderer && obj.meshRenderer->isResident()) {
+            s_lastRenderedDrawCalls++;
+            s_lastRenderedVertices += obj.meshRenderer->getResidentVertexCount();
+            s_lastRenderedTriangles += obj.meshRenderer->getResidentTriangleCount();
+        } else if (!obj.modelPath.empty()) {
+            try {
+                auto model = getOrLoadModel(obj.modelPath);
+                if (!model) continue;
+                s_lastRenderedDrawCalls++;
+                s_lastRenderedVertices += model->getVertexCount();
+                s_lastRenderedTriangles += model->getTriangleCount();
+            } catch (...) {}
+        }
     }
 }
 
@@ -406,7 +542,7 @@ void Application::renderFrameContent() {
     }
     if (!activeCamera) return;
 
-    glm::mat4 proj = glm::perspective(glm::radians(activeCamera->zoom), (float)_width / (float)_height, 0.0001f, 50000.0f);
+    glm::mat4 proj = glm::perspective(glm::radians(activeCamera->zoom), (float)_width / (float)_height, 0.0001f, 300000000.0f);
     glm::mat4 view = activeCamera->getViewMatrix();
 
     // ========== EDITOR MODE (Viewport) ==========
@@ -449,14 +585,14 @@ void Application::renderFrameContent() {
             float emission = isLightObj ? std::max((float)obj.intensity, 0.0f) : 1.0f;
             glm::vec3 c = isLightObj ? (baseColor * emission) : baseColor;
             _flatShader->setVec3("lightColor", c);
-            if (obj.meshRenderer) {
+            if (obj.meshRenderer && obj.meshRenderer->isResident()) {
                 obj.meshRenderer->render(*_flatShader);
                 continue;
             }
             if (!obj.modelPath.empty()) {
                 try {
-                    Model model(obj.modelPath);
-                    model.Draw(*_flatShader);
+                    auto model = getOrLoadModel(obj.modelPath);
+                    if (model) model->Draw(*_flatShader);
                 } catch (...) {
                     // Ignorar en fallback
                 }
@@ -475,17 +611,86 @@ void Application::renderFrameContent() {
     
     // Actualizar posición de cámara
     AssetStreamer::getInstance().updateCameraPosition(activeCamera->position);
+    Haruka::Scene* shadowScene = MotorInstance::getInstance().getScene();
+    if (!shadowScene) shadowScene = _currentScene.get();
     
     // Actualizar cascadas de sombra
     glm::vec3 lightDir = glm::normalize(glm::vec3(1.0f, 1.0f, 1.0f));
+    if (shadowScene) {
+        for (const auto& obj : shadowScene->getObjects()) {
+            if (obj.type == "Light" || obj.type == "DirectionalLight") {
+                glm::vec3 sunPos = glm::vec3(obj.getWorldPosition(shadowScene));
+                if (glm::length(sunPos) > 1e-6f) {
+                    lightDir = glm::normalize(-sunPos);
+                }
+                break;
+            }
+        }
+    }
+    glm::vec3 camForward = activeCamera->getFront();
+    glm::vec3 camUp = activeCamera->getUp();
     _cascadedShadow->updateCascades(
         lightDir,
         activeCamera->position,
-        glm::vec3(0.0f, 0.0f, -1.0f),
+        camForward,
+        camUp,
+        (float)_width / (float)_height,
         0.0001f,
-        50000.0f,
+        300000000.0f,
         75.0f
     );
+
+    if (_cascadedShadow && _cascadeShadowShader && shadowScene) {
+        glEnable(GL_DEPTH_TEST);
+        glEnable(GL_CULL_FACE);
+        glCullFace(GL_FRONT);
+        glEnable(GL_POLYGON_OFFSET_FILL);
+        glPolygonOffset(1.5f, 4.0f);
+
+        _cascadeShadowShader->use();
+        for (int cascade = 0; cascade < _cascadedShadow->getNumCascades(); ++cascade) {
+            _cascadedShadow->bindForWriting(cascade);
+            glClear(GL_DEPTH_BUFFER_BIT);
+
+            _cascadeShadowShader->setMat4("lightSpaceMatrix", _cascadedShadow->getCascadeMatrix(cascade));
+
+            for (const auto& obj : shadowScene->getObjects()) {
+                if (isRenderDisabledByEditor(obj)) continue;
+                glm::mat4 modelMatrix = obj.getWorldTransform(shadowScene);
+                _cascadeShadowShader->setMat4("model", modelMatrix);
+
+                if (obj.meshRenderer && obj.meshRenderer->isResident()) {
+                    obj.meshRenderer->render(*_cascadeShadowShader);
+                } else if (!obj.modelPath.empty()) {
+                    auto model = getOrLoadModel(obj.modelPath);
+                    if (model) model->Draw(*_cascadeShadowShader);
+                }
+            }
+
+            if (_worldSystem) {
+                for (const auto& body : _worldSystem->getBodies()) {
+                    if (!body.visible) continue;
+                    if (shadowScene && shadowScene->getObject(body.name)) continue;
+                    int lod = 0;
+                    glm::vec3 camPos(activeCamera->position.x, activeCamera->position.y, activeCamera->position.z);
+                    glm::vec3 bodyPos(body.localPos.x, body.localPos.y, body.localPos.z);
+                    float distance = glm::length(camPos - bodyPos);
+                    lod = distance < 50.0f ? 0 : distance < 200.0f ? 1 : distance < 1000.0f ? 2 : 3;
+                    if (!sphereLOD[lod]) continue;
+
+                    glm::mat4 bodyModel = glm::translate(glm::mat4(1.0f), glm::vec3(body.localPos));
+                    bodyModel = glm::scale(bodyModel, glm::vec3(body.radius));
+                    _cascadeShadowShader->setMat4("model", bodyModel);
+                    sphereLOD[lod]->draw();
+                }
+            }
+        }
+
+        glCullFace(GL_BACK);
+        glDisable(GL_POLYGON_OFFSET_FILL);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        glViewport(0, 0, _width, _height);
+    }
     
     // Procesar feedback de virtual texturing
     if (_virtualTexturing) {
@@ -516,17 +721,15 @@ void Application::renderFrameContent() {
             _geomShader->setFloat("material.roughness", obj.material->roughness);
             _geomShader->setFloat("material.metallic", obj.material->metallic);
         }
-        if (obj.meshRenderer) {
-            std::cout << "[Motor] Dibujando meshRenderer para objeto: " << obj.name << std::endl;
+        if (obj.meshRenderer && obj.meshRenderer->isResident()) {
             obj.meshRenderer->render(*_geomShader);
             drawCount++;
             continue;
         }
         if (!obj.modelPath.empty()) {
             try {
-                std::cout << "[Motor] Dibujando modelo: " << obj.modelPath << std::endl;
-                Model model(obj.modelPath);
-                model.Draw(*_geomShader);
+                auto model = getOrLoadModel(obj.modelPath);
+                if (model) model->Draw(*_geomShader);
                 drawCount++;
             } catch (const std::exception& e) {
                 HARUKA_MOTOR_ERROR(
@@ -537,11 +740,10 @@ void Application::renderFrameContent() {
             continue;
         }
     }
-    std::cout << "[Motor] Objetos dibujados en geometry pass: " << drawCount << std::endl;
-
     // Render celestial bodies with LOD
     for (const auto& body : _worldSystem->getBodies()) {
         if (!body.visible) continue;
+        if (g_sceneForRender && g_sceneForRender->getObject(body.name)) continue;
 
         glm::vec3 camPos(activeCamera->position.x, activeCamera->position.y, activeCamera->position.z);
         glm::vec3 bodyPos(body.localPos.x, body.localPos.y, body.localPos.z);
@@ -604,6 +806,16 @@ void Application::renderFrameContent() {
     _lightShader->setInt("prefilterMap", 5);
     _lightShader->setInt("brdfLUT", 6);
     _lightShader->setVec3("viewPos", activeCamera->position);
+    _lightShader->setMat4("view", view);
+    _lightShader->setInt("numCascades", _cascadedShadow ? _cascadedShadow->getNumCascades() : 0);
+    if (_cascadedShadow) {
+        for (int i = 0; i < _cascadedShadow->getNumCascades(); ++i) {
+            _lightShader->setMat4("cascadeLightSpaceMatrices[" + std::to_string(i) + "]", _cascadedShadow->getCascadeMatrix(i));
+            _lightShader->setFloat("cascadeSplits[" + std::to_string(i) + "]", _cascadedShadow->getCascadeInfo(i).zFar);
+            _cascadedShadow->bindForReading(i, 7 + i);
+            _lightShader->setInt("cascadeShadowMaps[" + std::to_string(i) + "]", 7 + i);
+        }
+    }
 
     // Light culling
     Haruka::Scene* scene = MotorInstance::getInstance().getScene();
@@ -613,9 +825,7 @@ void Application::renderFrameContent() {
     auto culledLights = _lightCuller->cullLights(scene, view, proj, MAX_LIGHTS);
     
     _lightShader->setInt("numLights", culledLights.size());
-    std::cout << "[Motor] Luces enviadas a lighting pass: " << culledLights.size() << std::endl;
     for (size_t i = 0; i < culledLights.size(); i++) {
-        std::cout << "[Motor] Luz " << i << ": Pos " << culledLights[i].position.x << "," << culledLights[i].position.y << "," << culledLights[i].position.z << " Color " << culledLights[i].color.x << "," << culledLights[i].color.y << "," << culledLights[i].color.z << std::endl;
         _lightShader->setVec3("lights[" + std::to_string(i) + "].position", culledLights[i].position);
         _lightShader->setVec3("lights[" + std::to_string(i) + "].color", culledLights[i].color);
     }
