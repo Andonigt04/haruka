@@ -11,6 +11,7 @@ namespace Haruka {
 
 class Character;
 
+/** @brief Spawn point categories used by the gameplay system. */
 enum class SpawnType {
     PLAYER_START,      // Inicio de jugador nuevo
     PLAYER_RESPAWN,    // Respawn tras muerte
@@ -20,6 +21,7 @@ enum class SpawnType {
     CHECKPOINT         // Puntos de control
 };
 
+/** @brief Serialized spawn point definition. */
 struct SpawnPoint {
     std::string id;
     SpawnType type;
@@ -34,6 +36,7 @@ struct SpawnPoint {
     uint64_t lastSpawn;
 };
 
+/** @brief Respawn queue entry and timer state. */
 struct RespawnData {
     std::string userId;
     std::string characterId;
@@ -44,38 +47,52 @@ struct RespawnData {
     bool canRespawn;
 };
 
+/**
+ * @brief Manages spawn points, respawn timers, and checkpoints.
+ */
 class SpawnSystem {
 public:
+    /** @brief Constructs an empty spawn system. */
     SpawnSystem();
+    /** @brief Releases spawn system resources. */
     ~SpawnSystem();
     
-    // Spawn points
+    /** @name Spawn-point management */
+    ///@{
     void registerSpawnPoint(const SpawnPoint& point);
     void removeSpawnPoint(const std::string& id);
     SpawnPoint* getSpawnPoint(const std::string& id);
     std::vector<SpawnPoint> getSpawnPointsByType(SpawnType type, const std::string& zoneId = "");
+    ///@}
     
-    // Player spawn
+    /** @name Player spawn helpers */
+    ///@{
     glm::dvec3 getPlayerSpawnPosition(const std::string& userId, const std::string& zoneId);
     glm::dvec3 getRandomSpawnPosition(SpawnType type, const std::string& zoneId);
+    ///@}
     
-    // Respawn
+    /** @name Respawn lifecycle */
+    ///@{
     void registerPlayerDeath(const std::string& userId, const glm::dvec3& position, const std::string& zoneId);
     bool canPlayerRespawn(const std::string& userId);
     glm::dvec3 getRespawnPosition(const std::string& userId);
     void respawnPlayer(const std::string& userId);
+    ///@}
     
-    // Checkpoint system
+    /** @name Checkpoint system */
+    ///@{
     void setPlayerCheckpoint(const std::string& userId, const std::string& checkpointId);
     std::string getPlayerCheckpoint(const std::string& userId);
+    ///@}
     
-    // Update
+    /** @brief Advances respawn timers and internal state. */
     void update(float deltaTime);
     
-    // Callbacks
+    /** @brief Sets spawn callback. */
     void setSpawnCallback(std::function<void(const std::string&, const glm::dvec3&)> cb) {
         spawnCallback = cb;
     }
+    /** @brief Sets respawn callback. */
     void setRespawnCallback(std::function<void(const std::string&)> cb) {
         respawnCallback = cb;
     }
@@ -90,7 +107,9 @@ private:
     
     int defaultRespawnTime = 5; // segundos
     
+    /** @brief Picks a random point within a radius. */
     glm::dvec3 getRandomPositionInRadius(const glm::dvec3& center, float radius);
+    /** @brief Chooses the best spawn point for the requested type/zone. */
     SpawnPoint* findBestSpawnPoint(SpawnType type, const std::string& zoneId);
 };
 

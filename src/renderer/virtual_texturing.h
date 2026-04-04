@@ -20,23 +20,22 @@ namespace std {
 }
 
 /**
- * VirtualTexturing - Texturas ilimitadas con page-based streaming
- * 
- * Sistema de texturas virtual:
- * - Page-based virtual memory
- * - Feedback buffer para tracking de accesos
- * - Sparse texture (resident only loaded pages)
- * - Indirection texture (UV mapping)
- * 
- * Impacto: -80% VRAM, texturas ilimitadas
+ * @brief Page-based virtual texturing system.
+ *
+ * Features:
+ * - page-based virtual memory
+ * - feedback buffer for access tracking
+ * - sparse physical residency
+ * - indirection texture for UV remapping
  */
 
 struct PageRequest {
-    glm::uvec2 page;      // Coordenada de página
-    int mipLevel;         // Nivel mip
-    float priority;       // Prioridad de carga
+    glm::uvec2 page;      // Page coordinate
+    int mipLevel;         // Mip level
+    float priority;       // Load priority
 };
 
+/** @brief Virtual texturing configuration parameters. */
 struct VTConfig {
     int pageSize = 128;
     int maxPageTableSize = 8192;
@@ -48,19 +47,18 @@ struct VTConfig {
 
 class VirtualTexturing {
 public:
+    /** @brief Constructs an uninitialized virtual texturing system. */
     VirtualTexturing();
     ~VirtualTexturing();
 
-    /**
-     * Inicializar virtual texturing
-     */
+    /** @brief Initializes the system and allocates core GPU resources. */
     void init(const VTConfig& config = VTConfig());
 
     /**
-     * Agregar texture virtual
-     * @param textureId ID único
-     * @param filePath Ruta al archivo
-     * @param virtualSize Tamaño virtual en pixeles (ej: 8192x8192)
+     * @brief Registers a virtual texture asset.
+     * @param textureId Unique identifier.
+     * @param filePath Source file path.
+     * @param virtualSize Virtual resolution in pixels.
      */
     void addVirtualTexture(
         const std::string& textureId,
@@ -68,30 +66,19 @@ public:
         glm::uvec2 virtualSize
     );
 
-    /**
-     * Procesar feedback buffer
-     * Llamar después de renderizar para actualizar páginas
-     */
+    /** @brief Processes feedback data and updates page residency. */
     void processFeedback();
 
-    /**
-     * Bindear virtual texture para rendering
-     */
+    /** @brief Binds a virtual texture for shader sampling. */
     void bindVirtualTexture(GLuint shaderProgram, const std::string& textureId);
 
-    /**
-     * Obtener indirection texture (UV → página)
-     */
+    /** @brief Returns the indirection texture id for the requested VT. */
     GLuint getIndirectionTexture(const std::string& textureId) const;
 
-    /**
-     * Obtener physical texture (páginas cargadas)
-     */
+    /** @brief Returns the physical residency texture id for the requested VT. */
     GLuint getPhysicalTexture(const std::string& textureId) const;
 
-    /**
-     * Estadísticas
-     */
+    /** @brief Virtual texturing runtime stats. */
     struct VTStats {
         int totalVirtualPages;
         int residentPages;
@@ -110,11 +97,11 @@ private:
         glm::uvec2 virtualSize;
         glm::uvec2 pageTableSize;
         
-        GLuint indirectionTexture = 0;  // Mapa de UV → página
-        GLuint physicalTexture = 0;     // Texturas cargadas
+        GLuint indirectionTexture = 0;  // UV → page map
+        GLuint physicalTexture = 0;     // Loaded physical texture
         GLuint feedbackTexture = 0;     // Feedback buffer
         
-        std::vector<GLuint> pageData;   // Datos de páginas
+        std::vector<GLuint> pageData;   // Page data
         std::queue<PageRequest> pageQueue;
         std::unordered_map<glm::uvec2, bool> residentPages;
         
@@ -131,9 +118,14 @@ private:
     size_t totalMemoryUsage = 0;
     std::queue<PageRequest> globalPageQueue;
 
+    /** @brief Creates GPU-side resources for a virtual texture. */
     void createVirtualTextureGPUResources(VirtualTextureData& vt);
+    /** @brief Loads one physical page from source media. */
     void loadPhysicalPage(VirtualTextureData& vt, const PageRequest& request);
+    /** @brief Uploads a page into the physical texture atlas. */
     void uploadPageToPhysical(VirtualTextureData& vt, const PageRequest& request);
+    /** @brief Refreshes the indirection texture after residency updates. */
     void updateIndirectionTexture(VirtualTextureData& vt);
+    /** @brief Ensures memory budget remains within configured limits. */
     void makeRoomInCache(size_t neededBytes);
 };

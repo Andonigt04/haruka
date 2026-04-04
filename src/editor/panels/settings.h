@@ -6,8 +6,10 @@
 
 class SettingsPanel {
 public:
+    /** @brief Constructs settings panel with default values. */
     SettingsPanel() = default;
     
+    /** @brief Draws the settings UI. */
     void onImGuiRender();
     
     // Graphics
@@ -33,7 +35,9 @@ public:
     std::string projectName;
     std::string projectPath;
     
+    /** @brief Saves settings to persistent storage. */
     void save();
+    /** @brief Loads settings from persistent storage. */
     void load();
 
 private:

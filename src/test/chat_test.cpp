@@ -1,4 +1,5 @@
 #include <iostream>
+#include <iostream>
 #include <thread>
 #include <string>
 #include <cstring>
@@ -7,6 +8,7 @@
 #include <arpa/inet.h>
 #include <unistd.h>
 
+// Standalone UDP chat connectivity test used for quick local validation.
 class UDPChatClient {
 public:
     UDPChatClient(int localPort, int remotePort, const std::string& name)

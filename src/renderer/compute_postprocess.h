@@ -6,22 +6,14 @@
 #include <string>
 
 /**
- * ComputePostProcess - Post-processing basado en compute shaders
- * 
- * Ventajas:
- * - +20% más rápido que fragment shaders
- * - Mejor paralelización en GPU
- * - Cache coherence mejorada
- * - SSBO para datos
- * 
- * Operaciones soportadas:
- * - Bloom extraction + blur
- * - Tone mapping (ACES, Reinhard)
- * - Color grading
+ * @brief Compute-shader based post-processing pipeline.
+ *
+ * Supports bloom, tone mapping, and color grading passes using SSBO-backed compute workloads.
  */
 
 class ComputePostProcess {
 public:
+    /** @brief Tone mapping operators supported by the pipeline. */
     enum ToneMapMode {
         TONE_LINEAR,
         TONE_REINHARD,
@@ -29,23 +21,19 @@ public:
         TONE_FILMIC
     };
 
+    /** @brief Constructs an uninitialized post-process pipeline. */
     ComputePostProcess();
+    /** @brief Releases post-process GPU resources. */
     ~ComputePostProcess();
 
     /**
-     * Inicializar post-processing
-     * @param width Screen width
-     * @param height Screen height
+     * @brief Initializes the compute post-processing pipeline.
+     * @param width Screen width.
+     * @param height Screen height.
      */
     void init(int width, int height);
 
-    /**
-     * Aplicar bloom usando compute shader
-     * @param inputTexture Texture HDR de entrada
-     * @param outputTexture Texture para bloom
-     * @param threshold Threshold para bloom
-     * @param strength Intensidad del bloom
-     */
+    /** @brief Applies bloom extraction/blur using compute shaders. */
     void bloomCompute(
         GLuint inputTexture,
         GLuint outputTexture,
@@ -53,13 +41,7 @@ public:
         float strength = 1.0f
     );
 
-    /**
-     * Aplicar tone mapping
-     * @param inputTexture Texture HDR
-     * @param outputTexture Texture LDR (final)
-     * @param exposure Exposición
-     * @param mode Modo de tone mapping
-     */
+    /** @brief Applies tone mapping to an HDR input texture. */
     void toneMappingCompute(
         GLuint inputTexture,
         GLuint outputTexture,
@@ -67,14 +49,7 @@ public:
         ToneMapMode mode = TONE_ACES
     );
 
-    /**
-     * Aplicar color grading
-     * @param inputTexture Texture de entrada
-     * @param outputTexture Texture de salida
-     * @param saturation Saturación (0.0-2.0)
-     * @param contrast Contraste (0.0-2.0)
-     * @param brightness Brillo (-1.0-1.0)
-     */
+    /** @brief Applies color grading to a texture. */
     void colorGradingCompute(
         GLuint inputTexture,
         GLuint outputTexture,
@@ -83,9 +58,7 @@ public:
         float brightness = 0.0f
     );
 
-    /**
-     * Aplicar todos los post-effects
-     */
+    /** @brief Runs the full post-processing chain. */
     void processAll(
         GLuint inputTexture,
         GLuint outputTexture,
@@ -98,9 +71,7 @@ public:
         float brightness = 0.0f
     );
 
-    /**
-     * Obtener estadísticas
-     */
+    /** @brief Compute pipeline statistics snapshot. */
     struct ComputeStats {
         int dispatchWidth;
         int dispatchHeight;
@@ -108,6 +79,7 @@ public:
         float estimatedSpeedup;  // vs fragment shader
     };
 
+    /** @brief Returns the current compute pipeline statistics. */
     ComputeStats getStats() const { return stats; }
 
 private:
@@ -121,6 +93,8 @@ private:
 
     ComputeStats stats;
 
+    /** @brief Compiles one compute shader source into a program. */
     GLuint compileComputeShader(const std::string& source);
+    /** @brief Dispatches a compute shader over the given dimensions. */
     void dispatchCompute(GLuint shader, int width, int height);
 };

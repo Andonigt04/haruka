@@ -4,19 +4,29 @@
 #include <vector>
 #include <deque>
 
+/** @brief Real-time rendering and frame statistics panel. */
 class StatsPanel {
 public:
+    /** @brief Constructs a statistics panel. */
     StatsPanel();
     
+    /** @brief Draws the stats UI. */
     void onImGuiRender();
+    /** @brief Updates frame timing state. */
     void update(float deltaTime);
     
+    /** @brief Sets last rendered vertex count. */
     void setVertexCount(int count) { renderedVertexCount = count; }
+    /** @brief Sets last rendered draw call count. */
     void setDrawCalls(int count) { renderedDrawCalls = count; }
+    /** @brief Sets last rendered triangle count. */
     void setTriangleCount(int count) { renderedTriangleCount = count; }
 
+    /** @brief Sets total vertex count. */
     void setTotalVertexCount(int count) { totalVertexCount = count; }
+    /** @brief Sets total draw call count. */
     void setTotalDrawCalls(int count) { totalDrawCalls = count; }
+    /** @brief Sets total triangle count. */
     void setTotalTriangleCount(int count) { totalTriangleCount = count; }
 
 private:

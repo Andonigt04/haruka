@@ -6,17 +6,22 @@
 class EditorApplication;
 
 /**
- * ExportPanel - Panel para exportar juegos
- * Permite configurar metadatos y opciones de export
+ * @brief Game export configuration panel.
  */
 class ExportPanel {
 public:
+    /** @brief Constructs hidden export panel state. */
     ExportPanel();
+    /** @brief Releases export panel resources. */
     ~ExportPanel();
     
+    /** @brief Renders the export UI. */
     void render(EditorApplication* editorApp);
+    /** @brief Shows the panel. */
     void show() { visible = true; }
+    /** @brief Hides the panel. */
     void hide() { visible = false; }
+    /** @brief Returns visibility state. */
     bool isVisible() const { return visible; }
 
 private:
@@ -42,8 +47,12 @@ private:
     std::string exportStatus;
     bool exportStatusError = false;
     
+    /** @brief Loads project export settings into the UI. */
     void loadProjectSettings(EditorApplication* editorApp);
+    /** @brief Saves UI settings back into the project. */
     void saveProjectSettings(EditorApplication* editorApp);
+    /** @brief Validates the current export configuration. */
     bool validateSettings() const;
+    /** @brief Performs the actual export workflow. */
     void performExport(EditorApplication* editorApp);
 };

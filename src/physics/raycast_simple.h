@@ -7,14 +7,12 @@
 #include <vector>
 
 /**
- * RaycastSimple - Raycast simple para detección de altura
- * 
- * Sistema simple y eficiente para:
- * - Raycast ray-triangle
- * - Detección de altura del terreno
- * - Sin overhead innecesario
+ * @brief Lightweight ray-triangle raycasting utility.
+ *
+ * Intended for terrain height queries and simple collision tests with minimal overhead.
  */
 
+/** @brief Raycast hit result. */
 struct RaycastHit {
     bool hit = false;
     float distance = 0.0f;
@@ -23,33 +21,33 @@ struct RaycastHit {
     int triangleIndex = -1;
 };
 
+/** @brief Triangle data cached for ray intersection tests. */
 struct RaycastTriangle {
     glm::vec3 v0, v1, v2;
     glm::vec3 normal;
 };
 
+/** @brief Simple mesh raycaster for terrain/scene queries. */
 class RaycastSimple {
 public:
+    /** @brief Constructs an empty raycaster. */
     RaycastSimple() = default;
+    /** @brief Releases raycaster resources. */
     ~RaycastSimple() = default;
 
     /**
-     * Agregar malla para raycast
+     * @brief Adds one mesh to the raycast acceleration set.
      */
     void addMesh(const std::string& id, 
                  const std::vector<glm::vec3>& vertices,
                  const std::vector<unsigned int>& indices);
 
-    /**
-     * Raycast simple
-     */
+    /** @brief Casts a ray and returns the closest hit. */
     RaycastHit raycast(const glm::vec3& origin, 
                        const glm::vec3& direction,
                        float maxDistance = 1000.0f);
 
-    /**
-     * Raycast hacia abajo (detectar altura del terreno)
-     */
+    /** @brief Convenience downward raycast for ground-height queries. */
     RaycastHit raycastDown(const glm::vec3& position, float maxDistance = 1000.0f) {
         return raycast(position, glm::vec3(0.0f, -1.0f, 0.0f), maxDistance);
     }
@@ -57,6 +55,7 @@ public:
 private:
     std::vector<RaycastTriangle> triangles;
 
+    /** @brief Tests one ray against one triangle. */
     bool rayTriangleIntersect(const glm::vec3& rayOrigin,
                               const glm::vec3& rayDir,
                               const RaycastTriangle& tri,

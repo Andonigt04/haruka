@@ -7,13 +7,13 @@
 #include "mesh_optimizer.h"
 
 /**
- * MeshLOD - Sistema de Level of Detail para meshes
- * 
- * Automáticamente renderiza versiones simplificadas
- * según la distancia a la cámara
+ * @brief Mesh level-of-detail manager.
+ *
+ * Generates and renders simplified mesh variants based on camera distance.
  */
 class MeshLOD {
 public:
+    /** @brief Per-LOD mesh buffer and range description. */
     struct LODLevel {
         std::vector<Vertex> vertices;
         std::vector<unsigned int> indices;
@@ -24,14 +24,16 @@ public:
         GLuint EBO = 0;
     };
 
+    /** @brief Constructs an empty LOD manager. */
     MeshLOD();
+    /** @brief Releases generated LOD resources. */
     ~MeshLOD();
 
     /**
-     * Generar LOD levels automáticamente
-     * @param vertices Vértices originales
-     * @param indices Índices originales
-     * @param distances Distancias para cada LOD {0-10m, 10-30m, 30-100m, 100m+}
+     * @brief Generates LOD levels from source mesh buffers.
+     * @param vertices Source vertices.
+     * @param indices Source indices.
+     * @param distances Split distances per LOD level.
      */
     void generateLODs(
         const std::vector<Vertex>& vertices,
@@ -39,19 +41,13 @@ public:
         const std::vector<float>& distances = {10.0f, 30.0f, 100.0f}
     );
 
-    /**
-     * Obtener LOD apropiado según distancia
-     */
+    /** @brief Returns the best LOD index for a given distance. */
     int selectLOD(float distance) const;
 
-    /**
-     * Renderizar mesh con LOD apropiado
-     */
+    /** @brief Renders the mesh using the selected LOD level. */
     void render(float distance);
 
-    /**
-     * Obtener estadísticas de LOD
-     */
+    /** @brief Statistics for generated LOD levels. */
     struct LODStats {
         int totalLODLevels;
         int totalVertices;
@@ -59,11 +55,13 @@ public:
         float memoryReduction;
     };
 
+    /** @brief Returns current LOD statistics. */
     LODStats getStats() const;
 
 private:
     std::vector<LODLevel> lodLevels;
     MeshOptimizer optimizer;
 
+    /** @brief Allocates OpenGL buffers for one LOD level. */
     void setupGL(LODLevel& level);
 };

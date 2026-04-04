@@ -1,7 +1,11 @@
 #ifndef SIMPLE_MESH_H
 #define SIMPLE_MESH_H
 
-// SimpleMesh is now an alias for Mesh for backward compatibility
+/**
+ * @brief Backward-compatibility alias.
+ *
+ * Legacy code can continue using `SimpleMesh` while implementation lives in `Mesh`.
+ */
 #include "mesh.h"
 using SimpleMesh = Mesh;
 

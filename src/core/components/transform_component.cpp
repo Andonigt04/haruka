@@ -3,6 +3,7 @@
 
 namespace Haruka {
 
+// Editor de transform con controles escalares por componente.
 void TransformComponent::renderInspector() {
     ImGui::InputDouble("Position X", &position.x);
     ImGui::InputDouble("Position Y", &position.y);

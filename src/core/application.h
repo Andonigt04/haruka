@@ -33,27 +33,28 @@
 class MotorInstance;
 
 /**
- * Application - Motor de Haruka Engine
- * 
- * Responsabilidades:
- * - Inicializar sistemas de renderizado
- * - Renderizar un frame de la escena actual
- * - Mantener cámara y estado global
- * 
- * NO es responsable de:
- * - Crear/gestionar ventana (viewport del editor es la ventana)
- * - Procesar input (viewport maneja input)
- * - UI (viewport maneja ImGui)
+ * @brief Haruka runtime application orchestrator.
+ *
+ * Responsibilities:
+ * - initialize render/scene systems
+ * - render frames for the active scene
+ * - maintain camera and global render state
+ *
+ * Non-responsibilities:
+ * - window creation/ownership in editor-driven embedding mode
+ * - high-level editor UI orchestration
  */
 class Application {
 public:
     Application();
     ~Application();
     
-    // Getters
+    /** @name Accessors */
+    ///@{
     Camera* getCamera() { return _camera.get(); }
     Haruka::Scene* getCurrentScene() { return _currentScene.get(); }
     RaycastSimple* getRaycastSystem() { return _raycastSystem.get(); }
+    ///@}
 
     // Render quality/layers (global editor-configurable)
     static void setRenderQualityPreset(int preset) { s_renderQualityPreset = std::clamp(preset, 0, 3); }
@@ -76,7 +77,10 @@ public:
     CascadedShadowMap* getCascadedShadowMap() { return _cascadedShadow.get(); }
     Shader* getCascadedShadowShader() { return _cascadeShadowShader.get(); }
     
-    // Callbacks desde MotorInstance (cuando viewport cambia escena/cámara)
+    /**
+     * @brief Callback invoked by `MotorInstance` when active scene changes.
+     * @note Performs internal copy into owned scene storage.
+     */
     void onSceneChanged(Haruka::Scene* scene) {
         if (!scene) {
             _currentScene.reset();
@@ -84,6 +88,10 @@ public:
         }
         _currentScene = std::make_unique<Haruka::Scene>(*scene);
     }
+    /**
+     * @brief Callback invoked by `MotorInstance` when viewport camera changes.
+     * @note Copies camera state into local owned camera instance.
+     */
     void onCameraChanged(Camera* cam) {
         if (!cam) {
             _camera.reset();
@@ -96,23 +104,23 @@ public:
         _camera->sensitivity = cam->sensitivity;
     }
 
-    // inicia el producto final
+    /** @brief Starts runtime using a scene path bootstrap. */
     void run(const std::string& startScenePath);
-    // inicia todo lo esencial - sobrecargado para recibir escena
+    /** @brief Initializes systems from a scene instance. */
     void init(Haruka::Scene& scene);
-    // crea la ventana
+    /** @brief Creates runtime window resources (when applicable). */
     void create_window();
-    // carga escena
+    /** @brief Loads scene data from disk path. */
     void loadScene(const std::string& scenePath);
-    // renderiza escena
+    /** @brief Renders current scene using optional override shader. */
     void renderScene(Shader* shader = nullptr);
-    // renderiza
+    /** @brief Runs main loop until shutdown. */
     void main_loop();
-    // renderiza UN frame (con deltaTime)
+    /** @brief Renders one frame and updates timing state. */
     void renderFrame();
-    // renderiza contenido del frame (lógica pura)
+    /** @brief Frame rendering body (logic-only path). */
     void renderFrameContent();
-    // remueve todo para poder cerrar programa
+    /** @brief Releases allocated runtime resources. */
     void cleanup();
 
 private:
@@ -151,10 +159,10 @@ private:
     std::unique_ptr<RenderTarget> _lightingTarget;
     std::unique_ptr<RenderTarget> _bloomExtractTarget;
     
-    // Primitives (LOD spheres para cuerpos celestes)
+    // Primitives (LOD spheres for celestial bodies)
     std::unique_ptr<SimpleMesh> sphereLOD[4];
     
-    // Shaders (cached para no recrear cada frame)
+    // Shaders (cached to avoid recreation every frame)
     std::unique_ptr<Shader> _geomShader;
     std::unique_ptr<Shader> _ssaoShader;
     std::unique_ptr<Shader> _lightShader;
@@ -166,7 +174,7 @@ private:
     float deltaTime = 0.0f;
     float lastFrame = 0.0f;
     
-    // Screen quad para post-processing
+    // Screen quad for post-processing
     unsigned int quadVAO = 0;
     unsigned int quadVBO = 0;
     void setupQuad();

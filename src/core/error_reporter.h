@@ -6,15 +6,12 @@
 #include <chrono>
 
 /**
- * ErrorReporter - Sistema de reporte de errores estructurado
- * 
- * Identifica:
- * - Componente que falló (Motor, Editor, Gameplay, Network, Renderer)
- * - Código de error específico
- * - Descripción detallada
- * - Stack trace opcional
+ * @brief Structured error reporting utility.
+ *
+ * Captures subsystem, code, message, source location, and optional trace data.
  */
 
+/** @brief Engine subsystem that produced an error. */
 enum class ErrorComponent {
     MOTOR = 0,           // Core engine
     EDITOR = 1,          // Editor IDE
@@ -29,6 +26,7 @@ enum class ErrorComponent {
     UNKNOWN = 255
 };
 
+/** @brief Stable numeric error code range grouped by subsystem. */
 enum class ErrorCode {
     // Motor/Core (000-099)
     MOTOR_INIT_FAILED = 0,
@@ -96,6 +94,7 @@ enum class ErrorCode {
     UNKNOWN_ERROR = 9999
 };
 
+/** @brief Serialized error payload used by `ErrorReporter`. */
 struct ErrorInfo {
     ErrorComponent component;
     ErrorCode code;
@@ -106,11 +105,17 @@ struct ErrorInfo {
     std::string timestamp;
     std::string stackTrace;
 
+    /** @brief Formats the error as a human-readable string. */
     std::string toString() const;
+    /** @brief Returns the component name string. */
     std::string getComponentName() const;
+    /** @brief Returns the error code name string. */
     std::string getErrorName() const;
 };
 
+/**
+ * @brief Singleton error reporter with stderr logging.
+ */
 class ErrorReporter {
 public:
     static ErrorReporter& getInstance() {
@@ -118,9 +123,7 @@ public:
         return instance;
     }
 
-    /**
-     * Reportar un error
-     */
+    /** @brief Reports an error and stores it as the last error. */
     static void report(
         ErrorComponent component,
         ErrorCode code,
@@ -141,21 +144,15 @@ public:
         getInstance().logError(error);
     }
 
-    /**
-     * Obtener último error
-     */
+    /** @brief Returns the last reported error snapshot. */
     ErrorInfo getLastError() const { return lastError; }
 
-    /**
-     * Limpiar estado de error
-     */
+    /** @brief Clears the last error snapshot. */
     void clearError() {
         lastError = {};
     }
 
-    /**
-     * ¿Hay error pendiente?
-     */
+    /** @brief Returns true when an error is currently stored. */
     bool hasError() const { return lastError.code != ErrorCode::UNKNOWN_ERROR; }
 
 private:
@@ -183,7 +180,7 @@ private:
     }
 };
 
-// Macros para fácil uso
+    // Convenience macros for source-location capture
 #define HARUKA_ERROR(component, code, message) \
     ErrorReporter::report(component, code, message, __FILE__, __LINE__, __FUNCTION__)
 

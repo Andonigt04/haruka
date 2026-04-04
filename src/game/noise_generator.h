@@ -5,29 +5,28 @@
 namespace Haruka {
 
 /**
- * @brief Generador de ruido Perlin simplex con semilla
- * Crea ruido determinista basado en semilla para terreno procedural
+ * @brief Deterministic 3D noise helper for procedural terrain generation.
  */
 class NoiseGenerator {
 public:
     /**
-     * @brief Generar ruido Perlin en una posición 3D
-     * @param pos Posición del espacio 3D
-     * @param seed Semilla para determinismo
-     * @param scale Escala del ruido
-     * @return Valor entre -1 y 1
+     * @brief Evaluates deterministic 3D Perlin-style noise.
+     * @param pos Sample position in 3D space.
+     * @param seed Deterministic seed.
+     * @param scale Frequency/scale factor.
+     * @return Noise value in the range [-1, 1].
      */
     static float perlin3D(const glm::vec3& pos, int seed = 0, float scale = 1.0f);
     
     /**
-     * @brief Ruido Perlin multi-octava (Fractal Brownian Motion)
-     * @param pos Posición
-     * @param seed Semilla
-     * @param octaves Número de capas
-     * @param persistence Cuánto aporta cada octava (0-1)
-     * @param lacunarity Multiplicador de frecuencia entre octavas
-     * @param scale Escala base
-     * @return Valor entre -1 y 1
+     * @brief Fractal Brownian Motion using layered noise octaves.
+     * @param pos Sample position.
+     * @param seed Deterministic seed.
+     * @param octaves Number of octaves.
+     * @param persistence Amplitude decay per octave.
+     * @param lacunarity Frequency multiplier per octave.
+     * @param scale Base frequency/scale.
+     * @return Noise value in the range [-1, 1].
      */
     static float fBm(
         const glm::vec3& pos,

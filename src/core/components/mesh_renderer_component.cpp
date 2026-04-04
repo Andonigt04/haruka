@@ -8,6 +8,7 @@ MeshRendererComponent::MeshRendererComponent()
 
 MeshRendererComponent::~MeshRendererComponent() = default;
 
+// Actualiza tanto recurso residente como copia fuente en CPU.
 void MeshRendererComponent::setMesh(const std::vector<glm::vec3>& vertices,
                                     const std::vector<glm::vec3>& normals,
                                     const std::vector<unsigned int>& indices) {
@@ -19,16 +20,19 @@ void MeshRendererComponent::setMesh(const std::vector<glm::vec3>& vertices,
     cachedTriangleCount = static_cast<int>(indices.size() / 3);
 }
 
+// Libera sólo el recurso de malla residente.
 void MeshRendererComponent::releaseMesh() {
     mesh.reset();
 }
 
+// Dibuja únicamente cuando existe malla válida.
 void MeshRendererComponent::render(Shader& shader) const {
     if (mesh) {
         mesh->draw();
     }
 }
 
+// Herramientas editor-only para inspección/edición de rutas asociadas.
 void MeshRendererComponent::renderInspector() {
     ImGui::Text("Mesh Renderer");
     char meshBuffer[128] = {};

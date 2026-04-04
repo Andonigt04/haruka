@@ -7,17 +7,15 @@
 #include <glad/glad.h>
 
 /**
- * GPUInstancing - Renderizado eficiente con DOUBLE PRECISION
- * 
- * Soporta:
- * - Double precision (glm::dmat4) para sistema astronómico
- * - Single precision fallback
- * - SSBO para flexibilidad y precisión
- * 
- * Impacto: +30-40% FPS en escenas grandes
+ * @brief Efficient GPU instancing helper with double-precision support.
+ *
+ * Supports:
+ * - double precision path for astronomical-scale scenes
+ * - single precision fallback
+ * - SSBO-backed instance buffers
  */
 
-// InstanceData con DOUBLE PRECISION para astronomía
+/** @brief Double-precision instance payload. */
 struct InstanceDataDouble {
     glm::dmat4 model;          // Matriz de transformación (double)
     glm::dvec3 position;       // Posición (double) 
@@ -27,7 +25,7 @@ struct InstanceDataDouble {
     float _pad2;               // Padding para alineación 256-byte
 };
 
-// InstanceData con SINGLE PRECISION (fallback)
+/** @brief Single-precision instance payload fallback. */
 struct InstanceDataFloat {
     glm::mat4 model;           // Matriz de transformación
     glm::vec4 color;           // Color RGBA
@@ -37,23 +35,20 @@ struct InstanceDataFloat {
 
 class GPUInstancing {
 public:
+    /** @brief Precision mode used by the instancer. */
     enum PrecisionMode {
         PRECISION_DOUBLE = 0,   // Para astronomía (double 64-bit)
         PRECISION_FLOAT = 1     // Para otras cosas (float 32-bit)
     };
 
+    /** @brief Constructs instancing helper with chosen precision mode. */
     GPUInstancing(PrecisionMode mode = PRECISION_DOUBLE);
     ~GPUInstancing();
 
-    /**
-     * Crear buffer de instancias
-     * @param maxInstances Máximo número de instancias
-     */
+    /** @brief Allocates instance buffers for the given capacity. */
     void init(int maxInstances = 10000);
 
-    /**
-     * Agregar instancia con double precision
-     */
+    /** @brief Adds one double-precision instance. */
     void addInstanceDouble(
         const glm::dvec3& position,
         const glm::vec3& scale = glm::vec3(1.0f),
@@ -61,9 +56,7 @@ public:
         const glm::dvec3& rotation = glm::dvec3(0.0)
     );
 
-    /**
-     * Agregar instancia con float precision
-     */
+    /** @brief Adds one single-precision instance. */
     void addInstanceFloat(
         const glm::vec3& position,
         const glm::vec3& scale = glm::vec3(1.0f),
@@ -71,31 +64,24 @@ public:
         const glm::vec3& rotation = glm::vec3(0.0f)
     );
 
-    /**
-     * Actualizar instancias (después de agregar todas)
-     */
+    /** @brief Uploads pending instance data to GPU buffers. */
     void updateBuffer();
 
-    /**
-     * Renderizar instancias
-     * @param VAO Vertex array object del mesh base
-     * @param indexCount Número de índices del mesh
-     */
+    /** @brief Renders all queued instances with the provided base mesh. */
     void render(GLuint VAO, GLuint indexCount);
 
-    /**
-     * Limpiar instancias
-     */
+    /** @brief Clears all instance data and marks buffers dirty. */
     void clear();
 
-    /**
-     * Obtener estadísticas
-     */
+    /** @brief Returns total queued instances. */
     int getInstanceCount() const { return instancesDouble.size() + instancesFloat.size(); }
+    /** @brief Returns configured max instance capacity. */
     int getMaxInstances() const { return maxInstances; }
+    /** @brief Returns a coarse count-based reduction factor. */
     float getReductionFactor() const {
         return static_cast<float>(getInstanceCount());
     }
+    /** @brief Returns the active precision mode. */
     PrecisionMode getPrecisionMode() const { return precisionMode; }
 
 private:
@@ -109,17 +95,20 @@ private:
     int maxInstances = 0;
     bool bufferDirty = false;
 
+    /** @brief Builds a model matrix using double precision. */
     glm::dmat4 createModelMatrixDouble(
         const glm::dvec3& pos,
         const glm::vec3& scale,
         const glm::dvec3& rotation
     ) const;
 
+    /** @brief Builds a model matrix using float precision. */
     glm::mat4 createModelMatrixFloat(
         const glm::vec3& pos,
         const glm::vec3& scale,
         const glm::vec3& rotation
     ) const;
 
+    /** @brief Configures VAO/VBO layout for instanced rendering. */
     void setupInstanceBuffer();
 };

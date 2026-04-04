@@ -9,7 +9,9 @@
 
 struct CelestialBody
 {
+    /** @brief High-precision world-space position. */
     Haruka::WorldPos worldPos;
+    /** @brief Camera-relative/local position cache. */
     Haruka::LocalPos localPos;
     glm::vec3 velocity;
     float radius;
@@ -23,31 +25,41 @@ struct CelestialBody
 
 namespace Haruka {
 
+/**
+ * @brief Manages celestial body storage, origin shifting, and culling metadata.
+ */
 class WorldSystem {
 public:
     WorldSystem();
     ~WorldSystem();
 
-    // Coordinate conversion
+    /** @brief Converts world-space position into local-space relative to reference. */
     static Haruka::LocalPos toLocal(Haruka::WorldPos objectPos, Haruka::WorldPos referencePos);
 
-    // Origin management
+    /** @brief Updates world origin anchor. */
     void updateOrigin(Haruka::WorldPos newOrigin);
+    /** @brief Recomputes local positions for all registered bodies. */
     void updateLocalPositions(Haruka::WorldPos cameraWorldPos);
 
-    // Object management
+    /** @brief Adds a celestial body copy to internal storage. */
     void addBody(const CelestialBody& body);
+    /** @brief Removes celestial body by name if present. */
     void removeBody(const std::string& name);
+    /** @brief Finds body by name and returns mutable non-owning pointer. */
     CelestialBody* findBody(const std::string& name);
 
-    // Getters
+    /** @name Accessors */
+    ///@{
     const std::vector<CelestialBody>& getBodies() const;
     size_t getBodyCount() const;
     Haruka::WorldPos getOrigin() const;
+    ///@}
 
-    // Culling & LOD
+    /** @brief Initializes compute resources for culling path. */
     void initComputeShaders();
+    /** @brief Sets LOD transition distances. */
     void setLODDistances(float lod0, float lod1, float lod2, float lod3);
+    /** @brief Executes frustum culling update for registered bodies. */
     void frustumCull(Haruka::WorldPos cameraPos, const glm::mat4& viewProj, float frustumDistance);
 
 private:

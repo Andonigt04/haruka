@@ -13,7 +13,12 @@ class Shader {
 public:
     unsigned int ID;
 
-    // El constructor lee y construye el shader
+    /**
+     * @brief Builds a shader program from vertex/fragment paths.
+     * @param vertexPath Vertex shader source path.
+     * @param fragmentPath Fragment shader source path.
+     * @param geometryPath Optional geometry shader source path.
+     */
     Shader(const char* vertexPath, const char* fragmentPath, const char* geometryPath = nullptr)
     {
         std::string vertexCode;
@@ -101,12 +106,13 @@ public:
             glDeleteShader(geometry);
     }
 
-    // Activa el shader
+    /** @brief Binds the program for subsequent draw calls. */
     void use() { 
         glUseProgram(ID); 
     }
 
-    // utility uniform functions
+    /** @name Uniform helpers */
+    ///@{
     // ------------------------------------------------------------------------
     void setBool(const std::string &name, bool value)
     {
@@ -164,9 +170,9 @@ public:
     {
         glUniformMatrix4fv(glGetUniformLocation(ID, name.c_str()), 1, GL_FALSE, &mat[0][0]);
     }
+    ///@}
 private:
-    // utility function for checking shader compilation/linking errors.
-    // ------------------------------------------------------------------------
+    /** @brief Reports compile/link diagnostics to stdout. */
     void checkCompileErrors(GLuint shader, std::string type)
     {
         GLint success;

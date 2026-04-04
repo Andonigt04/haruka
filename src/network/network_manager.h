@@ -9,15 +9,17 @@
 
 namespace Haruka {
 
+/** @brief Enumeration of supported server roles in the network stack. */
 enum class ServerType {
-    HEADMASTER,      // Persistencia + coordinación central
-    CLUSTER_MANAGER, // Organiza y distribuye zonas
-    WEB_AUTH,        // Carga perfiles de usuarios web
-    ANTICHEAT,       // Verificación de comportamiento
-    COMMS,           // Comunicaciones cliente <-> headmaster
-    ZONE             // Servidor de zona individual
+    HEADMASTER,      // Persistence + central coordination
+    CLUSTER_MANAGER, // Zone organization and distribution
+    WEB_AUTH,        // Loads web user profiles
+    ANTICHEAT,       // Behavior verification
+    COMMS,           // Client <-> headmaster communications
+    ZONE             // Individual zone server
 };
 
+/** @brief Persisted player profile and live session metadata. */
 struct PlayerData {
     std::string userId;
     std::string username;
@@ -30,6 +32,7 @@ struct PlayerData {
     bool authenticated;
 };
 
+/** @brief Zone allocation and load balancing metadata. */
 struct ZoneInfo {
     std::string zoneId;
     std::string address;
@@ -42,6 +45,7 @@ struct ZoneInfo {
     double radius;
 };
 
+/** @brief Describes a registered server instance. */
 struct ServerInfo {
     std::string serverId;
     ServerType type;
@@ -50,6 +54,7 @@ struct ServerInfo {
     bool active;
 };
 
+/** @brief Generic network payload envelope. */
 struct NetworkMessage {
     std::string messageType;
     std::string senderId;
@@ -58,18 +63,29 @@ struct NetworkMessage {
     uint64_t timestamp;
 };
 
+/**
+ * @brief Client-side network façade for player and chat communication.
+ */
 class NetworkClient {
 public:
+    /** @brief Constructs a disconnected client. */
     NetworkClient();
     ~NetworkClient();
     
+    /** @brief Opens a client connection to a server endpoint. */
     bool connect(const std::string& serverAddr, int port);
+    /** @brief Closes the current connection. */
     void disconnect();
+    /** @brief Returns true when client is connected. */
     bool isConnected() const { return connected; }
     
+    /** @brief Sends player state payload to server. */
     void sendPlayerData(const PlayerData& data);
+    /** @brief Sends position/rotation update payload. */
     void sendPositionUpdate(glm::dvec3 pos, glm::vec3 rot);
+    /** @brief Handles one incoming message. */
     void handleMessage(const NetworkMessage& msg);
+    /** @brief Sends a chat message payload. */
     void sendChatMessage(const std::string& senderName, const std::string& content);
     
     void setMessageCallback(std::function<void(const NetworkMessage&)> cb) {
@@ -82,13 +98,20 @@ private:
     std::function<void(const NetworkMessage&)> messageCallback;
 };
 
+/**
+ * @brief Server-side network façade for headmaster/cluster/zone roles.
+ */
 class NetworkServer {
 public:
+    /** @brief Creates server instance for the requested role. */
     NetworkServer(ServerType type);
     ~NetworkServer();
     
+    /** @brief Starts listening on the given port. */
     bool start(int port);
+    /** @brief Stops server loops and disconnects clients. */
     void stop();
+    /** @brief Returns true while server is active. */
     bool isRunning() const { return running; }
     
     void registerServer(const ServerInfo& info);
@@ -97,32 +120,44 @@ public:
     void handleChatMessage(const NetworkMessage& msg);
     void broadcastChat(const NetworkMessage& msg);
     
-    // HEADMASTER: persistencia + coordinación
+    /** @name Headmaster responsibilities */
+    ///@{
     void loadPlayerPersistence(const std::string& userId);
     void savePlayerPersistence(const PlayerData& data);
     void syncAllServers();
+    ///@}
     
-    // CLUSTER_MANAGER: gestión de zonas
+    /** @name Cluster manager responsibilities */
+    ///@{
     void registerZone(const ZoneInfo& zone);
     std::string assignPlayerToZone(const std::string& userId, glm::dvec3 position);
     void balanceZones();
     std::vector<ZoneInfo> getActiveZones();
+    ///@}
     
-    // WEB_AUTH: autenticación
+    /** @name Web authentication responsibilities */
+    ///@{
     bool authenticateUser(const std::string& userId, const std::string& token);
     PlayerData loadUserProfile(const std::string& userId);
+    ///@}
     
-    // ANTICHEAT: verificación
+    /** @name Anti-cheat responsibilities */
+    ///@{
     void checkPlayerBehavior(const std::string& userId, const PlayerData& data);
     bool validateMovement(glm::dvec3 oldPos, glm::dvec3 newPos, float deltaTime);
+    ///@}
     
-    // COMMS: relay
+    /** @name Relay responsibilities */
+    ///@{
     void relayToHeadmaster(const NetworkMessage& msg);
     void relayToClient(const NetworkMessage& msg);
+    ///@}
     
-    // ZONE: servidor de zona
+    /** @name Zone-server responsibilities */
+    ///@{
     void updateZonePlayers();
     void sendToCluster(const NetworkMessage& msg);
+    ///@}
 
 private:
     ServerType serverType;
@@ -137,6 +172,9 @@ private:
     int clusterPort = 8083;
 };
 
+/**
+ * @brief Singleton that owns client/server networking entry points.
+ */
 class NetworkManager {
 public:
     static NetworkManager& getInstance() {
@@ -144,12 +182,17 @@ public:
         return instance;
     }
     
+    /** @brief Returns managed client instance. */
     NetworkClient* getClient() { return client.get(); }
+    /** @brief Initializes client networking connection. */
     void initClient(const std::string& addr, int port);
     
+    /** @brief Returns managed server instance. */
     NetworkServer* getServer() { return server.get(); }
+    /** @brief Initializes server side networking role. */
     void initServer(ServerType type, int port);
     
+    /** @brief Advances sync timers and periodic network jobs. */
     void update(double deltaTime);
 
 private:

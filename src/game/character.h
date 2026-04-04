@@ -8,6 +8,7 @@
 
 namespace Haruka {
 
+/** @brief Character locomotion and sync state machine. */
 enum class CharacterState {
     IDLE,
     WALKING,
@@ -17,35 +18,51 @@ enum class CharacterState {
     CROUCHING
 };
 
+/**
+ * @brief Player/NPC controller with camera, physics, and network sync hooks.
+ */
 class Character {
 public:
+    /** @brief Constructs a character at the given world position. */
     Character(const glm::dvec3& position, const std::string& userId = "");
+    /** @brief Releases owned character resources. */
     ~Character();
     
+    /** @brief Advances movement, camera, and sync state. */
     void update(float deltaTime);
+    /** @brief Processes keyboard/mouse input from GLFW window. */
     void processInput(GLFWwindow* window, float deltaTime);
     
-    // Movement
+    /** @name Movement controls */
+    ///@{
     void moveForward(float amount);
     void moveRight(float amount);
     void jump();
     void crouch(bool enabled);
     void sprint(bool enabled);
+    ///@}
     
-    // Camera
+    /** @name Camera controls */
+    ///@{
     void rotate(float yaw, float pitch);
     Camera* getCamera() const { return camera.get(); }
+    ///@}
     
-    // Physics
+    /** @name Physics binding */
+    ///@{
     void setPhysicsBody(std::shared_ptr<RigidBody> body) { physicsBody = body; }
     std::shared_ptr<RigidBody> getPhysicsBody() { return physicsBody; }
+    ///@}
     
-    // Network
+    /** @name Network synchronization */
+    ///@{
     void setNetworkClient(NetworkClient* client) { networkClient = client; }
     void syncToServer();
     void applyServerUpdate(const glm::dvec3& serverPos, const glm::vec3& serverRot);
+    ///@}
     
-    // State
+    /** @name State accessors */
+    ///@{
     glm::dvec3 getPosition() const { return position; }
     glm::dvec3 getVelocity() const { return velocity; }
     glm::dvec3 getUpDirection() const { return upDirection; }
@@ -63,6 +80,7 @@ public:
     bool isCrouching() const { return crouched; }
     bool isLocalPlayer() const { return localPlayer; }
     bool isInFlightMode() const { return flightMode; }
+    ///@}
     
     void setFlightMode(bool enabled) { flightMode = enabled; }
 
@@ -114,11 +132,16 @@ private:
     float syncTimer = 0.0f;
     float interpolationSpeed = 5.0f;
     
+    /** @brief Updates the attached camera from current character state. */
     void updateCamera();
+    /** @brief Updates locomotion state from velocity/input context. */
     void updateState();
+    /** @brief Recomputes grounded state from physics/orientation. */
     void checkGrounded();
+    /** @brief Returns true when a network sync should be emitted. */
     bool shouldSyncToServer();
 
+    /** @brief Returns the current up vector used for movement basis. */
     glm::dvec3 getEffectiveUp() const;
 };
 

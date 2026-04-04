@@ -28,26 +28,41 @@
 
 class MenuBar;
 
+/**
+ * @brief Main editor application shell.
+ *
+ * Owns project/scene state, viewport camera, dockable panels, play-mode state,
+ * and project/file workflow actions.
+ */
 class EditorApplication {
 public:
+    /** @brief Constructs the editor app with default UI state. */
     EditorApplication();
+    /** @brief Releases editor resources and UI-owned state. */
     ~EditorApplication();
     
+    /** @brief Runs the editor main loop. */
     void run();
+    /** @brief Returns the currently loaded project, if any. */
     Haruka::Project* getProject() { return currentProject.get(); }
     
     friend class MenuBar;
 
 private:
+    /** @brief Initializes subsystems, panels, and runtime state. */
     void init();
+    /** @brief Shuts down the editor and releases owned resources. */
     void shutdown();
+    /** @brief Updates editor-side logic for the current frame. */
     void update();
+    /** @brief Renders the active viewport/frame. */
     void render();
+    /** @brief Renders all dockable UI panels and menus. */
     void renderUI();
     
     std::unique_ptr<MenuBar> menuBar;
 
-    // UI
+    // UI state
     GLFWwindow* window;
     std::unique_ptr<Haruka::Project> currentProject;
     std::unique_ptr<Haruka::Scene> currentScene;
@@ -72,13 +87,13 @@ private:
     int gizmoMode = 0;
     bool gizmoActive = false;
     
-    // UI State
+    // UI state
     bool showDemoWindow = false;
     bool showNewProjectDialog = false;
     char newProjectNameBuffer[256] = {0};
     char newProjectPathBuffer[512] = {0};
     
-    // Panel Visibility
+    // Panel visibility
     bool showSceneHierarchy = true;
     bool showInspector = true;
     bool showProjectBrowser = true;
@@ -97,9 +112,12 @@ private:
     float deltaTime = 0.0f;
     float lastFrame = 0.0f;
 
-    // Play Mode
+    // Play mode
+    /** @brief Enters play mode using a temporary runtime scene. */
     void enterPlayMode();
+    /** @brief Exits play mode and restores editor state. */
     void exitPlayMode();
+    /** @brief Updates runtime simulation while in play mode. */
     void updatePlayMode(float deltaTime);
 
     bool isPlayMode = false;
@@ -127,17 +145,22 @@ private:
     bool showUnsavedChangesPopup = false;
     std::string pendingSceneToLoad;
 
+    /** @brief Creates a new project at the given base path. */
     void createNewProject(const std::string& name, const std::string& basePath);
 
     std::unique_ptr<Haruka::PlanetarySystem> planetarySystem;
     bool runningPlanetarySystem = false;
 
+    /** @brief Creates a scene object of a given type. */
     void createSceneObject(const std::string& type);
 
+    /** @brief Triggers project compilation/export pipeline. */
     void compileProject();
     bool isProjectCompiling = false;
 
+    /** @brief Exports the game project with current settings. */
     void exportGame();
+    /** @brief Opens the export configuration dialog. */
     void showExportDialog();
 
     // Auto-save system
@@ -154,10 +177,16 @@ private:
     bool autoSaveEnabled = true;
     int maxBackups = 5;
     
+    /** @brief Saves scene or prefab data to disk. */
     void saveFile(const std::string& path, bool asPrefab = false);
+    /** @brief Loads scene or prefab data from disk. */
     void loadFile(const std::string& path);
+    /** @brief Creates a backup copy for the given file. */
     void createFileBackup(const std::string& path);
+    /** @brief Removes old backups beyond retention limit. */
     void cleanOldBackups(const std::string& path);
+    /** @brief Deletes all backups associated with one file. */
     void deleteAllBackups(const std::string& path);
+    /** @brief Returns the file classification used by the editor. */
     std::string getFileType(const std::string& path);
 };

@@ -6,12 +6,18 @@
 #include <unordered_map>
 #include "core/scene.h"
 
+/**
+ * @brief Scene collection manager for opening, switching, and unloading scenes.
+ */
 class SceneManager {
 public:
+    /** @brief Constructs an empty scene manager. */
     SceneManager() = default;
+    /** @brief Releases managed scenes. */
     ~SceneManager() = default;
     
-    // Scene management
+    /** @name Scene management */
+    ///@{
     Haruka::Scene* createScene(const std::string& name);
     Haruka::Scene* getScene(const std::string& name);
     Haruka::Scene* getActiveScene() const { return activeScene; }
@@ -21,11 +27,14 @@ public:
     
     const std::vector<std::string>& getLoadedScenes() const { return loadedSceneNames; }
     size_t getSceneCount() const { return loadedScenes.size(); }
+    ///@}
     
-    // Callbacks
+    /** @name Lifecycle callbacks */
+    ///@{
     void setOnSceneLoaded(std::function<void(Haruka::Scene*)> cb) { onSceneLoaded = std::move(cb); }
     void setOnSceneUnloaded(std::function<void(const std::string&)> cb) { onSceneUnloaded = std::move(cb); }
     void setOnActiveSceneChanged(std::function<void(Haruka::Scene*)> cb) { onActiveSceneChanged = std::move(cb); }
+    ///@}
 
 private:
     std::unordered_map<std::string, std::shared_ptr<Haruka::Scene>> loadedScenes;

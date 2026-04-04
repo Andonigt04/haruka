@@ -3,6 +3,7 @@
 
 namespace Haruka {
 
+// Inicializa slots estándar para evitar comprobaciones de existencia repetidas.
 MaterialComponent::MaterialComponent() {
     textures["albedo"] = "";
     textures["normal"] = "";
@@ -11,6 +12,7 @@ MaterialComponent::MaterialComponent() {
     textures["ao"] = "";
 }
 
+// Representación estable para persistencia de escena/proyecto.
 nlohmann::json MaterialComponent::toJSON() const {
     nlohmann::json j;
     j["name"] = name;
@@ -24,6 +26,7 @@ nlohmann::json MaterialComponent::toJSON() const {
     return j;
 }
 
+// Carga tolerante: sólo sobreescribe campos presentes en el JSON.
 void MaterialComponent::fromJSON(const nlohmann::json& j) {
     if (j.contains("name")) name = j["name"];
     if (j.contains("shaderPath")) shaderPath = j["shaderPath"];

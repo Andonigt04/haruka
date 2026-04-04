@@ -7,20 +7,13 @@
 #include <glm/glm.hpp>
 
 /**
- * DebugOverlay - Información de performance en tiempo real
- * 
- * Muestra:
- * - FPS (frames per second)
- * - Frame time (ms)
- * - Draw calls
- * - Memoria RAM/VRAM
- * - Light count (total + culled)
- * - Asset streaming stats
- * - GPU stats
- * 
- * Impacto: Visibilidad, sin overhead significativo
+ * @brief Real-time performance and diagnostics overlay.
+ *
+ * Displays FPS, frame time, draw calls, memory usage, lighting counts,
+ * asset streaming stats, and GPU metrics with minimal overhead.
  */
 
+/** @brief Snapshot of runtime performance counters. */
 struct FrameMetrics {
     float fps = 0.0f;
     float frameTimeMs = 0.0f;
@@ -28,7 +21,7 @@ struct FrameMetrics {
     int renderTargetBinds = 0;
     int shaderSwitches = 0;
     
-    // Memoria
+    // Memory
     size_t ramUsage = 0;
     size_t vramUsage = 0;
     
@@ -57,33 +50,25 @@ public:
         return instance;
     }
 
-    /**
-     * Inicializar overlay
-     */
+    /** @brief Initializes overlay state and timing. */
     void init();
 
-    /**
-     * Render overlay en ImGui
-     * Llamar en el main loop después de todos los renders
-     */
+    /** @brief Renders overlay UI. Call after rendering the frame. */
     void render();
 
-    /**
-     * Actualizar métricas
-     */
+    /** @brief Updates current metrics snapshot. */
     void updateMetrics(const FrameMetrics& metrics);
 
-    /**
-     * Toggle overlay visibility
-     */
+    /** @brief Toggles overlay visibility. */
     void toggle() { visible = !visible; }
+    /** @brief Shows the overlay. */
     void show() { visible = true; }
+    /** @brief Hides the overlay. */
     void hide() { visible = false; }
+    /** @brief Returns current visibility state. */
     bool isVisible() const { return visible; }
 
-    /**
-     * Agregar métrica custom
-     */
+    /** @brief Adds/updates a custom floating-point metric. */
     void addMetric(const std::string& name, float value) {
         customMetrics[name] = value;
     }
@@ -96,9 +81,7 @@ public:
         customMetricsStr[name] = value;
     }
 
-    /**
-     * Modo de overlay
-     */
+    /** @brief Available overlay presentation modes. */
     enum OverlayMode {
         MINIMAL,      // Solo FPS + frame time
         STANDARD,     // FPS, memoria, luces, assets
@@ -109,11 +92,10 @@ public:
     void setMode(OverlayMode mode) { overlayMode = mode; }
     OverlayMode getMode() const { return overlayMode; }
 
-    /**
-     * Obtener últimas métricas
-     */
+    /** @brief Returns the most recent metrics snapshot. */
     FrameMetrics getLastMetrics() const { return lastMetrics; }
     
+    /** @brief Returns averaged metrics over history buffers. */
     FrameMetrics getAverageMetrics() const;
 
     ~DebugOverlay() = default;

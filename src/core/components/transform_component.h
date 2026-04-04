@@ -6,12 +6,19 @@
 
 namespace Haruka {
 
+/**
+ * @brief Componente de transformación espacial en doble precisión.
+ */
 class TransformComponent : public Component {
 public:
+    /** @brief Posición en espacio local/mundo según contexto del ECS. */
     glm::dvec3 position{0};
+    /** @brief Rotación Euler (grados/radianes según convención del motor). */
     glm::dvec3 rotation{0};
+    /** @brief Escala no uniforme. */
     glm::dvec3 scale{1,1,1};
 
+    /** @brief Serializa estado completo a JSON. */
     nlohmann::json toJson() const override {
         nlohmann::json j;
         j["type"] = getType();
@@ -21,6 +28,10 @@ public:
         return j;
     }
 
+    /**
+     * @brief Crea un `TransformComponent` desde JSON.
+     * @pre `j` contiene `position`, `rotation`, `scale` como arreglos de 3 valores.
+     */
     static std::shared_ptr<TransformComponent> fromJson(const nlohmann::json& j) {
         auto comp = std::make_shared<TransformComponent>();
         auto pos = j["position"];
@@ -32,8 +43,11 @@ public:
         return comp;
     }
 
+    /** @brief Identificador estático del componente. */
     static std::string staticType() { return "Transform"; }
+    /** @brief Identificador dinámico del componente. */
     std::string getType() const override { return staticType(); }
+    /** @brief Inspector ImGui de posición/rotación/escala. */
     void renderInspector() override;
 };
 

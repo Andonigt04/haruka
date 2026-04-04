@@ -7,35 +7,41 @@
 namespace Haruka {
 
 /**
- * @brief Interfaz genérica para lógica de juego
- * 
- * Los proyectos definen esta estructura con sus callbacks
- * El editor carga dinámicamente y llama a estos métodos
- * Permite máxima versatilidad sin código custom en el editor
+ * @brief ABI-friendly bridge for project-defined gameplay callbacks.
+ *
+ * The editor loads a project implementation and calls these function pointers
+ * to integrate game-specific logic without hard-coding gameplay into the editor.
  */
 struct GameInterface {
-    // Ciclo de vida
+    /** @brief Called once when the game session starts. */
     typedef void (*OnInitFunc)(Scene* scene);
+    /** @brief Called every frame while the game is running. */
     typedef void (*OnUpdateFunc)(GLFWwindow* window, float deltaTime);
+    /** @brief Called once during shutdown. */
     typedef void (*OnShutdownFunc)();
     
-    // Getters
+    /** @brief Returns the active camera, if the game exposes one. */
     typedef Camera* (*GetCameraFunc)();
+    /** @brief Returns the active scene, if the game exposes one. */
     typedef Scene* (*GetSceneFunc)();
     
-    // Callbacks
+    /** @name Gameplay callbacks */
+    ///@{
     OnInitFunc onInit = nullptr;
     OnUpdateFunc onUpdate = nullptr;
     OnShutdownFunc onShutdown = nullptr;
     GetCameraFunc getCamera = nullptr;
     GetSceneFunc getScene = nullptr;
+    ///@}
     
-    // Información
+    /** @name Metadata */
+    ///@{
     const char* name = "UnnamedGame";
     const char* version = "1.0.0";
+    ///@}
 };
 
-// Macro para simplificar la creación del interfaz
+/** @brief Export macro for game interface symbols. */
 #define GAME_INTERFACE_EXPORT extern "C"
 
 }

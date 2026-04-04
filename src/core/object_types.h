@@ -4,8 +4,7 @@
 
 namespace Haruka {
     /**
-     * ObjectType - Tipos de objetos en la escena
-     * Clasifica los objetos para saber cuáles renderizar
+     * @brief Scene object classification used by editor/runtime systems.
      */
     enum class ObjectType {
         UNKNOWN = 0,
@@ -21,16 +20,14 @@ namespace Haruka {
         
         // Otros (No renderizables)
         CHARACTER = 10,        // Personaje/Jugador
-        CAMERA = 11,           // Cámara
+        CAMERA = 11,           // Camera
         EMPTY = 12,            // Objeto vacío
-        PARTICLE_SYSTEM = 13,  // Sistema de partículas
+        PARTICLE_SYSTEM = 13,  // Particle system
         AUDIO_SOURCE = 14,     // Fuente de audio
         COLLIDER = 15,         // Colisionador
     };
     
-    /**
-     * Convertir string de tipo a enum
-     */
+    /** @brief Converts a type string into an `ObjectType` enum value. */
     inline ObjectType stringToObjectType(const std::string& typeStr) {
         if (typeStr == "Mesh") return ObjectType::MESH;
         if (typeStr == "Cube") return ObjectType::MESH;
@@ -49,9 +46,7 @@ namespace Haruka {
         return ObjectType::UNKNOWN;
     }
     
-    /**
-     * Convertir enum a string
-     */
+    /** @brief Converts an `ObjectType` enum value into its string form. */
     inline std::string objectTypeToString(ObjectType type) {
         switch (type) {
             case ObjectType::MESH: return "Mesh";
@@ -69,9 +64,7 @@ namespace Haruka {
         }
     }
     
-    /**
-     * Verificar si un tipo es renderizable
-     */
+    /** @brief Returns true for object types that should be rendered. */
     inline bool isRenderableObjectType(ObjectType type) {
         return type == ObjectType::MESH ||
                type == ObjectType::MODEL ||
@@ -81,9 +74,7 @@ namespace Haruka {
                type == ObjectType::CHARACTER;
     }
     
-    /**
-     * Verificar si un tipo es una luz
-     */
+    /** @brief Returns true for object types that represent lights. */
     inline bool isLightObjectType(ObjectType type) {
         return type == ObjectType::LIGHT || 
                type == ObjectType::DIRECTIONAL_LIGHT || 

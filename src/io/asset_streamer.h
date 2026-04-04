@@ -12,16 +12,13 @@
 #include <glm/glm.hpp>
 
 /**
- * AssetStreamer - Cargue de assets bajo demanda
- * 
- * Características:
- * - Carga asincrónica en background thread
- * - Priorización por distancia a la cámara
- * - Cache inteligente (LRU - Least Recently Used)
- * - Unload automático de assets lejanos
- * - Callbacks cuando assets se cargan
- * 
- * Impacto: -50% RAM en escenas grandes
+ * @brief On-demand asynchronous asset streaming service.
+ *
+ * Features:
+ * - background loading workers
+ * - camera-distance/importance prioritization
+ * - LRU-oriented cache trimming
+ * - callback notification on load completion
  */
 
 enum class AssetType {
@@ -39,7 +36,7 @@ struct Asset {
     void* data = nullptr;
     size_t sizeBytes = 0;
     bool loaded = false;
-    float priority = 0.0f;  // Mayor = más importante
+    float priority = 0.0f;  // Higher value = higher priority
     long lastAccessTime = 0;
 };
 
@@ -59,15 +56,13 @@ public:
     }
 
     /**
-     * Inicializar el streamer
-     * @param maxCacheMemoryMB Máximo de memoria para cache (default 512 MB)
-     * @param numWorkerThreads Threads para carga async (default 2)
+     * @brief Initializes worker threads and cache limits.
+     * @param maxCacheMemoryMB Cache memory budget in MB.
+     * @param numWorkerThreads Number of async loader workers.
      */
     void init(size_t maxCacheMemoryMB = 512, int numWorkerThreads = 2);
 
-    /**
-     * Solicitar carga de asset
-     */
+    /** @brief Enqueues an asset streaming request. */
     void requestAsset(
         const std::string& assetId,
         const std::string& assetPath,
@@ -76,34 +71,22 @@ public:
         const glm::vec3& position = glm::vec3(0.0f)
     );
 
-    /**
-     * Obtener asset (bloqueante si no está cargado)
-     */
+    /** @brief Blocking fetch with timeout while waiting for load completion. */
     Asset* getAsset(const std::string& assetId, float timeoutMs = 5000.0f);
 
-    /**
-     * Obtener asset de forma no-bloqueante
-     */
+    /** @brief Non-blocking cache lookup. */
     Asset* tryGetAsset(const std::string& assetId);
 
-    /**
-     * Actualizar posición de la cámara (para priorización)
-     */
+    /** @brief Updates camera reference used by prioritization heuristics. */
     void updateCameraPosition(const glm::vec3& position);
 
-    /**
-     * Unload de asset específico
-     */
+    /** @brief Explicitly unloads one asset from cache. */
     void unloadAsset(const std::string& assetId);
 
-    /**
-     * Limpiar cache (mantener solo lo más importante)
-     */
+    /** @brief Trims cache according to internal eviction policy. */
     void trimCache();
 
-    /**
-     * Estadísticas
-     */
+    /** @brief Snapshot of streamer health and cache usage. */
     struct StreamStats {
         size_t totalCacheMemory;
         size_t maxCacheMemory;
@@ -115,17 +98,13 @@ public:
 
     StreamStats getStats() const;
 
-    /**
-     * Callback cuando asset se carga
-     */
+    /** @brief Callback invoked when an asset is loaded and inserted in cache. */
     using AssetLoadedCallback = std::function<void(const std::string&, Asset*)>;
     void onAssetLoaded(AssetLoadedCallback callback) {
         assetLoadedCallback = callback;
     }
 
-    /**
-     * Shutdown
-     */
+    /** @brief Stops workers and releases streamer resources. */
     void shutdown();
 
     ~AssetStreamer();
@@ -133,16 +112,16 @@ public:
 private:
     AssetStreamer();
 
-    // Worker thread para carga asincrónica
+    // Async loading worker loop
     void workerThread();
 
-    // Cargar asset sincronamente
+    // Synchronous loading implementation for one request
     Asset* loadAssetSync(const StreamRequest& request);
 
-    // Estimar tamaño del archivo
+    // Estimate source file size for budgeting
     size_t estimateAssetSize(const std::string& path);
 
-    // Hacer espacio en cache si es necesario
+    // Reserve cache room if needed
     void makeRoomInCache(size_t neededBytes);
 
     // Eviction policy (LRU)
@@ -153,25 +132,25 @@ private:
     mutable std::mutex queueMutex;
     std::condition_variable cv;
 
-    // Cache de assets
+    // Asset cache
     std::map<std::string, std::unique_ptr<Asset>> assetCache;
 
-    // Cola de solicitudes
+    // Request queue
     std::queue<StreamRequest> loadQueue;
 
     // Worker threads
     std::vector<std::thread> workers;
     bool running = false;
 
-    // Configuración
+    // Configuration
     size_t maxCacheMemoryBytes = 512 * 1024 * 1024;  // 512 MB default
     int numWorkers = 2;
 
-    // Estadísticas
+    // Statistics
     size_t totalCacheMemory = 0;
     int failedAssets = 0;
 
-    // Posición de cámara (para priorización)
+    // Camera position (for prioritization)
     glm::vec3 cameraPosition = glm::vec3(0.0f);
 
     // Callbacks
