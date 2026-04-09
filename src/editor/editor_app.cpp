@@ -183,6 +183,8 @@ void EditorApplication::update() {
     statsPanel.update(deltaTime);
     glfwPollEvents();
     updatePlayMode(deltaTime);
+    planetTerrainEditorPanel.update();
+    exportPanel.update();
     
     // Auto-save system
     if (autoSaveEnabled && sceneDirty && !currentFile.path.empty()) {

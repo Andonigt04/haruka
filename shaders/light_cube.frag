@@ -16,6 +16,42 @@ uniform sampler2DShadow cascadeShadowMaps[4];
 uniform mat4 cascadeLightSpaceMatrices[4];
 uniform float cascadeSplits[4];
 uniform int numCascades;
+uniform bool useProceduralTerrain;
+
+float hash31(vec3 p)
+{
+    p = fract(p * 0.1031);
+    p += dot(p, p.yzx + 33.33);
+    return fract((p.x + p.y) * p.z);
+}
+
+vec3 terrainAlbedo(vec3 worldPos, vec3 N)
+{
+    vec3 dir = normalize(worldPos);
+    float latitude = abs(dir.y);
+
+    // Approximate altitude banding from distance to origin, stabilized with tiny normalization.
+    float r = length(worldPos);
+    float h = smoothstep(0.98, 1.02, r / max(r, 1e-5));
+
+    float slope = 1.0 - max(dot(normalize(N), dir), 0.0);
+    float n = hash31(dir * 127.0) * 2.0 - 1.0;
+
+    vec3 sand  = vec3(0.52, 0.42, 0.28);
+    vec3 grass = vec3(0.18, 0.36, 0.16);
+    vec3 rock  = vec3(0.42, 0.39, 0.36);
+    vec3 snow  = vec3(0.90, 0.92, 0.95);
+
+    // Base blend: sand -> grass -> rock
+    vec3 col = mix(sand, grass, smoothstep(0.10, 0.35, h + n * 0.05));
+    col = mix(col, rock, smoothstep(0.20, 0.55, slope + n * 0.06));
+
+    // Snow at high latitude and high altitude
+    float snowMask = smoothstep(0.62, 0.92, latitude + h * 0.25 + n * 0.03);
+    col = mix(col, snow, snowMask);
+
+    return col;
+}
 
 float calculateShadow(vec3 normal, vec3 lightDir)
 {
@@ -89,8 +125,13 @@ void main() {
         shadow = (numCascades > 0) ? calculateCascadedShadow(N, L) : calculateShadow(N, L);
     }
 
-    vec3 ambient = max(ambientStrength, 0.08) * lightColor;
-    vec3 direct = (1.0 - shadow) * diff * lightColor * max(sunLightColor, vec3(0.5));
+    vec3 baseColor = lightColor;
+    if (useProceduralTerrain) {
+        baseColor = terrainAlbedo(FragPos, N);
+    }
+
+    vec3 ambient = max(ambientStrength, 0.08) * baseColor;
+    vec3 direct = (1.0 - shadow) * diff * baseColor * max(sunLightColor, vec3(0.5));
 
     FragColor = vec4(ambient + direct, 1.0);
 }

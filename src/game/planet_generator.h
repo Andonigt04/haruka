@@ -10,15 +10,22 @@ namespace Haruka {
  *
  * Builds a cube-sphere and applies layered terrain deformation.
  * Supports deterministic generation through explicit seed fields.
+ * 
+ * Key: Seed-based on-demand generation allows infinite terrains with minimal RAM.
+ * Small chunks (1-5k verts) generated async on CPU, cached briefly, then discarded.
  */
 class PlanetGenerator {
 public:
-    /** @brief Built-in preset families for high-level planet style bootstrapping. */
-    enum class PlanetPreset {
-        EARTH_LIKE,
-        DESERT,
-        ICE
-    };
+    /**
+     * @brief Generates one chunk tile from a cube-sphere face.
+     * Generated async in CPU threads. Uses seed-based deterministic output.
+     * 
+     * CONFIGURABLE PLANETS:
+     * - All parameters in PlanetConfig can be tweaked for any planet type
+     * - Modify via SceneObject properties: "terrainEditor": { "seaLevel": 0.4, ... }
+     * - No preset limits: complete freedom in configuration
+     * - Same seed + config = deterministic output (reproducible)
+     */
 
     /**
      * @brief Full generation configuration contract.
@@ -33,9 +40,6 @@ public:
         /** @brief Physical radius scale used for ratio-based deformation parameters. */
         float baseRadiusKm = 6371.0f;
 
-        /** @brief Layer 1: global negative offset depth (km). */
-        float baseNegativeDepthKm = 11.0f;
-
         /** @name Layer seed set */
         ///@{
         int seedBase = 42;
@@ -48,8 +52,7 @@ public:
         ///@{
         bool enableContinents = true;
         bool enableMountains = true;
-        /** @brief Try GPU compute path first; fallback to CPU on failure. */
-        bool useGPU = true;
+        bool useGPU = true;  // CPU better for small chunks; GPU for full planets
         ///@}
 
         /** @name Continents / oceans */
@@ -98,6 +101,36 @@ public:
         float maxHeight = 0.0f;
     };
 
+    /** @brief Chunk generation request over one cube-sphere face tile.
+     * 
+     * Seed-based deterministic generation: same key + config = same mesh always.
+     * No storage needed: chunks are generated on-demand, cached briefly, discarded.
+     * Re-entering chunk: regenerate from seed (CPU fast, deterministic).
+     * 
+     * Supports neighbor-aware LOD stitching for seamless multi-resolution terrain.
+     */
+    struct ChunkConfig {
+        int face = 0;           ///< Cube face (0-5)
+        int lod = 0;            ///< Level of detail (0=highest density)
+        int tileX = 0;          ///< X position within face
+        int tileY = 0;          ///< Y position within face
+        int tilesPerFace = 1;   ///< Tiles per face
+
+        int neighborLodN = 0;   ///< North neighbor LOD for stitching
+        int neighborLodS = 0;   ///< South neighbor LOD for stitching
+        int neighborLodE = 0;   ///< East neighbor LOD for stitching
+        int neighborLodW = 0;   ///< West neighbor LOD for stitching
+    };
+
+    /** @brief Mesh payload for one generated chunk tile. */
+    struct ChunkData {
+        std::vector<glm::vec3> vertices;
+        std::vector<glm::vec3> normals;
+        std::vector<unsigned int> indices;
+        float minHeight = 0.0f;
+        float maxHeight = 0.0f;
+    };
+
     /**
     * @brief Legacy convenience overload.
     * @param radius Base sphere radius.
@@ -118,13 +151,14 @@ public:
 
     /**
      * @brief Generates a planet from full configuration.
-     *
-     * Attempts GPU backend if enabled and available; otherwise uses CPU path.
+     * Attempts GPU backend if enabled; otherwise uses CPU path.
      */
     static PlanetData generatePlanet(const PlanetConfig& config);
-
-    /** @brief Returns tuned default values for a preset family. */
-    static PlanetConfig getPresetConfig(PlanetPreset preset);
+    /**
+     * @brief Generates one chunk tile from a cube-sphere face.
+     * Generated async in CPU threads. Uses seed-based deterministic output.
+     */
+    static ChunkData generateChunk(const PlanetConfig& config, const ChunkConfig& chunk);
 
     /**
      * @brief GPU compute implementation.

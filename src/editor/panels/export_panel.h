@@ -1,7 +1,9 @@
 #pragma once
 
+#include "editor/tasks/editor_task.h"
 #include <string>
 #include <memory>
+#include <vector>
 
 class EditorApplication;
 
@@ -15,6 +17,8 @@ public:
     /** @brief Releases export panel resources. */
     ~ExportPanel();
     
+    /** @brief Advances long-running export tasks once per frame. */
+    void update();
     /** @brief Renders the export UI. */
     void render(EditorApplication* editorApp);
     /** @brief Shows the panel. */
@@ -25,6 +29,8 @@ public:
     bool isVisible() const { return visible; }
 
 private:
+    struct ExportBatchState;
+
     bool visible = false;
     
     // UI state
@@ -46,6 +52,31 @@ private:
     
     std::string exportStatus;
     bool exportStatusError = false;
+
+    /** @brief Long-running export task wrapper. */
+    class ExportTask final : public EditorTaskBase {
+    public:
+        explicit ExportTask(ExportPanel* panel);
+
+        void reportProgress(float value, const std::string& message) { setProgress(value, message); }
+        void reportComplete(const std::string& message) { complete(message); }
+        void reportFail(const std::string& message) { fail(message); }
+
+    protected:
+        bool onStart(std::string& error) override;
+        void onUpdate() override;
+        void onCancel() override;
+
+    private:
+        ExportPanel* owner = nullptr;
+    };
+
+    std::unique_ptr<ExportTask> activeTask;
+    EditorApplication* pendingEditorApp = nullptr;
+    std::unique_ptr<ExportBatchState> batchState;
+    void startExportTask(EditorApplication* editorApp);
+    void updateExportTask();
+    void finishExportTask();
     
     /** @brief Loads project export settings into the UI. */
     void loadProjectSettings(EditorApplication* editorApp);
@@ -55,4 +86,7 @@ private:
     bool validateSettings() const;
     /** @brief Performs the actual export workflow. */
     void performExport(EditorApplication* editorApp);
+
+    bool prepareExport(EditorApplication* editorApp, std::string& error);
+    void setExportError(const std::string& message);
 };

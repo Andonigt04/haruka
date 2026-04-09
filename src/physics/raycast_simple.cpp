@@ -2,9 +2,19 @@
 #include <glm/gtc/constants.hpp>
 #include <iostream>
 
+void RaycastSimple::rebuildTriangleCache() {
+    triangles.clear();
+    for (const auto& [_, tris] : meshTriangles) {
+        triangles.insert(triangles.end(), tris.begin(), tris.end());
+    }
+}
+
 void RaycastSimple::addMesh(const std::string& id,
                             const std::vector<glm::vec3>& vertices,
                             const std::vector<unsigned int>& indices) {
+    std::vector<RaycastTriangle> localTriangles;
+    localTriangles.reserve(indices.size() / 3);
+
     // Construir triángulos a partir de vertices e indices
     for (size_t i = 0; i < indices.size(); i += 3) {
         if (i + 2 >= indices.size()) break;
@@ -26,10 +36,25 @@ void RaycastSimple::addMesh(const std::string& id,
         glm::vec3 edge2 = v2 - v0;
         glm::vec3 normal = glm::normalize(glm::cross(edge1, edge2));
 
-        triangles.push_back({v0, v1, v2, normal});
+        localTriangles.push_back({v0, v1, v2, normal});
     }
 
+    meshTriangles[id] = std::move(localTriangles);
+    rebuildTriangleCache();
+
     std::cout << "✓ Added raycast mesh: " << id << " (" << indices.size() / 3 << " triangles)\n";
+}
+
+void RaycastSimple::removeMesh(const std::string& id) {
+    auto it = meshTriangles.find(id);
+    if (it == meshTriangles.end()) return;
+    meshTriangles.erase(it);
+    rebuildTriangleCache();
+}
+
+void RaycastSimple::clearMeshes() {
+    meshTriangles.clear();
+    triangles.clear();
 }
 
 bool RaycastSimple::rayTriangleIntersect(const glm::vec3& rayOrigin,

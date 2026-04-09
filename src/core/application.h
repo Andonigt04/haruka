@@ -29,6 +29,7 @@
 #include "io/asset_streamer.h"
 #include "debug_overlay.h"
 #include "physics/raycast_simple.h"
+#include "core/terrain_streaming_system.h"
 
 class MotorInstance;
 
@@ -73,6 +74,13 @@ public:
     static int getLastTotalVertices() { return s_lastTotalVertices; }
     static int getLastTotalTriangles() { return s_lastTotalTriangles; }
     static int getLastTotalDrawCalls() { return s_lastTotalDrawCalls; }
+    static int getLastVisibleChunks() { return s_lastVisibleChunks; }
+    static int getLastResidentChunks() { return s_lastResidentChunks; }
+    static int getLastPendingChunkLoads() { return s_lastPendingChunkLoads; }
+    static int getLastPendingChunkEvictions() { return s_lastPendingChunkEvictions; }
+    static int getLastResidentMemoryMB() { return s_lastResidentMemoryMB; }
+    static int getLastTrackedChunks() { return s_lastTrackedChunks; }
+    static int getLastMaxMemoryMB() { return s_lastMaxMemoryMB; }
 
     CascadedShadowMap* getCascadedShadowMap() { return _cascadedShadow.get(); }
     Shader* getCascadedShadowShader() { return _cascadeShadowShader.get(); }
@@ -154,6 +162,7 @@ private:
     std::unique_ptr<CascadedShadowMap> _cascadedShadow;
     std::unique_ptr<VirtualTexturing> _virtualTexturing;
     std::unique_ptr<RaycastSimple> _raycastSystem;
+    std::unique_ptr<Haruka::TerrainStreamingSystem> _terrainStreamingSystem;
     
     // Render targets
     std::unique_ptr<RenderTarget> _lightingTarget;
@@ -194,6 +203,13 @@ private:
     inline static int s_lastTotalVertices = 0;
     inline static int s_lastTotalTriangles = 0;
     inline static int s_lastTotalDrawCalls = 0;
+    inline static int s_lastVisibleChunks = 0;
+    inline static int s_lastResidentChunks = 0;
+    inline static int s_lastPendingChunkLoads = 0;
+    inline static int s_lastPendingChunkEvictions = 0;
+    inline static int s_lastResidentMemoryMB = 0;
+    inline static int s_lastTrackedChunks = 0;
+    inline static int s_lastMaxMemoryMB = 0;
 };
 
 #endif

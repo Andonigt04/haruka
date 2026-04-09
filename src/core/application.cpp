@@ -3,7 +3,6 @@
 
 #include <iostream>
 #include <cmath>
-#include <unordered_set>
 #include <unordered_map>
 #include <glm/gtc/matrix_transform.hpp>
 
@@ -27,6 +26,7 @@
 #include "renderer/gpu_instancing.h"
 #include "physics/raycast_simple.h"
 #include "object_types.h"
+#include "core/terrain_streaming_system.h"
 
 Haruka::GameInterface* gameInterface = nullptr;
 
@@ -40,7 +40,7 @@ struct MouseState {
 static MouseState g_mouseState;
 
 namespace {
-std::vector<Haruka::SceneObject> g_sceneRenderQueue;
+std::vector<const Haruka::SceneObject*> g_sceneRenderQueue;
 Haruka::Scene* g_sceneForRender = nullptr;
 std::unordered_map<std::string, std::shared_ptr<Model>> g_modelCache;
 
@@ -49,6 +49,48 @@ bool isRenderDisabledByEditor(const Haruka::SceneObject& obj) {
     if (!obj.properties.contains("terrainEditor")) return false;
     const auto& te = obj.properties["terrainEditor"];
     return te.value("disableRender", false);
+}
+
+bool shouldUseProceduralTerrainLook(const Haruka::SceneObject& obj) {
+    if (obj.name.find("_chunk_") != std::string::npos) return true;
+    if (!obj.properties.is_object()) return false;
+    if (!obj.properties.contains("terrainEditor")) return false;
+    return obj.properties["terrainEditor"].is_object();
+}
+
+bool isTerrainChunkFacingCamera(const Haruka::SceneObject& obj, const glm::vec3& cameraPos) {
+    if (!obj.properties.is_object()) return true;
+    if (!obj.properties.contains("terrainEditor")) return true;
+    const auto& te = obj.properties["terrainEditor"];
+    if (!te.is_object() || !te.value("isChunk", false)) return true;
+
+    // En runtime exigimos metadatos explícitos de chunk.
+    if (!te.contains("chunkX") || !te.contains("chunkY") || !te.contains("chunkTilesX") || !te.contains("chunkTilesY")) {
+        return true;
+    }
+
+    const int chunkX = te.value("chunkX", -1);
+    const int chunkY = te.value("chunkY", -1);
+    const int tilesX = te.value("chunkTilesX", 0);
+    const int tilesY = te.value("chunkTilesY", 0);
+    if (chunkX < 0 || chunkY < 0 || tilesX <= 0 || tilesY <= 0) return true;
+
+    const double pi = 3.14159265358979323846;
+    const float lat = ((static_cast<float>(chunkY) + 0.5f) / static_cast<float>(tilesY)) * static_cast<float>(pi) - static_cast<float>(pi * 0.5);
+    const float lon = ((static_cast<float>(chunkX) + 0.5f) / static_cast<float>(tilesX)) * static_cast<float>(2.0 * pi) - static_cast<float>(pi);
+
+    glm::vec3 chunkDir(
+        std::cos(lat) * std::cos(lon),
+        std::sin(lat),
+        std::cos(lat) * std::sin(lon)
+    );
+
+    glm::vec3 camDir = cameraPos;
+    float camLen = glm::length(camDir);
+    if (camLen > 1e-6f) camDir /= camLen;
+    else camDir = glm::vec3(0.0f, 0.0f, 1.0f);
+
+    return glm::dot(chunkDir, camDir) > -0.15f;
 }
 
 void buildPrimitiveMeshFromProperties(Haruka::SceneObject& obj) {
@@ -235,7 +277,6 @@ void Application::loadScene(const std::string& scenePath) {
         std::cout << "Scene loaded: " << _currentScene->getName() << std::endl;
     } else {
         HARUKA_MOTOR_ERROR(ErrorCode::SCENE_PARSE_ERROR, std::string("Failed to load scene from: ") + scenePath);
-        // Crear escena vacía por defecto
         _currentScene = std::make_unique<Haruka::Scene>("DefaultScene");
     }
 }
@@ -344,6 +385,7 @@ void Application::init(Haruka::Scene& scene) {
 
     // Inicializar Raycast System
     _raycastSystem = std::make_unique<RaycastSimple>();
+    _terrainStreamingSystem = std::make_unique<Haruka::TerrainStreamingSystem>();
 
     setupQuad();
 
@@ -405,8 +447,27 @@ void Application::renderScene(Shader* shader) {
         canCullByFrustum = true;
     }
 
+    Haruka::TerrainStreamingStats terrainStats;
+    if (_terrainStreamingSystem) {
+        _terrainStreamingSystem->update(scene,
+                                        _worldSystem.get(),
+                                        _raycastSystem.get(),
+                                        activeCamera ? activeCamera->position : Haruka::WorldPos(0.0),
+                                        viewProj,
+                                        &terrainStats);
+    }
+
+    s_lastVisibleChunks = terrainStats.visibleChunks;
+    s_lastResidentChunks = terrainStats.residentChunks;
+    s_lastPendingChunkLoads = terrainStats.pendingChunkLoads;
+    s_lastPendingChunkEvictions = terrainStats.pendingChunkEvictions;
+    s_lastResidentMemoryMB = terrainStats.residentMemoryMB;
+    s_lastTrackedChunks = terrainStats.trackedChunks;
+    s_lastMaxMemoryMB = terrainStats.maxMemoryMB;
+
     for (auto& obj : scene->getObjectsMutable()) {
         if (isRenderDisabledByEditor(obj)) continue;
+        if (!isTerrainChunkFacingCamera(obj, glm::vec3(activeCamera ? activeCamera->position : glm::dvec3(0.0)))) continue;
         Haruka::ObjectType objType = Haruka::stringToObjectType(obj.type);
         if (!Haruka::isRenderableObjectType(objType)) continue;
 
@@ -440,7 +501,7 @@ void Application::renderScene(Shader* shader) {
 
         // Cuerpos gigantes siempre se renderizan sin culling
         if (isHugeBody) {
-            g_sceneRenderQueue.push_back(obj);
+            g_sceneRenderQueue.push_back(&obj);
             continue;
         }
 
@@ -468,7 +529,7 @@ void Application::renderScene(Shader* shader) {
             }
         }
 
-        g_sceneRenderQueue.push_back(obj);
+        g_sceneRenderQueue.push_back(&obj);
     }
 
     // Contadores de total vs renderizado real
@@ -497,14 +558,15 @@ void Application::renderScene(Shader* shader) {
     s_lastRenderedVertices = 0;
     s_lastRenderedTriangles = 0;
     s_lastRenderedDrawCalls = 0;
-    for (const auto& obj : g_sceneRenderQueue) {
-        if (obj.meshRenderer && obj.meshRenderer->isResident()) {
+    for (const auto* obj : g_sceneRenderQueue) {
+        if (!obj) continue;
+        if (obj->meshRenderer && obj->meshRenderer->isResident()) {
             s_lastRenderedDrawCalls++;
-            s_lastRenderedVertices += obj.meshRenderer->getResidentVertexCount();
-            s_lastRenderedTriangles += obj.meshRenderer->getResidentTriangleCount();
-        } else if (!obj.modelPath.empty()) {
+            s_lastRenderedVertices += obj->meshRenderer->getResidentVertexCount();
+            s_lastRenderedTriangles += obj->meshRenderer->getResidentTriangleCount();
+        } else if (!obj->modelPath.empty()) {
             try {
-                auto model = getOrLoadModel(obj.modelPath);
+                auto model = getOrLoadModel(obj->modelPath);
                 if (!model) continue;
                 s_lastRenderedDrawCalls++;
                 s_lastRenderedVertices += model->getVertexCount();
@@ -561,14 +623,15 @@ void Application::renderFrameContent() {
 
         glm::vec3 sunDir = glm::normalize(glm::vec3(0.3f, 0.6f, 0.7f));
         glm::vec3 sunLightColor = glm::vec3(1.0f);
-        for (const auto& obj : g_sceneRenderQueue) {
-            if (obj.type == "Light" || obj.type == "PointLight" || obj.type == "DirectionalLight") {
-                glm::vec3 p = glm::vec3(obj.getWorldPosition(g_sceneForRender));
+        for (const auto* obj : g_sceneRenderQueue) {
+            if (!obj) continue;
+            if (obj->type == "Light" || obj->type == "PointLight" || obj->type == "DirectionalLight") {
+                glm::vec3 p = glm::vec3(obj->getWorldPosition(g_sceneForRender));
                 if (glm::length(p) > 0.0001f) {
                     sunDir = glm::normalize(p);
                 }
-                float sunEnergy = std::clamp(std::max((float)obj.intensity, 0.0f) * 0.01f, 0.2f, 2.0f);
-                sunLightColor = glm::vec3(obj.color) * sunEnergy;
+                float sunEnergy = std::clamp(std::max((float)obj->intensity, 0.0f) * 0.01f, 0.2f, 2.0f);
+                sunLightColor = glm::vec3(obj->color) * sunEnergy;
                 break;
             }
         }
@@ -576,22 +639,24 @@ void Application::renderFrameContent() {
         _flatShader->setVec3("sunLightColor", sunLightColor);
         _flatShader->setFloat("ambientStrength", 0.12f);
 
-        for (const auto& obj : g_sceneRenderQueue) {
-            glm::mat4 modelMatrix = g_sceneForRender ? obj.getWorldTransform(g_sceneForRender) : glm::mat4(1.0f);
+        for (const auto* obj : g_sceneRenderQueue) {
+            if (!obj) continue;
+            glm::mat4 modelMatrix = g_sceneForRender ? obj->getWorldTransform(g_sceneForRender) : glm::mat4(1.0f);
             _flatShader->setMat4("model", modelMatrix);
-            glm::vec3 baseColor = glm::vec3(obj.color);
+            glm::vec3 baseColor = glm::vec3(obj->color);
             if (glm::length(baseColor) < 0.001f) baseColor = glm::vec3(0.8f, 0.8f, 0.8f);
-            const bool isLightObj = (obj.type == "Light" || obj.type == "PointLight" || obj.type == "DirectionalLight");
-            float emission = isLightObj ? std::max((float)obj.intensity, 0.0f) : 1.0f;
+            const bool isLightObj = (obj->type == "Light" || obj->type == "PointLight" || obj->type == "DirectionalLight");
+            float emission = isLightObj ? std::max((float)obj->intensity, 0.0f) : 1.0f;
             glm::vec3 c = isLightObj ? (baseColor * emission) : baseColor;
             _flatShader->setVec3("lightColor", c);
-            if (obj.meshRenderer && obj.meshRenderer->isResident()) {
-                obj.meshRenderer->render(*_flatShader);
+            _flatShader->setBool("useProceduralTerrain", !isLightObj && shouldUseProceduralTerrainLook(*obj));
+            if (obj->meshRenderer && obj->meshRenderer->isResident()) {
+                obj->meshRenderer->render(*_flatShader);
                 continue;
             }
-            if (!obj.modelPath.empty()) {
+            if (!obj->modelPath.empty()) {
                 try {
-                    auto model = getOrLoadModel(obj.modelPath);
+                    auto model = getOrLoadModel(obj->modelPath);
                     if (model) model->Draw(*_flatShader);
                 } catch (...) {
                     // Ignorar en fallback
@@ -656,6 +721,7 @@ void Application::renderFrameContent() {
 
             for (const auto& obj : shadowScene->getObjects()) {
                 if (isRenderDisabledByEditor(obj)) continue;
+                if (!isTerrainChunkFacingCamera(obj, glm::vec3(activeCamera->position))) continue;
                 glm::mat4 modelMatrix = obj.getWorldTransform(shadowScene);
                 _cascadeShadowShader->setMat4("model", modelMatrix);
 
@@ -697,10 +763,6 @@ void Application::renderFrameContent() {
         _virtualTexturing->processFeedback();
     }
 
-    // Actualizar world system
-    _worldSystem->updateLocalPositions(activeCamera->position);
-    _worldSystem->frustumCull(activeCamera->position, view * proj, 500000.0f * Haruka::Units::MEGAMETER);
-
     // ========== GEOMETRY PASS ==========
     _gBuffer->bindForWriting();
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -712,29 +774,30 @@ void Application::renderFrameContent() {
     renderScene();
 
     int drawCount = 0;
-    for (const auto& obj : g_sceneRenderQueue) {
-        glm::mat4 modelMatrix = g_sceneForRender ? obj.getWorldTransform(g_sceneForRender) : glm::mat4(1.0f);
+    for (const auto* obj : g_sceneRenderQueue) {
+        if (!obj) continue;
+        glm::mat4 modelMatrix = g_sceneForRender ? obj->getWorldTransform(g_sceneForRender) : glm::mat4(1.0f);
         _geomShader->setMat4("model", modelMatrix);
-        _geomShader->setVec3("color", glm::vec3(obj.color));
-        if (obj.material) {
-            _geomShader->setVec3("material.albedo", obj.material->albedo);
-            _geomShader->setFloat("material.roughness", obj.material->roughness);
-            _geomShader->setFloat("material.metallic", obj.material->metallic);
+        _geomShader->setVec3("color", glm::vec3(obj->color));
+        if (obj->material) {
+            _geomShader->setVec3("material.albedo", obj->material->albedo);
+            _geomShader->setFloat("material.roughness", obj->material->roughness);
+            _geomShader->setFloat("material.metallic", obj->material->metallic);
         }
-        if (obj.meshRenderer && obj.meshRenderer->isResident()) {
-            obj.meshRenderer->render(*_geomShader);
+        if (obj->meshRenderer && obj->meshRenderer->isResident()) {
+            obj->meshRenderer->render(*_geomShader);
             drawCount++;
             continue;
         }
-        if (!obj.modelPath.empty()) {
+        if (!obj->modelPath.empty()) {
             try {
-                auto model = getOrLoadModel(obj.modelPath);
+                auto model = getOrLoadModel(obj->modelPath);
                 if (model) model->Draw(*_geomShader);
                 drawCount++;
             } catch (const std::exception& e) {
                 HARUKA_MOTOR_ERROR(
                     ErrorCode::MODEL_LOAD_FAILED,
-                    std::string("Failed to draw model ") + obj.modelPath + ": " + e.what()
+                    std::string("Failed to draw model ") + obj->modelPath + ": " + e.what()
                 );
             }
             continue;
@@ -878,15 +941,16 @@ void Application::renderFrameContent() {
     metrics.activeCascade = 0;
 
     // Recorrer la cola de render y sumar vértices/triángulos/draw calls
-    for (const auto& item : g_sceneRenderQueue) {
-        if (item.meshRenderer) {
+    for (const auto* item : g_sceneRenderQueue) {
+        if (!item) continue;
+        if (item->meshRenderer) {
             // Suponiendo que meshRenderer tiene métodos para obtener stats
             metrics.drawCalls++;
-            metrics.totalVertices += item.meshRenderer->getVertexCount();
-            metrics.totalTriangles += item.meshRenderer->getTriangleCount();
-        } else if (!item.modelPath.empty()) {
+            metrics.totalVertices += item->meshRenderer->getVertexCount();
+            metrics.totalTriangles += item->meshRenderer->getTriangleCount();
+        } else if (!item->modelPath.empty()) {
             try {
-                Model model(item.modelPath);
+                Model model(item->modelPath);
                 metrics.drawCalls++;
                 metrics.totalVertices += model.getVertexCount();
                 metrics.totalTriangles += model.getTriangleCount();

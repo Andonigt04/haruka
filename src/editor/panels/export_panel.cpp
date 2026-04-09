@@ -6,14 +6,79 @@
 #include <filesystem>
 #include <iostream>
 #include <cstring>
+#include <system_error>
+#include <algorithm>
 
 namespace fs = std::filesystem;
+
+namespace {
+struct FileCopyPlan {
+    fs::path sourceRoot;
+    fs::path destinationRoot;
+    std::vector<fs::path> files;
+    size_t cursor = 0;
+    std::string label;
+};
+}
+
+struct ExportPanel::ExportBatchState {
+    Haruka::Project* project = nullptr;
+    fs::path projectPath;
+    fs::path exportFolder;
+    fs::path shadersSource;
+    std::string engineBinary;
+    std::string logicLibSrc;
+    std::string logicLibDst;
+    std::string runScriptPath;
+    std::vector<FileCopyPlan> plans;
+    size_t planCursor = 0;
+    std::string status;
+    bool ready = false;
+};
+
+ExportPanel::ExportTask::ExportTask(ExportPanel* panel)
+    : EditorTaskBase("Export Game"), owner(panel) {}
+
+bool ExportPanel::ExportTask::onStart(std::string& error) {
+    if (!owner) {
+        error = "Export panel unavailable.";
+        return false;
+    }
+    if (!owner->prepareExport(owner->pendingEditorApp, error)) {
+        return false;
+    }
+    return true;
+}
+
+void ExportPanel::ExportTask::onUpdate() {
+    if (!owner) {
+        fail("Export panel unavailable.");
+        return;
+    }
+    owner->updateExportTask();
+}
+
+void ExportPanel::ExportTask::onCancel() {
+    if (owner) {
+        owner->setExportError("Export cancelled by user.");
+        owner->finishExportTask();
+    }
+}
 
 ExportPanel::ExportPanel() {
     strcpy(version, "1.0.0");
 }
 
 ExportPanel::~ExportPanel() = default;
+
+void ExportPanel::update() {
+    if (activeTask && activeTask->isRunning()) {
+        activeTask->update();
+    }
+    if (activeTask && activeTask->isDone()) {
+        activeTask.reset();
+    }
+}
 
 void ExportPanel::render(EditorApplication* editorApp) {
     if (!visible) return;
@@ -118,7 +183,7 @@ void ExportPanel::render(EditorApplication* editorApp) {
         if (ImGui::Button("Export Game", ImVec2(150, 0))) {
             if (isValid) {
                 saveProjectSettings(editorApp);
-                performExport(editorApp);
+                startExportTask(editorApp);
             } else {
                 exportStatus = "Fill all required fields";
                 exportStatusError = true;
@@ -139,6 +204,15 @@ void ExportPanel::render(EditorApplication* editorApp) {
         
         // ===== STATUS =====
         ImGui::Separator();
+        if (activeTask && activeTask->isRunning()) {
+            ImGui::Text("Export running...");
+            ImGui::ProgressBar(activeTask->getProgress(), ImVec2(-1.0f, 0.0f));
+            ImGui::TextWrapped("%s", activeTask->getStatus().c_str());
+            if (ImGui::Button("Cancel Export")) {
+                activeTask->requestCancel();
+            }
+            ImGui::Separator();
+        }
         if (!exportStatus.empty()) {
             if (exportStatusError) {
                 ImGui::TextColored(ImVec4(1, 0, 0, 1), "%s", exportStatus.c_str());
@@ -176,6 +250,183 @@ void ExportPanel::loadProjectSettings(EditorApplication* editorApp) {
     exportStatusError = false;
 }
 
+bool ExportPanel::prepareExport(EditorApplication* editorApp, std::string& error) {
+    if (!editorApp) {
+        error = "Editor application unavailable.";
+        return false;
+    }
+    Haruka::Project* project = editorApp->getProject();
+    if (!project) {
+        error = "No project loaded.";
+        return false;
+    }
+
+    auto& config = project->getConfig();
+    config.name = std::string(gameName);
+    config.version = std::string(version);
+    config.exportSettings.author = std::string(author);
+    config.exportSettings.description = std::string(description);
+
+    if (config.engineBinary.empty()) {
+        std::string defaultEngineBin = project->getPath() + "/../../build/HarukaEngine";
+        if (std::filesystem::exists(defaultEngineBin)) {
+            config.engineBinary = std::filesystem::absolute(defaultEngineBin).string();
+        } else if (std::filesystem::exists("/mnt/sdb1/haruka/build/HarukaEngine")) {
+            config.engineBinary = "/mnt/sdb1/haruka/build/HarukaEngine";
+        } else {
+            config.engineBinary = "HarukaEngine";
+        }
+    }
+    project->save();
+
+    batchState = std::make_unique<ExportBatchState>();
+    batchState->project = project;
+    batchState->projectPath = project->getPath();
+    batchState->exportFolder = config.outputPath.empty() ? fs::path(batchState->projectPath) / "export" : fs::path(config.outputPath);
+    batchState->shadersSource = shadersPath;
+    batchState->engineBinary = config.engineBinary;
+    batchState->logicLibSrc = (batchState->projectPath / "build" / ("lib" + config.name + ".so")).string();
+    batchState->logicLibDst = (batchState->exportFolder / ("lib" + config.name + ".so")).string();
+    batchState->runScriptPath = (batchState->exportFolder / config.name).string();
+
+    try {
+        fs::create_directories(batchState->exportFolder);
+        batchState->plans.clear();
+
+        auto collectFiles = [](const fs::path& root) {
+            std::vector<fs::path> result;
+            if (!fs::exists(root)) return result;
+            for (const auto& entry : fs::recursive_directory_iterator(root)) {
+                if (entry.is_regular_file()) result.push_back(entry.path());
+            }
+            return result;
+        };
+
+        batchState->plans.push_back({batchState->projectPath / "scenes", batchState->exportFolder / "scenes", collectFiles(batchState->projectPath / "scenes"), 0, "Scenes"});
+        batchState->plans.push_back({batchState->projectPath / "assets", batchState->exportFolder / "assets", collectFiles(batchState->projectPath / "assets"), 0, "Assets"});
+        if (!batchState->shadersSource.empty() && fs::exists(batchState->shadersSource)) {
+            batchState->plans.push_back({batchState->shadersSource, batchState->exportFolder / "shaders", collectFiles(batchState->shadersSource), 0, "Shaders"});
+        }
+
+        exportStatus = "Export prepared.";
+        exportStatusError = false;
+        batchState->ready = true;
+        error.clear();
+        return true;
+    } catch (const std::exception& e) {
+        error = e.what();
+        batchState.reset();
+        return false;
+    }
+}
+
+void ExportPanel::setExportError(const std::string& message) {
+    exportStatus = message;
+    exportStatusError = true;
+}
+
+void ExportPanel::startExportTask(EditorApplication* editorApp) {
+    if (activeTask && activeTask->isRunning()) {
+        exportStatus = "Export already running.";
+        exportStatusError = true;
+        return;
+    }
+
+    pendingEditorApp = editorApp;
+    activeTask = std::make_unique<ExportTask>(this);
+    if (!activeTask->start()) {
+        exportStatus = activeTask->getStatus();
+        exportStatusError = true;
+        pendingEditorApp = nullptr;
+    }
+}
+
+void ExportPanel::updateExportTask() {
+    if (!batchState || !batchState->ready) {
+        return;
+    }
+
+    constexpr size_t kFilesPerFrame = 80;
+    size_t totalFiles = 0;
+    size_t doneFiles = 0;
+    for (const auto& plan : batchState->plans) {
+        totalFiles += plan.files.size();
+        doneFiles += std::min(plan.cursor, plan.files.size());
+    }
+
+    if (batchState->planCursor < batchState->plans.size()) {
+        auto& plan = batchState->plans[batchState->planCursor];
+        fs::create_directories(plan.destinationRoot);
+        size_t processed = 0;
+        while (plan.cursor < plan.files.size() && processed < kFilesPerFrame) {
+            const auto& sourceFile = plan.files[plan.cursor++];
+            auto relative = fs::relative(sourceFile, plan.sourceRoot);
+            auto destinationFile = plan.destinationRoot / relative;
+            fs::create_directories(destinationFile.parent_path());
+            std::error_code ec;
+            fs::copy_file(sourceFile, destinationFile, fs::copy_options::overwrite_existing, ec);
+            if (ec) {
+                setExportError(std::string("Failed to copy ") + sourceFile.string() + ": " + ec.message());
+                if (activeTask) activeTask->reportFail(exportStatus);
+                finishExportTask();
+                return;
+            }
+            processed++;
+            doneFiles++;
+        }
+
+        if (plan.cursor >= plan.files.size()) {
+            batchState->planCursor++;
+        }
+
+        float stageRatio = batchState->plans.empty() ? 1.0f : static_cast<float>(batchState->planCursor) / static_cast<float>(batchState->plans.size());
+        float fileRatio = totalFiles == 0 ? 1.0f : static_cast<float>(doneFiles) / static_cast<float>(totalFiles);
+        if (batchState->planCursor < batchState->plans.size()) {
+            exportStatus = "Copying " + batchState->plans[batchState->planCursor].label + "...";
+        } else {
+            exportStatus = "Finalizing export...";
+        }
+        if (activeTask) {
+            activeTask->reportProgress(std::clamp(0.15f + fileRatio * 0.55f + stageRatio * 0.20f, 0.0f, 0.95f), exportStatus);
+        }
+        return;
+    }
+
+    try {
+        if (!batchState->logicLibSrc.empty() && fs::exists(batchState->logicLibSrc)) {
+            fs::create_directories(fs::path(batchState->logicLibDst).parent_path());
+            fs::copy_file(batchState->logicLibSrc, batchState->logicLibDst, fs::copy_options::overwrite_existing);
+        }
+
+        if (!batchState->engineBinary.empty() && fs::exists(batchState->engineBinary)) {
+            fs::copy_file(batchState->engineBinary, batchState->exportFolder / "HarukaEngine", fs::copy_options::overwrite_existing);
+        }
+
+        fs::copy_file(batchState->projectPath / "project.hrk", batchState->exportFolder / "project.hrk", fs::copy_options::overwrite_existing);
+
+        std::ofstream runFile(batchState->runScriptPath);
+        runFile << "#!/bin/bash\n";
+        runFile << "DIR=\"$(dirname \"$0\")\"\n";
+        runFile << "$DIR/HarukaEngine $DIR/project.hrk\n";
+        runFile.close();
+        fs::permissions(batchState->runScriptPath, fs::perms::owner_exec | fs::perms::owner_write | fs::perms::owner_read);
+
+        exportStatus = "✓ Game exported successfully to " + batchState->exportFolder.string();
+        exportStatusError = false;
+        if (activeTask) activeTask->reportComplete(exportStatus);
+    } catch (const std::exception& e) {
+        setExportError(std::string("Export failed: ") + e.what());
+        if (activeTask) activeTask->reportFail(exportStatus);
+    }
+
+    finishExportTask();
+}
+
+void ExportPanel::finishExportTask() {
+    pendingEditorApp = nullptr;
+    batchState.reset();
+}
+
 void ExportPanel::saveProjectSettings(EditorApplication* editorApp) {
     if (!editorApp) return;
     Haruka::Project* project = editorApp->getProject();
@@ -197,91 +448,5 @@ bool ExportPanel::validateSettings() const {
 }
 
 void ExportPanel::performExport(EditorApplication* editorApp) {
-    if (!editorApp) return;
-    Haruka::Project* project = editorApp->getProject();
-    if (!project) return;
-    
-    // Guardar los metadatos en el proyecto
-    auto& config = project->getConfig();
-    config.name = std::string(gameName);
-    config.version = std::string(version);
-    config.exportSettings.author = std::string(author);
-    config.exportSettings.description = std::string(description);
-    // Si engineBinary está vacío, usar ruta por defecto
-    if (config.engineBinary.empty()) {
-        std::string defaultEngineBin = editorApp->getProject()->getPath() + "/../../build/HarukaEngine";
-        if (std::filesystem::exists(defaultEngineBin)) {
-            config.engineBinary = std::filesystem::absolute(defaultEngineBin).string();
-        } else if (std::filesystem::exists("/mnt/sdb1/haruka/build/HarukaEngine")) {
-            config.engineBinary = "/mnt/sdb1/haruka/build/HarukaEngine";
-        } else {
-            config.engineBinary = "HarukaEngine";
-        }
-    }
-    project->save();
-
-    std::string projectPath = project->getPath();
-    std::string exportFolder = config.outputPath;
-    if (exportFolder.empty()) exportFolder = projectPath + "/export";
-    try {
-        // Crear directorios
-        std::filesystem::create_directories(exportFolder);
-        std::filesystem::create_directories(exportFolder + "/scenes");
-        std::filesystem::create_directories(exportFolder + "/assets");
-
-        // Copiar escenas
-        std::filesystem::copy(projectPath + "/scenes", exportFolder + "/scenes", 
-            std::filesystem::copy_options::overwrite_existing | 
-            std::filesystem::copy_options::recursive);
-
-        // Copiar assets
-        std::filesystem::copy(projectPath + "/assets", exportFolder + "/assets", 
-            std::filesystem::copy_options::overwrite_existing | 
-            std::filesystem::copy_options::recursive);
-
-        // Copiar shaders desde la ruta indicada en shadersPath, si existe
-        if (strlen(shadersPath) > 0 && std::filesystem::exists(shadersPath)) {
-            std::string destShaders = exportFolder + "/shaders";
-            std::filesystem::create_directories(destShaders);
-            std::filesystem::copy(shadersPath, destShaders,
-                std::filesystem::copy_options::overwrite_existing |
-                std::filesystem::copy_options::recursive);
-        }
-
-        // Copiar librería de lógica en export/ desde build
-        std::filesystem::create_directories(exportFolder + "/");
-        std::string logicLibSrc = projectPath + "/build/lib" + config.name + ".so";
-        std::string logicLibDst = exportFolder + "/lib" + config.name + ".so";
-        if (std::filesystem::exists(logicLibSrc)) {
-            std::filesystem::copy(logicLibSrc, logicLibDst, std::filesystem::copy_options::overwrite_existing);
-        } else {
-            std::cerr << "No se encontró la librería lógica para exportar: " << logicLibSrc << std::endl;
-        }
-
-        // Copiar configuración
-        std::filesystem::copy(projectPath + "/project.hrk", 
-            exportFolder + "/project.hrk", 
-            std::filesystem::copy_options::overwrite_existing);
-
-        // Copiar ejecutable del motor (HarukaEngine)
-        std::string engineBin = config.engineBinary;
-        if (!engineBin.empty() && std::filesystem::exists(engineBin)) {
-            std::filesystem::copy(engineBin, exportFolder + "/HarukaEngine", std::filesystem::copy_options::overwrite_existing);
-        }
-
-        // Crear script de arranque sin extensión (por ejemplo, 'run')
-        std::string runScript = exportFolder + "/" + config.name;
-        std::ofstream runFile(runScript);
-        runFile << "#!/bin/bash\n";
-        runFile << "DIR=\"$(dirname \"$0\")\"\n";
-        runFile << "$DIR/HarukaEngine $DIR/project.hrk\n";
-        runFile.close();
-        std::filesystem::permissions(runScript, std::filesystem::perms::owner_exec | std::filesystem::perms::owner_write | std::filesystem::perms::owner_read);
-
-        exportStatus = "✓ Game exported successfully to " + exportFolder;
-        exportStatusError = false;
-    } catch (const std::exception& e) {
-        exportStatus = std::string("Export failed: ") + e.what();
-        exportStatusError = true;
-    }
+    startExportTask(editorApp);
 }

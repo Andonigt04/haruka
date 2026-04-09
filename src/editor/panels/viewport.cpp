@@ -373,6 +373,13 @@ void ViewportPanel::renderScene() {
                 statsPanel->setTotalVertexCount(Application::getLastTotalVertices());
                 statsPanel->setTotalDrawCalls(Application::getLastTotalDrawCalls());
                 statsPanel->setTotalTriangleCount(Application::getLastTotalTriangles());
+                statsPanel->setVisibleChunkCount(Application::getLastVisibleChunks());
+                statsPanel->setResidentChunkCount(Application::getLastResidentChunks());
+                statsPanel->setPendingChunkLoads(Application::getLastPendingChunkLoads());
+                statsPanel->setPendingChunkEvictions(Application::getLastPendingChunkEvictions());
+                statsPanel->setResidentMemoryMB(Application::getLastResidentMemoryMB());
+                statsPanel->setTrackedChunkCount(Application::getLastTrackedChunks());
+                statsPanel->setMaxMemoryMB(Application::getLastMaxMemoryMB());
             }
             return;
         } else if (motorTarget) {
@@ -388,6 +395,13 @@ void ViewportPanel::renderScene() {
                 statsPanel->setTotalVertexCount(Application::getLastTotalVertices());
                 statsPanel->setTotalDrawCalls(Application::getLastTotalDrawCalls());
                 statsPanel->setTotalTriangleCount(Application::getLastTotalTriangles());
+                statsPanel->setVisibleChunkCount(Application::getLastVisibleChunks());
+                statsPanel->setResidentChunkCount(Application::getLastResidentChunks());
+                statsPanel->setPendingChunkLoads(Application::getLastPendingChunkLoads());
+                statsPanel->setPendingChunkEvictions(Application::getLastPendingChunkEvictions());
+                statsPanel->setResidentMemoryMB(Application::getLastResidentMemoryMB());
+                statsPanel->setTrackedChunkCount(Application::getLastTrackedChunks());
+                statsPanel->setMaxMemoryMB(Application::getLastMaxMemoryMB());
             }
             return;
         } else {
@@ -399,6 +413,13 @@ void ViewportPanel::renderScene() {
                 statsPanel->setTotalVertexCount(0);
                 statsPanel->setTotalDrawCalls(0);
                 statsPanel->setTotalTriangleCount(0);
+                statsPanel->setVisibleChunkCount(0);
+                statsPanel->setResidentChunkCount(0);
+                statsPanel->setPendingChunkLoads(0);
+                statsPanel->setPendingChunkEvictions(0);
+                statsPanel->setResidentMemoryMB(0);
+                statsPanel->setTrackedChunkCount(0);
+                statsPanel->setMaxMemoryMB(0);
             }
             return;
         }
@@ -519,7 +540,8 @@ void ViewportPanel::renderScene() {
             }
 
             sceneShader->use();
-            sceneShader->setMat4("projection", glm::perspective(glm::radians(60.0f), (float)width / (float)height, nearPlane, farPlane));
+            const glm::mat4 projection = glm::perspective(glm::radians(60.0f), (float)width / (float)height, nearPlane, farPlane);
+            sceneShader->setMat4("projection", projection);
             sceneShader->setMat4("view", cameraView);
             sceneShader->setMat4("lightSpaceMatrix", glm::mat4(1.0f));
             if (cascadedShadow) {
@@ -538,8 +560,44 @@ void ViewportPanel::renderScene() {
             sceneShader->setVec3("sunLightColor", sunColor * sunEnergy);
             sceneShader->setFloat("ambientStrength", 0.12f);
             sceneShader->setBool("useShadowMap", false);
+
+            glm::vec3 camDir = glm::vec3(0.0f, 0.0f, 1.0f);
+            if (camera) {
+                glm::vec3 cp = camera->position;
+                float cpl = glm::length(cp);
+                if (cpl > 1e-6f) camDir = cp / cpl;
+            }
+
+            auto isChunkFacingCamera = [&](const Haruka::SceneObject& obj) -> bool {
+                if (!obj.properties.is_object()) return true;
+                if (!obj.properties.contains("terrainEditor")) return true;
+                const auto& te = obj.properties["terrainEditor"];
+                if (!te.is_object() || !te.value("isChunk", false)) return true;
+
+                if (!te.contains("chunkX") || !te.contains("chunkY") || !te.contains("chunkTilesX") || !te.contains("chunkTilesY")) return true;
+
+                int chunkX = te.value("chunkX", -1);
+                int chunkY = te.value("chunkY", -1);
+                int tilesX = te.value("chunkTilesX", 0);
+                int tilesY = te.value("chunkTilesY", 0);
+                if (chunkX < 0 || chunkY < 0 || tilesX <= 0 || tilesY <= 0) return true;
+
+                constexpr float kPiLocal = 3.14159265358979323846f;
+                float lat = ((static_cast<float>(chunkY) + 0.5f) / static_cast<float>(tilesY)) * kPiLocal - (kPiLocal * 0.5f);
+                float lon = ((static_cast<float>(chunkX) + 0.5f) / static_cast<float>(tilesX)) * (2.0f * kPiLocal) - kPiLocal;
+                glm::vec3 chunkDir(
+                    std::cos(lat) * std::cos(lon),
+                    std::sin(lat),
+                    std::cos(lat) * std::sin(lon)
+                );
+
+                // Render near/front hemisphere of the planet plus a small margin.
+                return glm::dot(chunkDir, camDir) > -0.15f;
+            };
+
             for (auto& obj : currentScene->getObjectsMutable()) {
                 if (isRenderDisabledByEditor(obj)) continue;
+                if (!isChunkFacingCamera(obj)) continue;
                 int layer = std::clamp(obj.renderLayer, 1, 5);
                 double unloadDistance = Application::getLayerMaxDistance(layer);
                 if (obj.meshRenderer && layer >= 4) {

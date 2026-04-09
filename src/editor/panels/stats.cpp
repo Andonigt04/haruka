@@ -56,6 +56,15 @@ void StatsPanel::onImGuiRender() {
     ImGui::BulletText("Triangles Total: %d", totalTriangleCount);
     ImGui::BulletText("Draw Calls Rendered: %d", renderedDrawCalls);
     ImGui::BulletText("Draw Calls Total: %d", totalDrawCalls);
+
+    ImGui::Separator();
+    ImGui::Text("Chunk Streaming:");
+    ImGui::BulletText("Visible Chunks: %d", visibleChunkCount);
+    ImGui::BulletText("Tracked Chunks: %d", trackedChunkCount);
+    ImGui::BulletText("Resident Chunks: %d", residentChunkCount);
+    ImGui::BulletText("Pending Loads: %d", pendingChunkLoads);
+    ImGui::BulletText("Pending Evictions: %d", pendingChunkEvictions);
+    ImGui::BulletText("Memory: %d / %d MB", residentMemoryMB, maxMemoryMB);
     
     ImGui::Separator();
     

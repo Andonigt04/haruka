@@ -28,6 +28,20 @@ public:
     void setTotalDrawCalls(int count) { totalDrawCalls = count; }
     /** @brief Sets total triangle count. */
     void setTotalTriangleCount(int count) { totalTriangleCount = count; }
+    /** @brief Sets currently visible terrain chunk count. */
+    void setVisibleChunkCount(int count) { visibleChunkCount = count; }
+    /** @brief Sets currently resident terrain chunk count. */
+    void setResidentChunkCount(int count) { residentChunkCount = count; }
+    /** @brief Sets pending chunk-load queue size. */
+    void setPendingChunkLoads(int count) { pendingChunkLoads = count; }
+    /** @brief Sets pending chunk-eviction queue size. */
+    void setPendingChunkEvictions(int count) { pendingChunkEvictions = count; }
+    /** @brief Sets current resident chunk memory in MB. */
+    void setResidentMemoryMB(int mb) { residentMemoryMB = mb; }
+    /** @brief Sets tracked chunk count in streaming system. */
+    void setTrackedChunkCount(int count) { trackedChunkCount = count; }
+    /** @brief Sets streaming memory budget (MB). */
+    void setMaxMemoryMB(int mb) { maxMemoryMB = mb; }
 
 private:
     float fps = 0.0f;
@@ -38,6 +52,13 @@ private:
     int totalVertexCount = 0;
     int totalDrawCalls = 0;
     int totalTriangleCount = 0;
+    int visibleChunkCount = 0;
+    int residentChunkCount = 0;
+    int pendingChunkLoads = 0;
+    int pendingChunkEvictions = 0;
+    int residentMemoryMB = 0;
+    int trackedChunkCount = 0;
+    int maxMemoryMB = 0;
     
     std::deque<float> fpsHistory;
     std::deque<float> frameTimeHistory;

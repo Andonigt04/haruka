@@ -4,6 +4,7 @@
 #include <glm/glm.hpp>
 #include <glm/gtx/intersect.hpp>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 /**
@@ -42,6 +43,12 @@ public:
                  const std::vector<glm::vec3>& vertices,
                  const std::vector<unsigned int>& indices);
 
+    /** @brief Removes one mesh from raycast set by id. */
+    void removeMesh(const std::string& id);
+
+    /** @brief Clears all registered meshes. */
+    void clearMeshes();
+
     /** @brief Casts a ray and returns the closest hit. */
     RaycastHit raycast(const glm::vec3& origin, 
                        const glm::vec3& direction,
@@ -53,7 +60,11 @@ public:
     }
 
 private:
+    std::unordered_map<std::string, std::vector<RaycastTriangle>> meshTriangles;
     std::vector<RaycastTriangle> triangles;
+
+    /** @brief Rebuilds flattened triangle list after mesh map updates. */
+    void rebuildTriangleCache();
 
     /** @brief Tests one ray against one triangle. */
     bool rayTriangleIntersect(const glm::vec3& rayOrigin,
