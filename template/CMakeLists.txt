@@ -9,16 +9,16 @@ set(ENGINE_ROOT "/mnt/sdb1/haruka")
 set(ENGINE_BUILD_DIR "${ENGINE_ROOT}/build")
 
 # Buscar librería del engine
-find_library(HarukaEngineLib_LIBRARY
-    NAMES HarukaEngineLib
+find_library(HarukaEngine_LIBRARY
+    NAMES HarukaEngine
     PATHS
         ${ENGINE_BUILD_DIR}
         ${ENGINE_BUILD_DIR}/lib
     NO_DEFAULT_PATH
 )
 
-if(NOT HarukaEngineLib_LIBRARY)
-    message(FATAL_ERROR "HarukaEngineLib not found. Compile the engine first.")
+if(NOT HarukaEngine_LIBRARY)
+    message(FATAL_ERROR "HarukaEngine not found. Compile the engine first.")
 endif()
 
 find_path(HarukaEngineLib_INCLUDE_DIR

@@ -1,29 +1,15 @@
-#include "core/application.h"
-#include "core/json.hpp"
+// src/main_editor.cpp
+#include "editor_app.h"
 #include <iostream>
-#include <fstream>
-#include <stdexcept>
 
-int main() {
-    Application app;
-
-    std::string startScenePath = "";
-    // Leer project.hrk si existe
-    std::ifstream f("project.hrk");
-    if (f.is_open()) {
-        nlohmann::json j;
-        f >> j;
-        if (j.contains("startScene")) {
-            startScenePath = j["startScene"].get<std::string>();
-        }
-    }
-
+int main(int argc, char** argv) {
     try {
-        app.run(startScenePath);
+        EditorApplication editor;
+        editor.run();
     } catch (const std::exception& e) {
-        std::cerr << "Excepcion capturada: " << e.what() << std::endl;
-        return EXIT_FAILURE;
+        std::cerr << "Fatal error: " << e.what() << std::endl;
+        return 1;
     }
-
-    return EXIT_SUCCESS;
+    
+    return 0;
 }
