@@ -148,7 +148,7 @@ vec3 CalcDirLight(DirLight light, vec3 normal, vec3 fragPos, vec3 viewDir, vec3 
     vec3 lightDir = normalize(-light.direction);
     
     // Ambient SIEMPRE visible (nunca en sombra)
-    vec3 ambient  = light.ambient  * diffTex;
+    vec3 ambient  = max(light.ambient, vec3(0.15)) * diffTex;
     
     // Diffuse y Specular solo si NO hay sombra
     float diff = max(dot(normal, lightDir), 0.0);

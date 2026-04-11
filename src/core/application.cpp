@@ -359,7 +359,7 @@ void Application::init(Haruka::Scene& scene) {
 
     // Inicializar GPU instancing para renderizado eficiente
     _instancing = std::make_unique<GPUInstancing>();
-    _instancing->init(10000);  // Máximo 10k instancias por batch
+    _instancing->init(100000);  // Máximo 10k instancias por batch
 
     // Inicializar Asset Streaming para cargar assets bajo demanda
     AssetStreamer::getInstance().init(512, 2);  // 512 MB cache, 2 worker threads
@@ -384,6 +384,7 @@ void Application::init(Haruka::Scene& scene) {
     _virtualTexturing->init(vtConfig);
 
     // Inicializar Raycast System
+    _planetarySystem = std::make_unique<Haruka::PlanetarySystem>();
     _raycastSystem = std::make_unique<RaycastSimple>();
     _terrainStreamingSystem = std::make_unique<Haruka::TerrainStreamingSystem>();
 
@@ -440,7 +441,7 @@ void Application::renderScene(Shader* shader) {
     bool canCullByFrustum = false;
 
     if (activeCamera) {
-        camPos = glm::dvec3(activeCamera->position);
+        camPos = activeCamera->position;
         glm::mat4 proj = glm::perspective(glm::radians(activeCamera->zoom), static_cast<float>(aspect), static_cast<float>(nearPlane), static_cast<float>(farPlane));
         glm::mat4 view = activeCamera->getViewMatrix();
         viewProj = proj * view;
@@ -451,9 +452,9 @@ void Application::renderScene(Shader* shader) {
     if (_terrainStreamingSystem) {
         _terrainStreamingSystem->update(scene,
                                         _worldSystem.get(),
+                                        _planetarySystem.get(),
                                         _raycastSystem.get(),
-                                        activeCamera ? activeCamera->position : Haruka::WorldPos(0.0),
-                                        viewProj,
+                                        activeCamera,
                                         &terrainStats);
     }
 
@@ -467,13 +468,13 @@ void Application::renderScene(Shader* shader) {
 
     for (auto& obj : scene->getObjectsMutable()) {
         if (isRenderDisabledByEditor(obj)) continue;
-        if (!isTerrainChunkFacingCamera(obj, glm::vec3(activeCamera ? activeCamera->position : glm::dvec3(0.0)))) continue;
+        if (!isTerrainChunkFacingCamera(obj, activeCamera ? activeCamera->position : glm::dvec3(0.0))) continue;
         Haruka::ObjectType objType = Haruka::stringToObjectType(obj.type);
         if (!Haruka::isRenderableObjectType(objType)) continue;
 
         int layer = std::clamp(obj.renderLayer, 1, 5);
-        glm::dvec3 worldPos = obj.getWorldPosition(scene);
-        glm::dvec3 worldScale = obj.getWorldScale(scene);
+        const glm::dvec3& worldPos = obj.getWorldPosition(scene);
+        const glm::dvec3& worldScale = obj.getWorldScale(scene);
         double maxScale = std::max(std::abs(worldScale.x), std::max(std::abs(worldScale.y), std::abs(worldScale.z)));
         const bool isHugeBody = (maxScale > 1000.0) || (obj.name == "Earth") || (obj.name == "Sun");
 
@@ -483,17 +484,21 @@ void Application::renderScene(Shader* shader) {
             double loadDistance = unloadDistance * 0.85;
 
             if (layer >= 4 && obj.meshRenderer) {
-                double dist = glm::length(worldPos - camPos);
-                if (dist > unloadDistance * 1.15) {
+                glm::dvec3 diff = worldPos - camPos;
+                double distSq = glm::dot(diff, diff);
+                double unloadDistSq = unloadDistance * unloadDistance * 1.32;  // (1.15)² ≈ 1.32
+                double loadDistanceSq = loadDistance * loadDistance;
+                if (distSq > unloadDistSq) {
                     maybeReleasePrimitiveMesh(obj);
-                } else if (!obj.meshRenderer->isResident() && dist < loadDistance) {
+                } else if (!obj.meshRenderer->isResident() && distSq < loadDistanceSq) {
                     buildPrimitiveMeshFromProperties(obj);
                 }
             }
 
             if (layer >= 4 && !obj.modelPath.empty()) {
-                double dist = glm::length(worldPos - camPos);
-                if (dist > unloadDistance * 1.15) {
+                double distSq = glm::dot(worldPos - camPos, worldPos - camPos);
+                double unloadDistSq = unloadDistance * unloadDistance * 1.32;
+                if (distSq > unloadDistSq) {
                     releaseModelFromCache(obj.modelPath);
                 }
             }
@@ -513,10 +518,12 @@ void Application::renderScene(Shader* shader) {
             }
 
             if (layer != 1) {
-                static const double qualityMul[4] = {0.45, 0.70, 1.00, 1.35};
-                double dist = glm::length(worldPos - camPos);
+                static constexpr double qualityMul[4] = {0.45, 0.70, 1.00, 1.35};
+                glm::dvec3 diff = worldPos - camPos;
+                double distSq = glm::dot(diff, diff);
                 double maxDist = static_cast<double>(s_layerMaxDistance[layer]) * qualityMul[s_renderQualityPreset];
-                if (dist - radius > maxDist) {
+                double radiusPlus = radius + maxDist;
+                if (std::sqrt(distSq) > radiusPlus) {
                     continue;
                 }
             }

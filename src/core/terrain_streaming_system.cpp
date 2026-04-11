@@ -10,8 +10,11 @@
     #include <unistd.h>
 #endif
 
+#include "core/camera.h"
 #include "core/components/mesh_renderer_component.h"
 #include "physics/raycast_simple.h"
+#include "renderer/motor_instance.h"
+#include "core/application.h"
 
 namespace Haruka {
 
@@ -230,7 +233,15 @@ void TerrainStreamingSystem::ensureTerrainChunkKeysAndGrid(Scene* scene, WorldSy
 
     if (!planetObj) return;
 
-    // Ocultar el mesh base del planeta cuando streaming comienza
+
+    // Lógica de visibilidad del mesh base:
+    // Si hay chunks residentes/visibles, liberar mesh base. Si no hay, restaurar mesh base.
+    bool hasChunks = false;
+    if (worldSystem) {
+        const auto& visibleChunks = worldSystem->getVisibleChunks();
+        hasChunks = !visibleChunks.empty();
+    }
+    // Ocultar SIEMPRE el mesh base del planeta para pruebas visuales
     if (planetObj->meshRenderer) {
         planetObj->meshRenderer->releaseMesh();
     }
@@ -250,8 +261,8 @@ void TerrainStreamingSystem::ensureTerrainChunkKeysAndGrid(Scene* scene, WorldSy
     worldSystem->setChunkGrid(0, 0, tilesPerFace, tilesPerFace, maxLod);
 }
 
-PlanetGenerator::PlanetConfig TerrainStreamingSystem::buildPlanetConfigFromChunkSource(const SceneObject& chunkObj, Scene* scene) {
-    PlanetGenerator::PlanetConfig cfg;
+PlanetarySystem::PlanetConfig TerrainStreamingSystem::buildPlanetConfigFromChunkSource(const SceneObject& chunkObj, Scene* scene) {
+    PlanetarySystem::PlanetConfig cfg;
     cfg.useGPU = false;
 
     auto applyGeneratorJson = [&cfg](const nlohmann::json& gen) {
@@ -300,8 +311,8 @@ PlanetGenerator::PlanetConfig TerrainStreamingSystem::buildPlanetConfigFromChunk
     return cfg;
 }
 
-PlanetGenerator::ChunkConfig TerrainStreamingSystem::buildChunkConfigFromObjectAndKey(const SceneObject& chunkObj, const PlanetChunkKey& key, WorldSystem* worldSystem) {
-    PlanetGenerator::ChunkConfig cc;
+PlanetarySystem::ChunkConfig TerrainStreamingSystem::buildChunkConfigFromObjectAndKey(const SceneObject& chunkObj, const PlanetChunkKey& key, WorldSystem* worldSystem) {
+    PlanetarySystem::ChunkConfig cc;
     cc.face = key.face;
     cc.lod = key.lod;
     cc.tileX = key.x;
@@ -411,14 +422,9 @@ void TerrainStreamingSystem::invalidateStaleChunkJobs(uint64_t newSceneVersion) 
     }
 }
 
-void TerrainStreamingSystem::update(Scene* scene,
-                                    WorldSystem* worldSystem,
-                                    RaycastSimple* raycastSystem,
-                                    const WorldPos& cameraPos,
-                                    const glm::mat4& viewProj,
-                                    TerrainStreamingStats* outStats) {
+void TerrainStreamingSystem::update(Scene* scene, WorldSystem* worldSystem, PlanetarySystem* planetarySystem, RaycastSimple* raycastSystem, Camera* camera, TerrainStreamingStats* outStats) {
     pollChunkGenerationJobs();
-    if (!scene || !worldSystem) return;
+    if (!scene || !worldSystem || !camera) return;
 
     const uint64_t sceneVersion = reinterpret_cast<uint64_t>(scene);
     const bool sceneChanged = (currentSceneVersion != sceneVersion);
@@ -467,27 +473,19 @@ void TerrainStreamingSystem::update(Scene* scene,
     size_t maxPendingMB = static_cast<size_t>((availableMemory * 20) / (100 * 1024 * 1024));
     
     worldSystem->setChunkStreamingBudgets(loadsPerFrame, evictsPerFrame, maxResidentMB, maxPendingMB);
-    worldSystem->updateLocalPositions(cameraPos);
-    
-    // Extraer forward vector de la cámara de manera correcta
-    // La matriz viewProj = projection * view
-    // El forward está en -view[2] (negativo porque en OpenGL forward es -Z)
-    glm::mat4 view = glm::inverse(viewProj);
-    // El forward es negativo del eje Z de la matriz inversa (corrección de coordenadas)
-    glm::vec3 cameraForward = -glm::normalize(glm::vec3(view[2][0], view[2][1], view[2][2]));
-    
+    worldSystem->updateLocalPositions(camera->position);
+        
     // Extended view distance for better LOD transitions and less pop-in
     float maxViewDistance = 60000.0f;  // Vista muy extendida para evitar pop-in
-    worldSystem->frustumCull(cameraPos, viewProj, maxViewDistance);
+    worldSystem->frustumCull(camera->position, camera->getViewMatrix(), maxViewDistance);
     
     // Aggressive chunk loading: load chunks en dirección de la cámara
     // Solo cargar chunks que estén en el hemisferio hacia el que mira la cámara
     float loadDistance = 30000.0f;     // Load radius en dirección forward
     float unloadDistance = 45000.0f;   // Only unload very far chunks
     
-    // Usar cameraForward para decidir qué chunks cargar
-    glm::vec3 camPosVec = glm::vec3(cameraPos.x, cameraPos.y, cameraPos.z);
-    worldSystem->updateVisibleChunks(cameraPos, loadDistance, 0, &cameraForward);
+    // Pasar pointer a camera directamente sin extraer variables
+    worldSystem->updateVisibleChunks(loadDistance, 0, camera);
     worldSystem->scheduleChunkStreaming();
 
     if (outStats) {
@@ -522,21 +520,20 @@ void TerrainStreamingSystem::update(Scene* scene,
                 }
                 chunkReadyData.erase(readyIt);
             } else if (chunkGenJobs.find(key) == chunkGenJobs.end()) {
-                PlanetGenerator::PlanetConfig cfg = buildPlanetConfigFromChunkSource(*chunk, scene);
+                PlanetarySystem::PlanetConfig cfg = buildPlanetConfigFromChunkSource(*chunk, scene);
                 cfg.useGPU = false;
-                PlanetGenerator::ChunkConfig cc = buildChunkConfigFromObjectAndKey(*chunk, key, worldSystem);
-                
-                // Capture key for use in lambda
+                PlanetarySystem::ChunkConfig cc = buildChunkConfigFromObjectAndKey(*chunk, key, worldSystem);
+
+                // Se asume que planetarySystem* está accesible (ajustar si es necesario)
                 PlanetChunkKey capturedKey = key;
-                
-                chunkGenJobs[key] = std::async(std::launch::async, [cfg, cc, capturedKey]() mutable {
-                    // Derive deterministic subseed for this chunk based on its position
+                chunkGenJobs[key] = std::async(std::launch::async, [cfg, cc, capturedKey, planetarySystem]() mutable {
                     uint32_t posHash = (capturedKey.face * 1000000u) + (capturedKey.lod * 10000u) + (capturedKey.x * 100u) + capturedKey.y;
-                    cfg.seedBase = cfg.seedBase + posHash;
-                    cfg.seedContinents = cfg.seedContinents + posHash;
-                    cfg.seedMacro = cfg.seedMacro + posHash;
-                    cfg.seedDetail = cfg.seedDetail + posHash;
-                    return PlanetGenerator::generateChunk(cfg, cc);
+                    PlanetarySystem::PlanetConfig localCfg = cfg;
+                    localCfg.seedBase = localCfg.seedBase + posHash;
+                    localCfg.seedContinents = localCfg.seedContinents + posHash;
+                    localCfg.seedMacro = localCfg.seedMacro + posHash;
+                    localCfg.seedDetail = localCfg.seedDetail + posHash;
+                    return planetarySystem->generateChunk(localCfg, cc, "Earth");
                 });
                 continue;
             } else {

@@ -2,7 +2,6 @@
 #include "player/controller/player_controller.h"
 #include "game_globals.h"
 #include "game/planetary_system.h"
-#include "game/planet_generator.h"
 #include "game/character.h"
 #include "core/world_system.h"
 #include "core/camera.h"
@@ -23,7 +22,7 @@ Haruka::Scene* g_runtimeScene = nullptr;
 
 namespace {
 constexpr bool kEnableDetailedPlanetSurface = true;
-constexpr Haruka::PlanetGenerator::PlanetPreset kPlanetPreset = Haruka::PlanetGenerator::PlanetPreset::EARTH_LIKE;
+constexpr int kPlanetPreset = 0; // Sustituir por preset propio si es necesario
 constexpr int kPlanetSeed = 1337;
 }
 
@@ -76,14 +75,14 @@ void gameOnInit(Haruka::Scene* scene) {
         g_planetarySystem->addBody(earthBody);
 
         if (kEnableDetailedPlanetSurface) {
-            auto cfg = Haruka::PlanetGenerator::getPresetConfig(kPlanetPreset);
+            // Configuración profesional del planeta (ajustar según necesidades)
+            Haruka::PlanetGenerator::PlanetConfig cfg;
             cfg.radius = 1.0f;
             cfg.subdivisions = 8;
             cfg.seedBase = kPlanetSeed;
             cfg.seedContinents = kPlanetSeed + 100;
             cfg.seedMacro = kPlanetSeed + 200;
             cfg.seedDetail = kPlanetSeed + 300;
-
             cfg.continentFrequency = 0.95f;
             cfg.continentWarpStrength = 0.10f;
             cfg.continentHeightStrength = 0.022f;
@@ -93,32 +92,33 @@ void gameOnInit(Haruka::Scene* scene) {
             cfg.detailHeightStrength = 0.0018f;
             cfg.seaLevel = 0.49f;
 
-            Haruka::PlanetGenerator::PlanetData detailed = Haruka::PlanetGenerator::generatePlanet(cfg);
-            g_planetarySystem->setDetailedSurfaceData("Earth", detailed);
+            g_planetarySystem->generatePlanet(cfg, "Earth");
+            const auto* detailed = g_planetarySystem->getPlanetData("Earth");
+            if (detailed) {
+                double supportAlongUp = 1.0;
+                for (const auto& v : detailed->vertices) {
+                    supportAlongUp = std::max(supportAlongUp, glm::dot(glm::dvec3(v), playerSpawnDirection));
+                }
+                playerSpawnHeightKm = earthBody.radius * supportAlongUp + 3.0;
 
-            double supportAlongUp = 1.0;
-            for (const auto& v : detailed.vertices) {
-                supportAlongUp = std::max(supportAlongUp, glm::dot(glm::dvec3(v), playerSpawnDirection));
-            }
-            playerSpawnHeightKm = earthBody.radius * supportAlongUp + 3.0;
-
-            if (scene) {
-                if (auto* earthObj = scene->getObject("Earth")) {
-                    if (!earthObj->meshRenderer) {
-                        earthObj->meshRenderer = std::make_shared<MeshRendererComponent>();
-                    }
-                    if (earthObj->meshRenderer) {
-                        earthObj->meshRenderer->setMesh(detailed.vertices, detailed.normals, detailed.indices);
+                if (scene) {
+                    if (auto* earthObj = scene->getObject("Earth")) {
+                        if (!earthObj->meshRenderer) {
+                            earthObj->meshRenderer = std::make_shared<MeshRendererComponent>();
+                        }
+                        if (earthObj->meshRenderer) {
+                            earthObj->meshRenderer->setMesh(detailed->vertices, detailed->normals, detailed->indices);
+                        }
                     }
                 }
-            }
 
-            std::cout << "[Game] Detailed Earth surface: "
-                      << detailed.vertices.size() << " vertices, "
-                      << (detailed.indices.size() / 3) << " triangles"
-                      << " | minR=" << (earthBody.radius * detailed.minHeight)
-                      << " km maxR=" << (earthBody.radius * detailed.maxHeight)
-                      << " km" << std::endl;
+                std::cout << "[Game] Detailed Earth surface: "
+                          << detailed->vertices.size() << " vertices, "
+                          << (detailed->indices.size() / 3) << " triangles"
+                          << " | minR=" << (earthBody.radius * detailed->minHeight)
+                          << " km maxR=" << (earthBody.radius * detailed->maxHeight)
+                          << " km" << std::endl;
+            }
         }
     }
 

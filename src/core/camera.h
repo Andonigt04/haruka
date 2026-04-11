@@ -2,7 +2,6 @@
 #define CAMERA_H
 
 #include <glm/gtc/matrix_transform.hpp>
-#include <glm/gtc/quaternion.hpp>
 #include "math_types.h"
 
 struct GLFWwindow;
@@ -28,6 +27,8 @@ public:
     glm::vec3 getUp() const;
     /** @brief Returns view matrix from position/orientation state. */
     glm::mat4 getViewMatrix() const;
+    /** @brief Returns projection matrix state. */
+    glm::mat4 getProjectionMatrix() const;
 
     /** @brief Applies mouse-delta rotation update. */
     void rotate(float deltaX, float deltaY);

@@ -48,7 +48,9 @@ Character::Character(const glm::dvec3& position, const std::string& userId)
     
     forward = glm::vec3(0, 0, -1);
     right = glm::vec3(1, 0, 0);
-    upDirection = safeNormalize(position, glm::dvec3(0.0, 1.0, 0.0));
+    // Si planeta está en (0,0,0), es simplemente normalize(position)
+    double posLen = glm::length(position);
+    upDirection = posLen > 1e-6 ? (position / posLen) : glm::dvec3(0.0, 1.0, 0.0);
     
     lastSyncPos = position;
     lastSyncRot = glm::vec3(yaw, pitch, 0);
@@ -248,7 +250,7 @@ void Character::syncToServer() {
     if (!networkClient || !localPlayer) return;
     
     networkClient->sendPositionUpdate(
-        glm::dvec3(position.x, position.y, position.z),
+        glm::dvec3(position),
         glm::vec3(yaw, pitch, 0)
     );
     

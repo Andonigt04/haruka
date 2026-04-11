@@ -96,6 +96,8 @@ file(GLOB_RECURSE ENGINE_SOURCES
     "src/physics/*.cpp"
     "src/audio/*.cpp"
     "src/game/*.cpp"
+    "src/network/*.cpp"
+    "src/database/*.cpp"
 )
 
 # Network sources (cliente + servidor)
@@ -141,6 +143,7 @@ target_link_libraries(HarukaEngineLib PUBLIC
     OpenSSL::Crypto
     ${OPENAL_LIBRARY}
     ${CMAKE_DL_LIBS}
+    PostgreSQL::PostgreSQL
 )
 
 install(TARGETS HarukaEngineLib
@@ -159,7 +162,6 @@ add_custom_command(TARGET HarukaEngineLib POST_BUILD
 # ==== Build options ====
 option(BUILD_EDITOR "Build HarukaEditor" ON)
 option(BUILD_RUNTIME "Build HarukaEngine" ON)
-option(BUILD_SERVER "Build HarukaServer" ON)
 
 # Runtime ejecutable (CLIENTE) - USA LA LIBRERÍA
 if(BUILD_RUNTIME)
@@ -192,32 +194,6 @@ if(BUILD_EDITOR)
   target_compile_definitions(HarukaEditor PRIVATE HARUKA_EDITOR HARUKA_HAS_NFD=1)
 endif()
 
-# Servidor dedicado (CON DB)
-if(BUILD_SERVER)
-  add_executable(HarukaServer
-      src/main_server.cpp
-      ${NETWORK_SOURCES}
-      ${DATABASE_SOURCES}
-  )
-
-  target_link_libraries(HarukaServer 
-      OpenSSL::Crypto
-      ${PostgreSQL_LIBRARIES}
-      ${CMAKE_DL_LIBS}
-  )
-  
-  target_compile_definitions(HarukaServer PRIVATE HARUKA_SERVER)
-endif()
-
-# Chat Test (UDP simple)
-add_executable(ChatTest
-    src/test/chat_test.cpp
-)
-
-target_link_libraries(ChatTest
-    ${CMAKE_DL_LIBS}
-)
-
 # ==== Install rules ====
 include(GNUInstallDirs)
 
@@ -229,10 +205,6 @@ endif()
 
 if(BUILD_EDITOR)
   install(TARGETS HarukaEditor RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
-endif()
-
-if(BUILD_SERVER)
-  install(TARGETS HarukaServer RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 endif()
 
 install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/assets DESTINATION ${CMAKE_INSTALL_BINDIR})

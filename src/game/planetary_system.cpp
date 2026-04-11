@@ -3,6 +3,7 @@
 #include <cmath>
 #include <algorithm>
 #include <limits>
+#include <unordered_map>
 
 namespace Haruka {
 
@@ -64,7 +65,7 @@ void PlanetarySystem::initTerrain(int size, float heightScale, int seed) {
               << " heightScale=" << heightScale << " seed=" << seed << std::endl;
 }
 
-void PlanetarySystem::renderTerrain(Shader& shader, const glm::vec3& cameraPos) {
+void PlanetarySystem::renderTerrain(Shader& shader, const Camera* camera) {
     if (!terrain) return;
 
     // Asegurar texturas válidas para shaders deferred que esperan samplers
@@ -79,14 +80,23 @@ void PlanetarySystem::renderTerrain(Shader& shader, const glm::vec3& cameraPos) 
     shader.setInt("texture_specular1", 1);
     shader.setInt("texture_emissive1", 2);
 
-    terrain->render(shader, cameraPos);
+    // Si el WorldSystem indica solo mesh base, renderizar el mesh base del planeta
+    if (worldSystem && worldSystem->shouldRenderBaseMesh()) {
+        if (scene) {
+            auto* earthObj = scene->getObject("Earth");
+            if (earthObj && earthObj->meshRenderer && earthObj->meshRenderer->isResident()) {
+                glm::mat4 model = earthObj->getWorldTransform(scene);
+                shader.setMat4("model", model);
+                earthObj->meshRenderer->render(shader);
+            }
+        }
+        return;
+    }
+
+    terrain->render(shader, camera);
 }
 
-void PlanetarySystem::render() {
-    // Render explícito de terreno desde gameplay cuando el pipeline lo solicite.
-}
-
-void PlanetarySystem::setDetailedSurfaceData(const std::string& bodyName, const PlanetGenerator::PlanetData& data) {
+void PlanetarySystem::setDetailedSurfaceData(const std::string& bodyName, const PlanetData& data) {
     detailedSurfaceData[bodyName] = data;
 }
 
@@ -165,11 +175,6 @@ CelestialBody* PlanetarySystem::addStar(const std::string& name, double mass, do
 }
 
 CelestialBody* PlanetarySystem::addPlanet(const std::string& name, double orbitalDistance, double mass, double radius, glm::vec3 color) {
-    if (!star) {
-        std::cerr << "❌ Cannot add planet without a star" << std::endl;
-        return nullptr;
-    }
-    
     CelestialBody planet;
     planet.name = name;
     planet.worldPos = {orbitalDistance, 0.0, 0.0};
@@ -453,4 +458,241 @@ void PlanetarySystem::setPlayerFlightMode(bool enabled) {
     }
 }
 
+std::unordered_map<std::string, PlanetarySystem::PlanetData> planetDataMap;
+std::unordered_map<std::string, std::map<PlanetarySystem::ChunkConfig, PlanetarySystem::ChunkData>> chunkDataMap;
+
+void PlanetarySystem::generatePlanet(const PlanetConfig& config, const std::string& bodyName) {
+    auto data = generatePlanetInternal(config);
+    planetDataMap[bodyName] = std::move(data);
+    setDetailedSurfaceData(bodyName, planetDataMap[bodyName]);
 }
+
+PlanetarySystem::ChunkData PlanetarySystem::generateChunk(const PlanetConfig& config, const ChunkConfig& chunk, const std::string& bodyName) {
+    auto data = generateChunkInternal(config, chunk);
+    chunkDataMap[bodyName][chunk] = data;
+    return data;
+}
+
+const PlanetarySystem::PlanetData* PlanetarySystem::getPlanetData(const std::string& bodyName) const {
+    auto it = planetDataMap.find(bodyName);
+    return (it != planetDataMap.end()) ? &it->second : nullptr;
+}
+
+const PlanetarySystem::ChunkData* PlanetarySystem::getChunkData(const std::string& bodyName, const ChunkConfig& chunk) const {
+    auto it = chunkDataMap.find(bodyName);
+    if (it != chunkDataMap.end()) {
+        auto jt = it->second.find(chunk);
+        if (jt != it->second.end()) return &jt->second;
+    }
+    return nullptr;
+}
+
+// Implementación interna de generación procedural (debes portar aquí la lógica de PlanetGenerator)
+PlanetarySystem::PlanetData PlanetarySystem::generatePlanetInternal(const PlanetConfig& config) {
+    // --- Generación de icosfera base ---
+    struct Icosphere {
+        std::vector<glm::vec3> vertices;
+        std::vector<unsigned int> indices;
+        std::map<std::pair<unsigned int, unsigned int>, unsigned int> midpointCache;
+
+        unsigned int addVertex(const glm::vec3& v) {
+            vertices.push_back(glm::normalize(v));
+            return (unsigned int)vertices.size() - 1;
+        }
+
+        unsigned int getMidpoint(unsigned int i0, unsigned int i1) {
+            auto key = std::minmax(i0, i1);
+            auto it = midpointCache.find(key);
+            if (it != midpointCache.end()) return it->second;
+            glm::vec3 mid = glm::normalize((vertices[i0] + vertices[i1]) * 0.5f);
+            unsigned int idx = addVertex(mid);
+            midpointCache[key] = idx;
+            return idx;
+        }
+
+        void create(int subdivisions) {
+            static const float X = 0.525731112119133606f;
+            static const float Z = 0.850650808352039932f;
+            static const glm::vec3 vdata[12] = {
+                {-X, 0, Z}, {X, 0, Z}, {-X, 0, -Z}, {X, 0, -Z},
+                {0, Z, X}, {0, Z, -X}, {0, -Z, X}, {0, -Z, -X},
+                {Z, X, 0}, {-Z, X, 0}, {Z, -X, 0}, {-Z, -X, 0}
+            };
+            static const unsigned int tindices[60] = {
+                0,4,1, 0,9,4, 9,5,4, 4,5,8, 4,8,1,
+                8,10,1, 8,3,10, 5,3,8, 5,2,3, 2,7,3,
+                7,10,3, 7,6,10, 7,11,6, 11,0,6, 0,1,6,
+                6,1,10, 9,0,11, 9,11,2, 9,2,5, 7,2,11
+            };
+            vertices.clear(); indices.clear(); midpointCache.clear();
+            for (int i = 0; i < 12; ++i) addVertex(vdata[i]);
+            for (int i = 0; i < 60; ++i) indices.push_back(tindices[i]);
+            for (int s = 0; s < subdivisions; ++s) {
+                std::vector<unsigned int> newIndices;
+                for (size_t i = 0; i + 2 < indices.size(); i += 3) {
+                    unsigned int i0 = indices[i], i1 = indices[i+1], i2 = indices[i+2];
+                    unsigned int a = getMidpoint(i0, i1);
+                    unsigned int b = getMidpoint(i1, i2);
+                    unsigned int c = getMidpoint(i2, i0);
+                    newIndices.insert(newIndices.end(), {i0, a, c, i1, b, a, i2, c, b, a, b, c});
+                }
+                indices = std::move(newIndices);
+            }
+        }
+    };
+
+    Icosphere icosphere;
+    int subdiv = std::clamp(config.subdivisions, 0, 7);
+    icosphere.create(subdiv);
+
+    // --- Deformación procedural (portada del editor) ---
+    struct LayeredDeformParams {
+        float reliefKm;
+        float baseRadiusKm;
+        float plateReliefKm;
+        float plateScale;
+        float plateBoundarySharpness;
+        float minContinentSizeKm;
+        float continentFrequency;
+        float detailFrequency;
+        int planetSeed;
+        bool enableContinents;
+        bool enableMountains;
+    };
+
+    auto fBmHash = [](const glm::vec3& p, int seed, int octaves, float persistence, float lacunarity, float frequency) {
+        float amp = 1.0f, total = 0.0f, norm = 0.0f;
+        glm::vec3 pp = p * frequency;
+        for (int i = 0; i < octaves; ++i) {
+            float n = glm::dot(pp, glm::vec3(12.9898f + (seed + i*31) * 0.001f, 78.233f + (seed + i*31) * 0.002f, 37.719f + (seed + i*31) * 0.003f));
+            float h = (std::sin(n) * 43758.5453f - std::floor(std::sin(n) * 43758.5453f)) * 2.0f - 1.0f;
+            total += h * amp;
+            norm += amp;
+            amp *= persistence;
+            pp *= lacunarity;
+        }
+        return norm > 1e-6f ? (total / norm) : 0.0f;
+    };
+
+    auto smoothstepf = [](float edge0, float edge1, float x) {
+        float t = std::clamp((x - edge0) / std::max(1e-6f, edge1 - edge0), 0.0f, 1.0f);
+        return t * t * (3.0f - 2.0f * t);
+    };
+
+    auto computePlateDelta = [&](const glm::vec3& dir, int planetSeed, float plateScale, float plateBoundarySharpness, float plateReliefRatio) {
+        float pA = fBmHash(dir, planetSeed + 401, 2, 0.55f, 2.0f, std::max(0.01f, plateScale));
+        float pB = fBmHash(dir, planetSeed + 457, 2, 0.50f, 2.0f, std::max(0.01f, plateScale * 1.7f));
+        float pSigned = pA * 0.70f + pB * 0.30f;
+        float p01 = (pSigned + 1.0f) * 0.5f;
+        float boundary = 1.0f - std::abs(2.0f * p01 - 1.0f);
+        float bSharp = std::clamp(plateBoundarySharpness, 0.05f, 0.95f);
+        float ridgeMask = smoothstepf(1.0f - bSharp, 1.0f, boundary);
+        return (pSigned * 0.65f + ridgeMask * 0.35f) * plateReliefRatio;
+    };
+
+    LayeredDeformParams params{
+        8.0f, // reliefKm
+        config.baseRadiusKm,
+        2.0f, // plateReliefKm
+        1.0f, // plateScale
+        0.5f, // plateBoundarySharpness
+        200.0f, // minContinentSizeKm
+        config.continentFrequency,
+        config.detailFrequency,
+        config.seedBase,
+        config.enableContinents,
+        config.enableMountains
+    };
+
+    // Deformación
+    std::vector<glm::vec3> verts = icosphere.vertices;
+    for (auto& v : verts) {
+        glm::vec3 dir = glm::normalize(v);
+        float baseDelta = computePlateDelta(dir, params.planetSeed, params.plateScale, params.plateBoundarySharpness, 0.1f);
+        float newLen = 1.0f + baseDelta;
+        v = dir * newLen;
+    }
+
+    // Escalado a radio real
+    for (auto& v : verts) v *= config.radius;
+
+    // Normales suaves
+    std::vector<glm::vec3> norms(verts.size(), glm::vec3(0.0f));
+    for (size_t i = 0; i + 2 < icosphere.indices.size(); i += 3) {
+        unsigned int i0 = icosphere.indices[i + 0];
+        unsigned int i1 = icosphere.indices[i + 1];
+        unsigned int i2 = icosphere.indices[i + 2];
+        const glm::vec3 e1 = verts[i1] - verts[i0];
+        const glm::vec3 e2 = verts[i2] - verts[i0];
+        glm::vec3 fn = glm::cross(e1, e2);
+        norms[i0] += fn;
+        norms[i1] += fn;
+        norms[i2] += fn;
+    }
+    for (size_t i = 0; i < norms.size(); ++i) {
+        float lenSq = glm::dot(norms[i], norms[i]);
+        if (lenSq > 1e-20f) norms[i] = glm::normalize(norms[i]);
+        else norms[i] = glm::normalize(verts[i]);
+    }
+
+    PlanetData out;
+    out.vertices = std::move(verts);
+    out.normals = std::move(norms);
+    out.indices = icosphere.indices;
+    out.radius = config.radius;
+    return out;
+}
+
+PlanetarySystem::ChunkData PlanetarySystem::generateChunkInternal(const PlanetConfig& config, const ChunkConfig& chunk) {
+    // Generación procedural mínima de un patch esférico para el chunk
+    ChunkData out;
+    // Costura perfecta: grid global por cara
+    int tiles = std::max(1, chunk.tilesPerFace);
+    int vertsPerTile = 8; // subdivisión por patch
+    int vertsPerFace = tiles * vertsPerTile + 1;
+    int face = chunk.face;
+    int tileX = chunk.tileX;
+    int tileY = chunk.tileY;
+    // Coordenadas del patch en el grid global
+    int startX = tileX * vertsPerTile;
+    int startY = tileY * vertsPerTile;
+    // Generar vértices del patch usando el grid global
+    for (int y = 0; y <= vertsPerTile; ++y) {
+        for (int x = 0; x <= vertsPerTile; ++x) {
+            int gx = startX + x;
+            int gy = startY + y;
+            float fx = (float(gx) / float(vertsPerFace - 1)) * 2.0f - 1.0f;
+            float fy = (float(gy) / float(vertsPerFace - 1)) * 2.0f - 1.0f;
+            glm::vec3 cube;
+            switch (face) {
+                case 0: cube = glm::vec3( 1.0,  fy, -fx); break;
+                case 1: cube = glm::vec3(-1.0,  fy,  fx); break;
+                case 2: cube = glm::vec3( fx,  1.0, -fy); break;
+                case 3: cube = glm::vec3( fx, -1.0,  fy); break;
+                case 4: cube = glm::vec3( fx,  fy,  1.0); break;
+                default:cube = glm::vec3(-fx,  fy, -1.0); break;
+            }
+            glm::vec3 sphere = glm::normalize(cube) * config.radius;
+            out.vertices.push_back(sphere);
+            out.normals.push_back(glm::normalize(sphere));
+        }
+    }
+    // Triangulación
+    for (int y = 0; y < vertsPerTile; ++y) {
+        for (int x = 0; x < vertsPerTile; ++x) {
+            int i0 = y * (vertsPerTile + 1) + x;
+            int i1 = i0 + 1;
+            int i2 = i0 + (vertsPerTile + 1);
+            int i3 = i2 + 1;
+            out.indices.push_back(i0);
+            out.indices.push_back(i2);
+            out.indices.push_back(i1);
+            out.indices.push_back(i1);
+            out.indices.push_back(i2);
+            out.indices.push_back(i3);
+        }
+    }
+    return out;
+}
+
+} // namespace Haruka

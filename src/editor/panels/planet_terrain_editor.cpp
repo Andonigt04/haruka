@@ -1,6 +1,7 @@
 #include "planet_terrain_editor.h"
+
 #include "core/components/mesh_renderer_component.h"
-#include "game/planet_generator.h"
+#include "game/planetary_system.h"
 #include "imgui.h"
 #include <glm/glm.hpp>
 #include <algorithm>
@@ -846,7 +847,7 @@ bool PlanetTerrainEditorPanel::prepareSplitTask(std::string& error) {
             SplitTaskState::SourceGenerationResult out;
             if (requested > effective) out.warning = "Subdivisions " + std::to_string(requested) + "->" + std::to_string(effective) + " (" + std::string(label) + ")";
             
-            Haruka::PlanetGenerator::PlanetConfig cfg;
+            Haruka::PlanetarySystem::PlanetConfig cfg;
             cfg.radius = 1.0f;
             cfg.subdivisions = effective;
             cfg.baseRadiusKm = baseRadiusKm;
@@ -862,9 +863,13 @@ bool PlanetTerrainEditorPanel::prepareSplitTask(std::string& error) {
             cfg.macroHeightStrength = 0.0f;
             cfg.detailHeightStrength = 0.0f;
             
-            auto data = Haruka::PlanetGenerator::generatePlanet(cfg);
+            if (!planetarySystem) { out.error = "No PlanetarySystem instance set"; return out; }
+            planetarySystem->generatePlanet(cfg, "EditorPreview");
+            const auto* pdata = planetarySystem->getPlanetData("EditorPreview");
+            Haruka::PlanetarySystem::PlanetData data;
+            if (pdata) data = *pdata;
             if (data.vertices.empty() || data.indices.empty()) { out.error = "Planet generation failed."; return out; }
-            
+
             LayeredDeformParams params{
                 reliefKm,
                 baseRadiusKm,

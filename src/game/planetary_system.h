@@ -3,7 +3,6 @@
 #include "core/math_types.h"
 #include "character.h"
 #include "core/scene.h"
-#include "game/planet_generator.h"
 #include "renderer/terrain.h"
 #include "renderer/shader.h"
 #include <memory>
@@ -16,6 +15,59 @@ namespace Haruka {
  */
 class PlanetarySystem {
 public:
+    
+    // --- Tipos internos para generación procedural ---
+    struct PlanetConfig {
+        float radius = 1.0f;
+        int subdivisions = 4;
+        float baseRadiusKm = 6371.0f;
+        int seedBase = 42;
+        int seedContinents = 1337;
+        int seedMacro = 2024;
+        int seedDetail = 9001;
+        bool enableContinents = true;
+        bool enableMountains = true;
+        bool useGPU = true;
+        float seaLevel = 0.52f;
+        float continentFrequency = 1.2f;
+        float continentWarpStrength = 0.15f;
+        float continentHeightStrength = 0.02f;
+        int octavesContinents = 5;
+        float macroFrequency = 2.0f;
+        float macroHeightStrength = 0.01f;
+        int octavesMacro = 5;
+        float detailFrequency = 8.0f;
+        float detailHeightStrength = 0.002f;
+        int octavesDetail = 4;
+        float persistence = 0.5f;
+        float lacunarity = 2.0f;
+    };
+    struct ChunkConfig {
+        int face = 0;
+        int lod = 0;
+        int tileX = 0;
+        int tileY = 0;
+        int tilesPerFace = 1;
+        int neighborLodN = 0;
+        int neighborLodS = 0;
+        int neighborLodE = 0;
+        int neighborLodW = 0;
+    };
+    struct PlanetData {
+        std::vector<glm::vec3> vertices;
+        std::vector<glm::vec3> normals;
+        std::vector<unsigned int> indices;
+        float radius = 0.0f;
+        float minHeight = 0.0f;
+        float maxHeight = 0.0f;
+    };
+    struct ChunkData {
+        std::vector<glm::vec3> vertices;
+        std::vector<glm::vec3> normals;
+        std::vector<unsigned int> indices;
+        float minHeight = 0.0f;
+        float maxHeight = 0.0f;
+    };
     /** @brief Constructs an uninitialized planetary system. */
     PlanetarySystem();
     /** @brief Releases owned runtime resources. */
@@ -25,14 +77,12 @@ public:
     void init(Scene* scene, WorldSystem* worldSystem);
     /** @brief Advances orbital/player simulation by one timestep. */
     void update(double dt);
-    /** @brief Renders planetary bodies and terrain layers. */
-    void render();
 
     /** @name Terrain setup */
     ///@{
     void initTerrain(int size = 1024, float heightScale = 200.0f, int seed = 42);
-    void renderTerrain(Shader& shader, const glm::vec3& cameraPos);
-    void setDetailedSurfaceData(const std::string& bodyName, const PlanetGenerator::PlanetData& data);
+    void renderTerrain(Shader& shader, const Camera* camera);
+    void setDetailedSurfaceData(const std::string& bodyName, const PlanetData& data);
     ///@}
     
     /** @name Celestial body creation */
@@ -68,12 +118,18 @@ public:
     void setPlayerFlightMode(bool enabled);
     ///@}
     
+    // Genera y almacena el planeta completo (malla base)
+    void generatePlanet(const PlanetConfig& config, const std::string& bodyName);
+    ChunkData generateChunk(const PlanetConfig& config, const ChunkConfig& chunk, const std::string& bodyName);
+    const PlanetData* getPlanetData(const std::string& bodyName) const;
+    const ChunkData* getChunkData(const std::string& bodyName, const ChunkConfig& chunk) const;
+    
 private:
     Scene* scene = nullptr;
     WorldSystem* worldSystem = nullptr;
     std::unique_ptr<Character> player;
     std::unique_ptr<Terrain> terrain;
-    std::unordered_map<std::string, PlanetGenerator::PlanetData> detailedSurfaceData;
+    std::unordered_map<std::string, PlanetData> detailedSurfaceData;
     
     CelestialBody* star = nullptr;
     std::vector<std::string> bodyNames;
@@ -93,6 +149,12 @@ private:
     void integrateOrbits(double dt);
     /** @brief Samples a generated body surface radius in a given direction. */
     double getSurfaceRadiusAtDirection(const CelestialBody* body, const glm::dvec3& planetToPoint) const;
+    PlanetData generatePlanetInternal(const PlanetConfig& config);
+    ChunkData generateChunkInternal(const PlanetConfig& config, const ChunkConfig& chunk);
 };
+
+inline bool operator<(const PlanetarySystem::ChunkConfig& a, const PlanetarySystem::ChunkConfig& b) {
+    return std::tie(a.face, a.lod, a.tileX, a.tileY, a.tilesPerFace, a.neighborLodN, a.neighborLodS, a.neighborLodE, a.neighborLodW) < std::tie(b.face, b.lod, b.tileX, b.tileY, b.tilesPerFace, b.neighborLodN, b.neighborLodS, b.neighborLodE, b.neighborLodW);
+}
 
 }

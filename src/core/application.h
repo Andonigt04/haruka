@@ -55,6 +55,7 @@ public:
     Camera* getCamera() { return _camera.get(); }
     Haruka::Scene* getCurrentScene() { return _currentScene.get(); }
     RaycastSimple* getRaycastSystem() { return _raycastSystem.get(); }
+    Haruka::PlanetarySystem* getPlanetarySystem() { return _planetarySystem.get(); }
     ///@}
 
     // Render quality/layers (global editor-configurable)
@@ -161,6 +162,7 @@ private:
     std::unique_ptr<ComputePostProcess> _computePostProcess;
     std::unique_ptr<CascadedShadowMap> _cascadedShadow;
     std::unique_ptr<VirtualTexturing> _virtualTexturing;
+    std::unique_ptr<Haruka::PlanetarySystem> _planetarySystem;
     std::unique_ptr<RaycastSimple> _raycastSystem;
     std::unique_ptr<Haruka::TerrainStreamingSystem> _terrainStreamingSystem;
     

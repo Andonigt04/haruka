@@ -1,4 +1,5 @@
 #include "world_system.h"
+#include "camera.h"
 #include <cmath>
 #include <set>
 
@@ -123,20 +124,19 @@ void WorldSystem::setChunkGrid(int face, int lod, int tilesX, int tilesY, int ma
     chunkGridMaxLod = std::max(0, maxLod);
 }
 
-void WorldSystem::updateVisibleChunks(Haruka::WorldPos cameraPos, float viewDistanceKm, int lod, const glm::vec3* cameraForward) {
+void WorldSystem::updateVisibleChunks(float viewDistanceKm, int lod, Camera* camera) {
     chunkFrameCounter++;
     visibleChunks.clear();
+    renderBaseMeshOnly = true; // Por defecto, solo mesh base
 
-    const glm::dvec3 cam = cameraPos;
-    const double camLen = glm::length(cam);
+    const double camLen = glm::length(camera->position);
     if (camLen <= 1e-6) return;
-    
-    // Usar forward de la cámara si se proporciona, sino usar posición radial
+
     glm::dvec3 camDir;
-    if (cameraForward != nullptr) {
-        camDir = glm::normalize(glm::dvec3(cameraForward->x, cameraForward->y, cameraForward->z));
+    if (camera != nullptr && camLen > 1e-6) {
+        camDir = camera->position / camLen;
     } else {
-        camDir = cam / camLen;
+        return;
     }
 
     const int lodClamped = std::clamp(lod, 0, 16);
@@ -146,10 +146,7 @@ void WorldSystem::updateVisibleChunks(Haruka::WorldPos cameraPos, float viewDist
     const int keyLodBase = (chunkGridTilesX > 0 && chunkGridTilesY > 0) ? chunkGridLod : lodClamped;
 
     const double viewRatio = std::clamp(static_cast<double>(viewDistanceKm) / std::max(1.0, camLen), 0.05, 2.5);
-    // BUGFIX: Reducir restrictividad del horizonDot
-    // Antes: -std::clamp(0.15 + viewRatio * 0.25, 0.10, 0.85) era demasiado restrictivo
-    // Ahora: Usar -0.3 para permitir chunks en los bordes del horizonte
-    const double horizonDot = -0.3;
+    const double horizonDot = -0.8;
 
     std::set<PlanetChunkKey> uniqueVisible;
     const int firstFace = 0;
@@ -172,20 +169,26 @@ void WorldSystem::updateVisibleChunks(Haruka::WorldPos cameraPos, float viewDist
 
                 glm::dvec3 dir = glm::normalize(cube);
                 const double dotv = glm::dot(dir, camDir);
-                // BUGFIX: Permitir chunks que apunten hacia atrás si están en vista frontal
-                // dotv < -0.3 significa casi 180° de diferencia (atrás), rechazar esos
-                // dotv > -0.3 incluye frontal, lateral y horizonte
                 if (dotv < horizonDot) continue;
 
-                int lodOffset = 0;
-                if (chunkGridMaxLod > 0) {
-                    // Usar LOD más alto (más bajo detalle) para chunks en los lados
-                    if (dotv < 0.1) lodOffset = 2;      // Horizonte/lateral muy lejano
-                    else if (dotv < 0.3) lodOffset = 1; // Horizonte/lateral cercano
-                    lodOffset = std::clamp(lodOffset, 0, chunkGridMaxLod);
+                glm::dvec3 chunkWorldPos = dir * camLen;
+                double realDistance = glm::length(camera->position - chunkWorldPos);
+
+                // Lógica de cúpulas LOD
+                int chunkLOD = -1;
+                if (realDistance < domeRadius0) {
+                    chunkLOD = 0; // Máxima calidad
+                } else if (realDistance < domeRadius1) {
+                    chunkLOD = 1; // Media
+                } else if (realDistance < domeRadius2) {
+                    chunkLOD = 2; // Mínima
+                } else {
+                    // Demasiado lejos, no renderizar chunk
+                    continue;
                 }
 
-                const int keyLod = keyLodBase + lodOffset;
+                int lodOffset = 0;
+                const int keyLod = chunkLOD; // Usar LOD según cúpula
                 const int keyX = x >> lodOffset;
                 const int keyY = y >> lodOffset;
 
@@ -194,8 +197,9 @@ void WorldSystem::updateVisibleChunks(Haruka::WorldPos cameraPos, float viewDist
                 auto& st = chunkStates[key];
                 st.visible = true;
                 st.lastTouchedFrame = chunkFrameCounter;
-                st.distanceKm = static_cast<float>(std::max(0.0, camLen * (1.0 - dotv)));
+                st.distanceKm = static_cast<float>(realDistance / 1000.0);
                 visibleChunks.push_back(key);
+                renderBaseMeshOnly = false; // Hay al menos un chunk visible
             }
         }
     }

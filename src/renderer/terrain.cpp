@@ -1,14 +1,16 @@
 #include "terrain.h"
+
 #include <glad/glad.h>
 #include <glm/gtc/matrix_transform.hpp>
 #include <iostream>
 #include <cmath>
 #include <algorithm>
 #include "stb_image.h"
+#include "../core/camera.h"
 
 namespace Haruka {
 
-Terrain::Terrain(int size, float scale) 
+Terrain::Terrain(int size, float scale)
     : size(size), scale(scale) {
     heightData.resize(size * size, 0.0f);
 }
@@ -83,16 +85,25 @@ void Terrain::generatePerlin(int seed) {
 
 void Terrain::generateMesh() {
     patches.clear();
-    
-    int numPatches = size / patchSize;
-    
-    for (int pz = 0; pz < numPatches; pz++) {
-        for (int px = 0; px < numPatches; px++) {
-            createPatch(px * patchSize, pz * patchSize, 0);
+    std::cout << "[Terrain] GENERATE MESH: size=" << size << ", patchSize=" << patchSize << ", terrainScale=(" << terrainScale.x << "," << terrainScale.y << "," << terrainScale.z << ") position=(" << position.x << "," << position.y << "," << position.z << ")" << std::endl << std::flush;
+
+    int numPatchesX = (size + patchSize - 1) / patchSize;
+    int numPatchesZ = (size + patchSize - 1) / patchSize;
+
+    for (int pz = 0; pz < numPatchesZ; pz++) {
+        for (int px = 0; px < numPatchesX; px++) {
+            int startX = px * patchSize;
+            int startZ = pz * patchSize;
+            int patchWidth = std::min(patchSize, size - startX);
+            int patchHeight = std::min(patchSize, size - startZ);
+            if (patchWidth > 1 && patchHeight > 1) {
+                std::cout << "[Terrain] Patch px=" << px << ", pz=" << pz << ", startX=" << startX << ", startZ=" << startZ << ", patchWidth=" << patchWidth << ", patchHeight=" << patchHeight << std::endl << std::flush;
+                createPatch(startX, startZ, 0);
+            }
         }
     }
-    
-    std::cout << "[Terrain] Generated " << patches.size() << " patches" << std::endl;
+
+    std::cout << "[Terrain] Generated " << patches.size() << " patches" << std::endl << std::flush;
 }
 
 void Terrain::createPatch(int startX, int startZ, int lod) {
@@ -124,9 +135,9 @@ void Terrain::createPatch(int startX, int startZ, int lod) {
             vertices.push_back(normal.y);
             vertices.push_back(normal.z);
             
-            // TexCoord
-            vertices.push_back((float)x / (verticesPerSide - 1));
-            vertices.push_back((float)z / (verticesPerSide - 1));
+            // TexCoord globales para continuidad entre patches
+            vertices.push_back((float)actualX / (size - 1));
+            vertices.push_back((float)actualZ / (size - 1));
         }
     }
     
@@ -185,8 +196,8 @@ void Terrain::createPatch(int startX, int startZ, int lod) {
     patches.push_back(patch);
 }
 
-int Terrain::calculateLOD(const glm::vec2& patchCenter, const glm::vec3& cameraPos) {
-    float distance = glm::length(glm::vec2(cameraPos.x, cameraPos.z) - patchCenter);
+int Terrain::calculateLOD(const glm::vec2& patchCenter, const glm::dvec3& cameraPos) {
+    float distance = glm::length(cameraPos - glm::dvec3(patchCenter.x, 0.0, patchCenter.y));
     
     for (int i = 0; i < 4; i++) {
         if (distance < lodDistance[i]) {
@@ -197,35 +208,63 @@ int Terrain::calculateLOD(const glm::vec2& patchCenter, const glm::vec3& cameraP
     return 3; // Max LOD
 }
 
-void Terrain::render(Shader& shader, const glm::vec3& cameraPos) {
+void Terrain::render(Shader& shader, const Camera* camera) {
     shader.use();
     
     for (auto& patch : patches) {
-        glm::vec2 patchCenter = patch.offset + glm::vec2(patchSize / 2.0f);
-        int targetLOD = calculateLOD(patchCenter * terrainScale.x, cameraPos);
-        
+        // Centro real del patch en mundo
+        float patchCenterX = patch.offset.x + patchSize * 0.5f;
+        float patchCenterZ = patch.offset.y + patchSize * 0.5f;
+        glm::vec2 patchCenter = glm::vec2(patchCenterX, patchCenterZ);
+        int targetLOD = calculateLOD(patchCenter, camera->position);
+
         // Recreate patch if LOD changed
         if (targetLOD != patch.lod) {
             if (patch.VAO) glDeleteVertexArrays(1, &patch.VAO);
             if (patch.VBO) glDeleteBuffers(1, &patch.VBO);
             if (patch.EBO) glDeleteBuffers(1, &patch.EBO);
-            
+
             createPatch(patch.offset.x, patch.offset.y, targetLOD);
             patch = patches.back();
         }
-        
+
         glm::mat4 model = glm::translate(glm::mat4(1.0f), position);
         shader.setMat4("model", model);
-        
-        glBindVertexArray(patch.VAO);
-        glDrawElements(GL_TRIANGLES, patch.indexCount, GL_UNSIGNED_INT, 0);
-        glBindVertexArray(0);
+
+        // AABB del patch en mundo
+        float minX = patch.offset.x * terrainScale.x + position.x;
+        float minZ = patch.offset.y * terrainScale.z + position.z;
+        float maxX = (patch.offset.x + patchSize) * terrainScale.x + position.x;
+        float maxZ = (patch.offset.y + patchSize) * terrainScale.z + position.z;
+        float minY = position.y; // Asumimos terreno plano en Y, o puedes calcular min/max real de alturas
+        float maxY = position.y + scale * terrainScale.y;
+
+        // 8 vértices del AABB
+        glm::vec3 aabbCorners[8] = {
+            {minX, minY, minZ}, {maxX, minY, minZ}, {minX, minY, maxZ}, {maxX, minY, maxZ},
+            {minX, maxY, minZ}, {maxX, maxY, minZ}, {minX, maxY, maxZ}, {maxX, maxY, maxZ}
+        };
+
+        bool visible = false;
+        for (int i = 0; i < 8; ++i) {
+            if (isInsideFrustum(aabbCorners[i], camera)) {
+                visible = true;
+                break;
+            }
+        }
+        if (visible) {
+            glBindVertexArray(patch.VAO);
+            glDrawElements(GL_TRIANGLES, patch.indexCount, GL_UNSIGNED_INT, 0);
+            glBindVertexArray(0);
+        }
     }
 }
 
 float Terrain::getHeightNormalized(int x, int z) const {
-    if (x < 0 || x >= size || z < 0 || z >= size) return 0.0f;
-    return heightData[z * size + x];
+    // Clamp en vez de devolver 0 para bordes
+    int clampedX = std::max(0, std::min(x, size - 1));
+    int clampedZ = std::max(0, std::min(z, size - 1));
+    return heightData[clampedZ * size + clampedX];
 }
 
 float Terrain::getHeight(float x, float z) const {
@@ -261,4 +300,89 @@ glm::vec3 Terrain::getNormal(float x, float z) const {
     return normal;
 }
 
+bool Terrain::isPatchVisible(const glm::vec2& patchCenter, const Camera* camera) {
+    // Convención OpenGL: +Y arriba, +Z adelante
+    // Usar matriz de vista y proyección estándar
+    glm::mat4 viewProj = camera->getProjectionMatrix() * camera->getViewMatrix();
+
+    // Extraer planos del frustum (formato: ax + by + cz + d = 0)
+    // Referencia: Gribb & Hartmann, "Fast Extraction of Viewing Frustum Planes from the World-View-Projection Matrix"
+    glm::vec4 planes[6];
+    // Left
+    planes[0] = glm::vec4(
+        viewProj[0][3] + viewProj[0][0],
+        viewProj[1][3] + viewProj[1][0],
+        viewProj[2][3] + viewProj[2][0],
+        viewProj[3][3] + viewProj[3][0]
+    );
+    // Right
+    planes[1] = glm::vec4(
+        viewProj[0][3] - viewProj[0][0],
+        viewProj[1][3] - viewProj[1][0],
+        viewProj[2][3] - viewProj[2][0],
+        viewProj[3][3] - viewProj[3][0]
+    );
+    // Bottom
+    planes[2] = glm::vec4(
+        viewProj[0][3] + viewProj[0][1],
+        viewProj[1][3] + viewProj[1][1],
+        viewProj[2][3] + viewProj[2][1],
+        viewProj[3][3] + viewProj[3][1]
+    );
+    // Top
+    planes[3] = glm::vec4(
+        viewProj[0][3] - viewProj[0][1],
+        viewProj[1][3] - viewProj[1][1],
+        viewProj[2][3] - viewProj[2][1],
+        viewProj[3][3] - viewProj[3][1]
+    );
+    // Near
+    planes[4] = glm::vec4(
+        viewProj[0][3] + viewProj[0][2],
+        viewProj[1][3] + viewProj[1][2],
+        viewProj[2][3] + viewProj[2][2],
+        viewProj[3][3] + viewProj[3][2]
+    );
+    // Far
+    planes[5] = glm::vec4(
+        viewProj[0][3] - viewProj[0][2],
+        viewProj[1][3] - viewProj[1][2],
+        viewProj[2][3] - viewProj[2][2],
+        viewProj[3][3] - viewProj[3][2]
+    );
+
+    // Normalizar planos
+    for (int i = 0; i < 6; ++i) {
+        float len = glm::length(glm::vec3(planes[i]));
+        if (len > 0.0f) planes[i] /= len;
+    }
+
+
+    glm::vec3 center(patchCenter.x, 0.0f, patchCenter.y);
+    for (int i = 0; i < 6; ++i) {
+        if (planes[i].x * center.x + planes[i].y * center.y + planes[i].z * center.z + planes[i].w < 0.0f) {
+            return false;
+        }
+    }
+    return true;
 }
+
+// Comprueba si un punto está dentro del frustum de la cámara
+bool Terrain::isInsideFrustum(const glm::vec3& point, const Camera* camera) {
+    glm::mat4 viewProj = camera->getProjectionMatrix() * camera->getViewMatrix();
+    glm::vec4 clipSpace = viewProj * glm::vec4(point, 1.0f);
+    // Perspectiva: divide por w
+    if (clipSpace.w == 0.0f) return false;
+    glm::vec3 ndc = glm::vec3(clipSpace) / clipSpace.w;
+    // NDC debe estar en [-1, 1]
+    return ndc.x >= -1.0f && ndc.x <= 1.0f && ndc.y >= -1.0f && ndc.y <= 1.0f && ndc.z >= -1.0f && ndc.z <= 1.0f;
+}
+
+glm::mat4 Terrain::calculateProjectionMatrix(float aspectRatio) {
+    float fov = glm::radians(60.0f);
+    float nearPlane = 0.1f;
+    float farPlane = 1000.0f;
+    return glm::perspective(fov, aspectRatio, nearPlane, farPlane);
+}
+
+} // namespace Haruka

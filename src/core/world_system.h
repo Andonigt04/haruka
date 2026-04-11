@@ -2,6 +2,7 @@
 #define WORLD_SYSTEM_H
 
 #include "math_types.h"
+#include "camera.h"
 #include <vector>
 #include <string>
 #include <memory>
@@ -124,7 +125,12 @@ public:
     /** @brief Sets active chunk grid dimensions/key-space for visibility generation. */
     void setChunkGrid(int face, int lod, int tilesX, int tilesY, int maxLod = 0);
     /** @brief Updates current visible chunk set from camera state. */
-    void updateVisibleChunks(Haruka::WorldPos cameraPos, float viewDistanceKm, int lod, const glm::vec3* cameraForward = nullptr);
+    void updateVisibleChunks(float viewDistanceKm, int lod, Camera* camera = nullptr);
+
+    /**
+     * @brief Indica si se debe renderizar solo el mesh base (sin chunks detallados).
+     */
+    bool shouldRenderBaseMesh() const { return renderBaseMeshOnly; }
     /** @brief Builds load/evict queues from current visibility and budgets. */
     void scheduleChunkStreaming();
     /** @brief Marks one chunk as resident/non-resident after upload/eviction. */
@@ -147,6 +153,14 @@ private:
     Haruka::WorldPos worldOrigin;
     std::vector<CelestialBody> celestialBodies;
     float lodDistances[4];
+
+    // Radios de cúpulas LOD (en unidades)
+    float domeRadius0 = 1000.0f;   // Máxima calidad
+    float domeRadius1 = 5000.0f;   // Media
+    float domeRadius2 = 20000.0f;  // Mínima
+
+    // Flag para indicar si solo se debe renderizar el mesh base
+    bool renderBaseMeshOnly = false;
 
     // Chunk streaming state
     std::map<PlanetChunkKey, PlanetChunkState> chunkStates;

@@ -10,9 +10,11 @@
 #include "math_types.h"
 #include "scene.h"
 #include "world_system.h"
-#include "game/planet_generator.h"
+#include "camera.h"
+#include "game/planetary_system.h"
 
 class RaycastSimple;
+class Camera;
 
 namespace Haruka {
 
@@ -30,12 +32,21 @@ struct TerrainStreamingStats {
 
 class TerrainStreamingSystem {
 public:
-    void update(Scene* scene,
-                WorldSystem* worldSystem,
-                RaycastSimple* raycastSystem,
-                const WorldPos& cameraPos,
-                const glm::mat4& viewProj,
-                TerrainStreamingStats* outStats = nullptr);
+    /**
+     * @brief Updates terrain streaming based on camera state.
+     * @param scene Active scene with terrain chunks
+     * @param worldSystem World/chunk management system
+     * @param raycastSystem Physics raycast system for collisions
+     * @param camera Camera pointer for position, orientation, and FOV
+     * @param outStats Optional stats output (visible chunks, memory, etc)
+     * 
+     * BENEFITS of passing Camera* directly:
+     * - No memory copies of position/direction/matrix
+     * - Direct access to all camera state
+     * - Camera always current (real-time reference)
+     * - Fewer function parameters
+     */
+    void update(Scene* scene, WorldSystem* worldSystem, PlanetarySystem* planetarySystem, RaycastSimple* raycastSystem, Camera* camera, TerrainStreamingStats* outStats = nullptr);
     
     // Invalidar chunks cuando cambia la semilla (sin cambiar escena)
     void invalidateChunksForSeedChange() {
@@ -56,8 +67,8 @@ private:
         std::shared_ptr<Haruka::MaterialComponent> material;
     };
 
-    std::map<PlanetChunkKey, std::future<PlanetGenerator::ChunkData>> chunkGenJobs;
-    std::map<PlanetChunkKey, PlanetGenerator::ChunkData> chunkReadyData;
+    std::map<PlanetChunkKey, std::future<Haruka::PlanetarySystem::ChunkData>> chunkGenJobs;
+    std::map<PlanetChunkKey, Haruka::PlanetarySystem::ChunkData> chunkReadyData;
     uint64_t currentSceneVersion = 0;
     uint32_t lastCheckedSeed = 0;  // Detectar cambios de semilla
     uint32_t currentSeedGeneration = 0;  // Versión de semilla actual para invalidación
@@ -69,8 +80,8 @@ private:
     static int findPlanetRootIndex(Scene* scene);
     static void addChunkAsChild(Scene* scene, SceneObject& chunk, int parentIdx);
     static void ensureTerrainChunkKeysAndGrid(Scene* scene, WorldSystem* worldSystem);
-    static PlanetGenerator::PlanetConfig buildPlanetConfigFromChunkSource(const SceneObject& chunkObj, Scene* scene);
-    static PlanetGenerator::ChunkConfig buildChunkConfigFromObjectAndKey(const SceneObject& chunkObj, const PlanetChunkKey& key, WorldSystem* worldSystem);
+    static Haruka::PlanetarySystem::PlanetConfig buildPlanetConfigFromChunkSource(const SceneObject& chunkObj, Scene* scene);
+    static Haruka::PlanetarySystem::ChunkConfig buildChunkConfigFromObjectAndKey(const SceneObject& chunkObj, const PlanetChunkKey& key, WorldSystem* worldSystem);
     static uint32_t calculateChunkSizeBytes(const SceneObject& chunk);
     static std::string makeChunkCollisionId(const PlanetChunkKey& key);
     static void buildCollisionProxy(const std::vector<glm::vec3>& verts,

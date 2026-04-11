@@ -1,4 +1,5 @@
 .vscode/
 third_party/
 build/
+build_tests/
 projects/

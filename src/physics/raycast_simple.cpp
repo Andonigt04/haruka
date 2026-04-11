@@ -41,8 +41,6 @@ void RaycastSimple::addMesh(const std::string& id,
 
     meshTriangles[id] = std::move(localTriangles);
     rebuildTriangleCache();
-
-    std::cout << "✓ Added raycast mesh: " << id << " (" << indices.size() / 3 << " triangles)\n";
 }
 
 void RaycastSimple::removeMesh(const std::string& id) {
@@ -70,7 +68,7 @@ bool RaycastSimple::rayTriangleIntersect(const glm::vec3& rayOrigin,
     float a = glm::dot(edge1, h);
 
     if (glm::abs(a) < EPSILON) {
-        return false;  // Ray es paralelo al triángulo
+        return false;
     }
 
     float f = 1.0f / a;

@@ -90,6 +90,10 @@ void EditorApplication::init() {
     projectBrowserPanel.setProject(currentProject.get());
     projectBrowserPanel.setScene(currentScene.get());
     planetTerrainEditorPanel.setScene(currentScene.get());
+    // Inyectar instancia de PlanetarySystem desde Application
+    if (MotorInstance::getInstance().getApplication()) {
+        planetTerrainEditorPanel.setPlanetarySystem(MotorInstance::getInstance().getApplication()->getPlanetarySystem());
+    }
     
     // ===== Camera Setup =====
     viewportCamera = std::make_unique<Camera>(Haruka::WorldPos(0.0f, 5.0f, 15.0f));

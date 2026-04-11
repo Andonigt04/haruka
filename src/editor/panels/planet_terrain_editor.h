@@ -2,6 +2,7 @@
 
 #include "core/scene.h"
 #include "editor/tasks/editor_task.h"
+#include "game/planetary_system.h"
 #include <nlohmann/json.hpp>
 #include <future>
 #include <map>
@@ -29,6 +30,8 @@ class PlanetTerrainEditorPanel {
 public:
     /** @brief Binds the active scene context used by panel actions. */
     void setScene(Haruka::Scene* scene);
+    /** @brief Inyecta el PlanetarySystem activo para generación y preview. */
+    void setPlanetarySystem(Haruka::PlanetarySystem* system) { planetarySystem = system; }
     /** @brief Advances background generation tasks once per frame. */
     void update();
     /** @brief Draws and executes the ImGui panel UI each frame. */
@@ -55,6 +58,7 @@ public:
 private:
     /** @brief Non-owning pointer to active scene. */
     Haruka::Scene* currentScene = nullptr;
+    Haruka::PlanetarySystem* planetarySystem = nullptr;
 
     // Target / split layout
     char targetObjectName[128] = "Earth";
@@ -135,7 +139,7 @@ private:
     void refreshSelectedChunkSeed();
     /** @brief Saves current generator config to target object's JSON properties. */
     void saveGeneratorConfigToObject();
-
+    
     /** @brief Serializable delta snapshot for one chunk mesh. */
     struct ChunkDelta {
         int chunkId = -1;

@@ -1,4 +1,5 @@
-#pragma once
+#ifndef TERRAIN_H
+#define TERRAIN_H
 
 #include <glm/glm.hpp>
 #include <vector>
@@ -6,6 +7,8 @@
 #include <string>
 #include "shader.h"
 #include "texture.h"
+
+class Camera;
 
 namespace Haruka {
 
@@ -38,12 +41,25 @@ public:
     void setScale(const glm::vec3& scale) { terrainScale = scale; }
     
     /** @brief Renders terrain patches using the provided shader and camera position. */
-    void render(Shader& shader, const glm::vec3& cameraPos);
+    void render(Shader& shader, const Camera* camera);
     
     /** @brief Samples world-space height at X/Z. */
     float getHeight(float x, float z) const;
     /** @brief Computes a terrain normal at X/Z. */
     glm::vec3 getNormal(float x, float z) const;
+
+    /** @brief Generates mesh buffers from current height data. */
+    void generateMesh();
+    /** @brief Creates one terrain patch at grid coordinates. */
+    void createPatch(int x, int z, int lod);
+    /** @brief Calculates the best LOD for a patch given camera position. */
+    int calculateLOD(const glm::vec2& patchCenter, const glm::dvec3& cameraPos);
+    
+    /** @brief Returns normalized height sample. */
+    float getHeightNormalized(int x, int z) const;
+    bool isPatchVisible(const glm::vec2& patchCenter, const Camera* camera);
+    glm::mat4 calculateProjectionMatrix(float aspectRatio);
+    bool isInsideFrustum(const glm::vec3& point, const Camera* camera);
 
 private:
     int size;
@@ -57,16 +73,8 @@ private:
     // LOD settings
     float lodDistance[4] = {50.0f, 100.0f, 200.0f, 400.0f};
     int patchSize = 64;
-    
-    /** @brief Generates mesh buffers from current height data. */
-    void generateMesh();
-    /** @brief Creates one terrain patch at grid coordinates. */
-    void createPatch(int x, int z, int lod);
-    /** @brief Calculates the best LOD for a patch given camera position. */
-    int calculateLOD(const glm::vec2& patchCenter, const glm::vec3& cameraPos);
-    
-    /** @brief Returns normalized height sample. */
-    float getHeightNormalized(int x, int z) const;
 };
 
 }
+
+#endif

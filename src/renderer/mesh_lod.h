@@ -13,17 +13,6 @@
  */
 class MeshLOD {
 public:
-    /** @brief Per-LOD mesh buffer and range description. */
-    struct LODLevel {
-        std::vector<Vertex> vertices;
-        std::vector<unsigned int> indices;
-        float minDistance;
-        float maxDistance;
-        GLuint VAO = 0;
-        GLuint VBO = 0;
-        GLuint EBO = 0;
-    };
-
     /** @brief Constructs an empty LOD manager. */
     MeshLOD();
     /** @brief Releases generated LOD resources. */
@@ -59,9 +48,15 @@ public:
     LODStats getStats() const;
 
 private:
+    struct LODLevel {
+        GLuint VAO = 0, VBO = 0, EBO = 0;
+        std::vector<Vertex> vertices;
+        std::vector<unsigned int> indices;
+        float minDistance = 0.0f, maxDistance = 0.0f;
+    };
     std::vector<LODLevel> lodLevels;
     MeshOptimizer optimizer;
-
     /** @brief Allocates OpenGL buffers for one LOD level. */
     void setupGL(LODLevel& level);
 };
+
