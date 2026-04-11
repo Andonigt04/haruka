@@ -89,7 +89,7 @@ include_directories(
     ${GTK3_INCLUDE_DIRS}
 )
 
-file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/shaders" DESTINATION "${CMAKE_CURRENT_BINARY_DIR}")
+#file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/shaders" DESTINATION "${CMAKE_CURRENT_BINARY_DIR}")
 pkg_check_modules(GTK3 REQUIRED gtk+-3.0)
 
 # ImGui sources

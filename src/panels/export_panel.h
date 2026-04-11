@@ -1,6 +1,6 @@
 #pragma once
 
-#include "editor/tasks/editor_task.h"
+#include "tasks/editor_task.h"
 #include <string>
 #include <memory>
 #include <vector>

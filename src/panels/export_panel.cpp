@@ -1,5 +1,5 @@
 #include "export_panel.h"
-#include "editor/editor_app.h"
+#include "editor_app.h"
 
 #include <imgui.h>
 #include <nfd.h>

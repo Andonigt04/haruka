@@ -1,7 +1,7 @@
 #pragma once
 
 #include "core/scene.h"
-#include "editor/commands/command_history.h"
+#include "commands/command_history.h"
 #include <imgui.h>
 #include <glm/glm.hpp>
 #include <functional>

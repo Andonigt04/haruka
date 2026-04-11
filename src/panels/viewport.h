@@ -7,12 +7,12 @@
 #include "renderer/motor_instance.h"
 #include "renderer/simple_mesh.h"
 #include "renderer/primitive_shapes.h"
-#include "editor/commands/command_history.h"
+#include "commands/command_history.h"
 #include <imgui.h>
 #include <memory>
 #include <GLFW/glfw3.h>
 #include "renderer/model.h"
-#include "editor/panels/stats.h"
+#include "panels/stats.h"
 #include <map>
 #include <unordered_map>
 #include <glm/gtc/type_ptr.hpp>

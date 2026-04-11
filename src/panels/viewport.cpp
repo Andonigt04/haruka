@@ -4,7 +4,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtx/intersect.hpp>
 #include <algorithm>
-#include "editor/commands/scene_commands.h"
+#include "commands/scene_commands.h"
 #include <ImGuizmo.h>
 #include <glm/gtc/type_ptr.hpp>
 

@@ -1,6 +1,6 @@
 #include "inspector.h"
 
-#include "editor/commands/scene_commands.h"
+#include "commands/scene_commands.h"
 #include <algorithm>
 #include <iostream>
 #include <cstring>

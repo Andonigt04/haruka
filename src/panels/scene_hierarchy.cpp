@@ -6,7 +6,7 @@
 #include "renderer/primitive_shapes.h"
 #include "core/components/material_component.h"
 #include "core/components/mesh_renderer_component.h"
-#include "editor/commands/scene_commands.h"
+#include "commands/scene_commands.h"
 #include <glm/glm.hpp>
 #include <iostream>
 #include <cstdint>

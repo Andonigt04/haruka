@@ -1,7 +1,7 @@
 #pragma once
 
 #include "core/scene.h"
-#include "editor/tasks/editor_task.h"
+#include "tasks/editor_task.h"
 #include "game/planetary_system.h"
 #include <nlohmann/json.hpp>
 #include <future>
