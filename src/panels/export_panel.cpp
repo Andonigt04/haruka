@@ -3,6 +3,7 @@
 
 #include <imgui.h>
 #include <nfd.h>
+#include <fstream>
 #include <filesystem>
 #include <iostream>
 #include <cstring>

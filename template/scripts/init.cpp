@@ -137,7 +137,7 @@ void gameOnInit(Haruka::Scene* scene) {
     g_playerController = new GameLogic::PlayerController(g_playerCharacter);
 }
 
-void gameOnUpdate(GLFWwindow* window, float deltaTime) {
+void gameOnUpdate(SDLwindow* window, float deltaTime) {
     if (g_playerCharacter && window) {
         g_playerCharacter->processInput(window, deltaTime);
     }

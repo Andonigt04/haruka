@@ -63,18 +63,18 @@ Core shader assets are in [shaders/](shaders/).
 
 Resolved by CMake via `find_package`/`pkg-config`:
 
-- OpenGL
-- GLFW3
+- Vulkan
 - Assimp
 - OpenSSL
 - OpenAL
 - PostgreSQL client (`libpq`)
-- GTK3 (for native file dialog/editor integration)
 
 ### Third-party sources
 
-The repo expects `third_party/` sources (GLM, GLAD, GLFW, stb, etc.).
-You can bootstrap the folder with [setup_deps.sh](setup_deps.sh).
+sudo dnf install cmake gcc-c++ pkgconf-pkg-config vulkan-loader vulkan-headers vulkan-tools \
+openal-soft-devel openssl-devel glm-devel git make
+
+The repo expects `third_party/` sources (GLM, GLAD, stb, etc.).
 
 ---
 

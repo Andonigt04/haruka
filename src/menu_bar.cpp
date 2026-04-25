@@ -2,7 +2,7 @@
 #include "editor_app.h"
 #include <imgui.h>
 #include <nfd.h>
-#include <GLFW/glfw3.h>
+#include <SDL3/SDL.h>
 #include <iostream>
 #include <cstdio>
 
@@ -79,7 +79,11 @@ void MenuBar::renderFileMenu() {
     }
 
     if (ImGui::MenuItem("Exit", "Alt+F4")) {
-        glfwSetWindowShouldClose(editorApp->window, true);
+        // SDL3: cerrar ventana
+        if (editorApp->window) {
+            SDL_DestroyWindow(editorApp->window);
+            editorApp->window = nullptr;
+        }
     }
 
     ImGui::EndMenu();

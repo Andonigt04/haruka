@@ -34,6 +34,11 @@ class MenuBar;
  * Owns project/scene state, viewport camera, dockable panels, play-mode state,
  * and project/file workflow actions.
  */
+// Migración a SDL3 + Vulkan
+#include <SDL3/SDL.h>
+#include <SDL3/SDL_vulkan.h>
+#include <vulkan/vulkan.h>
+
 class EditorApplication {
 public:
     /** @brief Constructs the editor app with default UI state. */
@@ -63,7 +68,20 @@ private:
     std::unique_ptr<MenuBar> menuBar;
 
     // UI state
-    GLFWwindow* window;
+    SDL_Window* window = nullptr;
+    // Vulkan handles
+    VkInstance vkInstance = VK_NULL_HANDLE;
+    VkSurfaceKHR vkSurface = VK_NULL_HANDLE;
+    VkPhysicalDevice vkPhysicalDevice = VK_NULL_HANDLE;
+    VkDevice vkDevice = VK_NULL_HANDLE;
+    VkQueue vkQueue = VK_NULL_HANDLE;
+    VkCommandPool vkCommandPool = VK_NULL_HANDLE;
+    VkDescriptorPool vkDescriptorPool = VK_NULL_HANDLE;
+    VkSwapchainKHR vkSwapchain = VK_NULL_HANDLE;
+    VkRenderPass vkRenderPass = VK_NULL_HANDLE;
+    std::vector<VkImage> swapchainImages;
+    std::vector<VkImageView> swapchainImageViews;
+    std::vector<VkFramebuffer> swapchainFramebuffers;
     std::unique_ptr<Haruka::Project> currentProject;
     std::unique_ptr<Haruka::Scene> currentScene;
     std::unique_ptr<Camera> viewportCamera;
@@ -83,6 +101,10 @@ private:
     ExportPanel exportPanel;
     PlanetTerrainEditorPanel planetTerrainEditorPanel;
     
+    // ImGui backend initialization flags
+    bool imguiVulkanInitialized = false;
+    bool imguiSDLInitialized = false;
+
     // Gizmos
     int gizmoMode = 0;
     bool gizmoActive = false;

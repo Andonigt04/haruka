@@ -1,12 +1,16 @@
 #define GLM_ENABLE_EXPERIMENTAL
-#include "viewport.h"
-#include "core/application.h"
+
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtx/intersect.hpp>
 #include <algorithm>
-#include "commands/scene_commands.h"
+#include <imgui.h>
 #include <ImGuizmo.h>
 #include <glm/gtc/type_ptr.hpp>
+
+#include "core/application.h"
+#include "commands/scene_commands.h"
+
+#include "viewport.h"
 
 namespace {
 std::unordered_map<std::string, std::shared_ptr<Model>> g_modelCache;
@@ -312,383 +316,26 @@ void ViewportPanel::handleAssetDrop() {
 }
 
 void ViewportPanel::renderScene() {
-    if (!renderTarget) return;
-
-    renderVertex_count = 0;
-    renderDraw_calls = 0;
-
-    // --- Render del motor vs render local ---
-    // Si quieres forzar render local en el editor, usa esta bandera:
-    #ifdef HARUKA_EDITOR
-    static bool forceLocalRender = false;
-    if (ImGui::IsKeyDown(ImGuiKey_LeftCtrl) && ImGui::IsKeyPressed(ImGuiKey_L)) {
-        forceLocalRender = !forceLocalRender;
-    }
-    #else
-    constexpr bool forceLocalRender = false;
-    #endif
-
-    RenderTarget* motorTarget = MotorInstance::getInstance().getRenderTarget();
-    bool motorActivo = MotorInstance::getInstance().isMotorActive();
-    bool motorTieneApp = (MotorInstance::getInstance().getApplication() != nullptr);
-    bool motorTieneCam = (MotorInstance::getInstance().getCamera() != nullptr);
-    bool motorRenderDirecto = (motorTarget && (motorTarget == renderTarget.get()));
-
-    auto computeSceneStats = [&](int& outVertices, int& outTriangles, int& outDrawCalls) {
-        outVertices = 0;
-        outTriangles = 0;
-        outDrawCalls = 0;
-        Haruka::Scene* sceneForStats = MotorInstance::getInstance().getScene();
-        if (!sceneForStats) sceneForStats = currentScene;
-        if (!sceneForStats) return;
-
-        for (const auto& obj : sceneForStats->getObjects()) {
-            if (isRenderDisabledByEditor(obj)) continue;
-            if (obj.meshRenderer) {
-                outDrawCalls++;
-                outVertices += obj.meshRenderer->getVertexCount();
-                outTriangles += obj.meshRenderer->getTriangleCount();
-                continue;
-            }
-            if (!obj.modelPath.empty()) {
-                try {
-                    auto model = getOrLoadModelCached(obj.modelPath);
-                    if (!model) continue;
-                    outDrawCalls++;
-                    outVertices += model->getVertexCount();
-                    outTriangles += model->getTriangleCount();
-                } catch (...) {}
-            }
-        }
-    };
-
-    bool useMotorOutput = playMode && !forceLocalRender;
-    if (useMotorOutput) {
-        if (motorTarget && motorRenderDirecto) {
-            // El motor ya renderiza directo en este target, no hacer nada más
-            if (statsPanel) {
-                statsPanel->setVertexCount(Application::getLastRenderedVertices());
-                statsPanel->setDrawCalls(Application::getLastRenderedDrawCalls());
-                statsPanel->setTriangleCount(Application::getLastRenderedTriangles());
-                statsPanel->setTotalVertexCount(Application::getLastTotalVertices());
-                statsPanel->setTotalDrawCalls(Application::getLastTotalDrawCalls());
-                statsPanel->setTotalTriangleCount(Application::getLastTotalTriangles());
-                statsPanel->setVisibleChunkCount(Application::getLastVisibleChunks());
-                statsPanel->setResidentChunkCount(Application::getLastResidentChunks());
-                statsPanel->setPendingChunkLoads(Application::getLastPendingChunkLoads());
-                statsPanel->setPendingChunkEvictions(Application::getLastPendingChunkEvictions());
-                statsPanel->setResidentMemoryMB(Application::getLastResidentMemoryMB());
-                statsPanel->setTrackedChunkCount(Application::getLastTrackedChunks());
-                statsPanel->setMaxMemoryMB(Application::getLastMaxMemoryMB());
-            }
-            return;
-        } else if (motorTarget) {
-            // Copiar textura del motor al renderTarget del viewport
-            glBindFramebuffer(GL_READ_FRAMEBUFFER, motorTarget->getFBO());
-            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, renderTarget->getFBO());
-            glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL_COLOR_BUFFER_BIT, GL_LINEAR);
-            glBindFramebuffer(GL_FRAMEBUFFER, 0);
-            if (statsPanel) {
-                statsPanel->setVertexCount(Application::getLastRenderedVertices());
-                statsPanel->setDrawCalls(Application::getLastRenderedDrawCalls());
-                statsPanel->setTriangleCount(Application::getLastRenderedTriangles());
-                statsPanel->setTotalVertexCount(Application::getLastTotalVertices());
-                statsPanel->setTotalDrawCalls(Application::getLastTotalDrawCalls());
-                statsPanel->setTotalTriangleCount(Application::getLastTotalTriangles());
-                statsPanel->setVisibleChunkCount(Application::getLastVisibleChunks());
-                statsPanel->setResidentChunkCount(Application::getLastResidentChunks());
-                statsPanel->setPendingChunkLoads(Application::getLastPendingChunkLoads());
-                statsPanel->setPendingChunkEvictions(Application::getLastPendingChunkEvictions());
-                statsPanel->setResidentMemoryMB(Application::getLastResidentMemoryMB());
-                statsPanel->setTrackedChunkCount(Application::getLastTrackedChunks());
-                statsPanel->setMaxMemoryMB(Application::getLastMaxMemoryMB());
-            }
-            return;
-        } else {
-            // Sin render target del motor: mantener el viewport sin renderizar la ruta local inestable.
-            if (statsPanel) {
-                statsPanel->setVertexCount(0);
-                statsPanel->setDrawCalls(0);
-                statsPanel->setTriangleCount(0);
-                statsPanel->setTotalVertexCount(0);
-                statsPanel->setTotalDrawCalls(0);
-                statsPanel->setTotalTriangleCount(0);
-                statsPanel->setVisibleChunkCount(0);
-                statsPanel->setResidentChunkCount(0);
-                statsPanel->setPendingChunkLoads(0);
-                statsPanel->setPendingChunkEvictions(0);
-                statsPanel->setResidentMemoryMB(0);
-                statsPanel->setTrackedChunkCount(0);
-                statsPanel->setMaxMemoryMB(0);
-            }
-            return;
-        }
-    }
-
-    // Render local (editor o fallback)
-    renderTarget->bindForWriting();
-    glViewport(0, 0, width, height);
-    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
-    int localDrawCalls = 0;
-    int localVertices = 0;
-    int localTriangles = 0;
-    int totalVertices = 0;
-    int totalTriangles = 0;
-    int totalDrawCalls = 0;
-    computeSceneStats(totalVertices, totalTriangles, totalDrawCalls);
-    if (currentScene) {
-        glm::dvec3 camPos = camera ? glm::dvec3(camera->position) : glm::dvec3(0.0);
-        bool shaderReady = true;
-        if (!sceneShader) {
-            try {
-                // Shader simple/estable para editor local
-                sceneShader = std::make_unique<Shader>("shaders/simple.vert", "shaders/light_cube.frag");
-            } catch (const std::exception& e) {
-                std::cerr << "[ViewportPanel] Error al crear sceneShader: " << e.what() << std::endl;
-                shaderReady = false;
-            }
-        }
-        if (!sceneShader) {
-            std::cerr << "[ViewportPanel] sceneShader es nullptr, abortando render local" << std::endl;
-            shaderReady = false;
-        }
-        if (shaderReady) {
-            Application* motorApp = MotorInstance::getInstance().getApplication();
-            CascadedShadowMap* cascadedShadow = motorApp ? motorApp->getCascadedShadowMap() : nullptr;
-            Shader* cascadeShadowShader = motorApp ? motorApp->getCascadedShadowShader() : nullptr;
-
-            const bool enableShadows = true;
-
-            glm::vec3 sunPos(5000.0f, 5000.0f, -5000.0f);
-            glm::vec3 sunColor(1.0f, 1.0f, 0.95f);
-            float sunIntensity = 20.0f;
-            for (const auto& obj : currentScene->getObjects()) {
-                if (isRenderDisabledByEditor(obj)) continue;
-                if (obj.type == "Light" || obj.type == "PointLight" || obj.type == "DirectionalLight") {
-                    sunPos = glm::vec3(obj.getWorldPosition(currentScene));
-                    sunColor = glm::vec3(obj.color);
-                    sunIntensity = std::max((float)obj.intensity, 0.0f);
-                    break;
-                }
-            }
-
-            glm::vec3 sunDir = glm::normalize(sunPos);
-            glm::mat4 cameraView = camera ? camera->getViewMatrix() : glm::lookAt(glm::vec3(0.0f, 2.0f, 8.0f), glm::vec3(0.0f), glm::vec3(0, 1, 0));
-            float camDist = camera ? glm::length(glm::vec3(camera->position)) : 1000.0f;
-            float nearPlane = std::clamp(camDist * 0.001f, 0.5f, 20.0f);
-            float farPlane = std::max(200000.0f, camDist * 400.0f);
-            if (currentScene && currentScene->getObject("Sun")) {
-                const auto* sunObj = currentScene->getObject("Sun");
-                glm::vec3 sunPosObj = glm::vec3(sunObj->getWorldPosition(currentScene));
-                float sunDistance = glm::length(sunPosObj - (camera ? glm::vec3(camera->position) : glm::vec3(0.0f)));
-                float sunRadius = std::max(std::abs((float)sunObj->scale.x), std::max(std::abs((float)sunObj->scale.y), std::abs((float)sunObj->scale.z)));
-                farPlane = std::max(farPlane, sunDistance + sunRadius * 3.0f);
-                farPlane = std::min(farPlane, 300000000.0f);
-            }
-
-            if (enableShadows && cascadedShadow) {
-                glm::vec3 camForward = camera ? camera->getFront() : glm::vec3(0.0f, 0.0f, -1.0f);
-                glm::vec3 camUp = camera ? camera->getUp() : glm::vec3(0.0f, 1.0f, 0.0f);
-                cascadedShadow->updateCascades(
-                    -sunDir,
-                    camera ? glm::vec3(camera->position) : glm::vec3(0.0f),
-                    camForward,
-                    camUp,
-                    (float)width / (float)height,
-                    nearPlane,
-                    farPlane,
-                    60.0f);
-            }
-
-            // Shadow depth pass
-            if (enableShadows && cascadedShadow && cascadeShadowShader) {
-                glEnable(GL_CULL_FACE);
-                glCullFace(GL_FRONT);
-                glEnable(GL_POLYGON_OFFSET_FILL);
-                glPolygonOffset(1.5f, 4.0f);
-
-                cascadeShadowShader->use();
-                for (int cascade = 0; cascade < cascadedShadow->getNumCascades(); ++cascade) {
-                    cascadedShadow->bindForWriting(cascade);
-                    glClear(GL_DEPTH_BUFFER_BIT);
-
-                    cascadeShadowShader->setMat4("lightSpaceMatrix", cascadedShadow->getCascadeMatrix(cascade));
-
-                    for (const auto& obj : currentScene->getObjects()) {
-                        if (isRenderDisabledByEditor(obj)) continue;
-                        glm::mat4 modelMatrix = obj.getWorldTransform(currentScene);
-                        cascadeShadowShader->setMat4("model", modelMatrix);
-
-                        if (obj.meshRenderer && obj.meshRenderer->isResident()) {
-                            obj.meshRenderer->render(*cascadeShadowShader);
-                        } else if (!obj.modelPath.empty()) {
-                            try {
-                                auto model = getOrLoadModelCached(obj.modelPath);
-                                if (model) model->Draw(*cascadeShadowShader);
-                            } catch (...) {}
-                        }
-                    }
-                }
-
-                glCullFace(GL_BACK);
-                glDisable(GL_POLYGON_OFFSET_FILL);
-                glBindFramebuffer(GL_FRAMEBUFFER, 0);
-                renderTarget->bindForWriting();
-                glViewport(0, 0, width, height);
-            }
-
-            sceneShader->use();
-            const glm::mat4 projection = glm::perspective(glm::radians(60.0f), (float)width / (float)height, nearPlane, farPlane);
-            sceneShader->setMat4("projection", projection);
-            sceneShader->setMat4("view", cameraView);
-            sceneShader->setMat4("lightSpaceMatrix", glm::mat4(1.0f));
-            if (cascadedShadow) {
-                sceneShader->setInt("numCascades", cascadedShadow->getNumCascades());
-                for (int i = 0; i < cascadedShadow->getNumCascades(); ++i) {
-                    sceneShader->setMat4("cascadeLightSpaceMatrices[" + std::to_string(i) + "]", cascadedShadow->getCascadeMatrix(i));
-                    sceneShader->setFloat("cascadeSplits[" + std::to_string(i) + "]", cascadedShadow->getCascadeInfo(i).zFar);
-                    cascadedShadow->bindForReading(i, 7 + i);
-                    sceneShader->setInt("cascadeShadowMaps[" + std::to_string(i) + "]", 7 + i);
-                }
-            } else {
-                sceneShader->setInt("numCascades", 0);
-            }
-            sceneShader->setVec3("sunDirection", sunDir);
-            float sunEnergy = std::clamp(sunIntensity * 0.01f, 0.2f, 2.0f);
-            sceneShader->setVec3("sunLightColor", sunColor * sunEnergy);
-            sceneShader->setFloat("ambientStrength", 0.12f);
-            sceneShader->setBool("useShadowMap", false);
-
-            glm::vec3 camDir = glm::vec3(0.0f, 0.0f, 1.0f);
-            if (camera) {
-                glm::vec3 cp = camera->position;
-                float cpl = glm::length(cp);
-                if (cpl > 1e-6f) camDir = cp / cpl;
-            }
-
-            auto isChunkFacingCamera = [&](const Haruka::SceneObject& obj) -> bool {
-                if (!obj.properties.is_object()) return true;
-                if (!obj.properties.contains("terrainEditor")) return true;
-                const auto& te = obj.properties["terrainEditor"];
-                if (!te.is_object() || !te.value("isChunk", false)) return true;
-
-                if (!te.contains("chunkX") || !te.contains("chunkY") || !te.contains("chunkTilesX") || !te.contains("chunkTilesY")) return true;
-
-                int chunkX = te.value("chunkX", -1);
-                int chunkY = te.value("chunkY", -1);
-                int tilesX = te.value("chunkTilesX", 0);
-                int tilesY = te.value("chunkTilesY", 0);
-                if (chunkX < 0 || chunkY < 0 || tilesX <= 0 || tilesY <= 0) return true;
-
-                constexpr float kPiLocal = 3.14159265358979323846f;
-                float lat = ((static_cast<float>(chunkY) + 0.5f) / static_cast<float>(tilesY)) * kPiLocal - (kPiLocal * 0.5f);
-                float lon = ((static_cast<float>(chunkX) + 0.5f) / static_cast<float>(tilesX)) * (2.0f * kPiLocal) - kPiLocal;
-                glm::vec3 chunkDir(
-                    std::cos(lat) * std::cos(lon),
-                    std::sin(lat),
-                    std::cos(lat) * std::sin(lon)
-                );
-
-                // Render near/front hemisphere of the planet plus a small margin.
-                return glm::dot(chunkDir, camDir) > -0.15f;
-            };
-
-            for (auto& obj : currentScene->getObjectsMutable()) {
-                if (isRenderDisabledByEditor(obj)) continue;
-                if (!isChunkFacingCamera(obj)) continue;
-                int layer = std::clamp(obj.renderLayer, 1, 5);
-                double unloadDistance = Application::getLayerMaxDistance(layer);
-                if (obj.meshRenderer && layer >= 4) {
-                    glm::dvec3 worldPos = obj.getWorldPosition(currentScene);
-                    double dist = glm::length(worldPos - camPos);
-                    if (dist > unloadDistance * 1.15) {
-                        maybeReleasePrimitiveMesh(obj);
-                    } else if (!obj.meshRenderer->isResident() && dist < unloadDistance * 0.85) {
-                        buildPrimitiveMeshFromProperties(obj);
-                    }
-                }
-
-                glm::mat4 modelMatrix = obj.getWorldTransform(currentScene);
-                sceneShader->setMat4("model", modelMatrix);
-                glm::vec3 baseColor = glm::vec3(obj.color);
-                if (glm::length(baseColor) < 0.001f) baseColor = glm::vec3(0.8f);
-
-                const bool isLightObj = (obj.type == "Light" || obj.type == "PointLight" || obj.type == "DirectionalLight");
-                float emission = isLightObj ? std::max((float)obj.intensity, 0.0f) : 1.0f;
-                glm::vec3 c = isLightObj ? (baseColor * emission) : baseColor;
-                sceneShader->setVec3("lightColor", c);
-                if (obj.meshRenderer && obj.meshRenderer->isResident()) {
-                    obj.meshRenderer->render(*sceneShader);
-                    localDrawCalls++;
-                    localVertices += obj.meshRenderer->getResidentVertexCount();
-                    localTriangles += obj.meshRenderer->getResidentTriangleCount();
-                    continue;
-                }
-                if (!obj.modelPath.empty()) {
-                    try {
-                        auto model = getOrLoadModelCached(obj.modelPath);
-                        if (model) {
-                            model->Draw(*sceneShader);
-                            localDrawCalls++;
-                            localVertices += model->getVertexCount();
-                            localTriangles += model->getTriangleCount();
-                        }
-                    } catch (...) {}
-                }
-            }
-
-            // Outline amarillo del objeto seleccionado
-            if (selectedObjectIndex >= 0 && selectedObjectIndex < (int)currentScene->getObjects().size()) {
-                const auto& selObj = currentScene->getObjects()[selectedObjectIndex];
-                if (!isRenderDisabledByEditor(selObj)) {
-                    glDisable(GL_CULL_FACE);
-                    glEnable(GL_DEPTH_TEST);
-                    glDepthFunc(GL_LEQUAL);
-                    glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-                    glLineWidth(3.0f);
-
-                    sceneShader->use();
-                    sceneShader->setMat4("projection", glm::perspective(glm::radians(60.0f), (float)width / (float)height, nearPlane, farPlane));
-                    sceneShader->setMat4("view", cameraView);
-                    sceneShader->setVec3("sunDirection", sunDir);
-                    sceneShader->setVec3("sunLightColor", glm::vec3(1.0f));
-                    sceneShader->setFloat("ambientStrength", 1.0f);
-                    sceneShader->setBool("useShadowMap", false);
-                    sceneShader->setVec3("lightColor", glm::vec3(1.0f, 1.0f, 0.0f));
-
-                    glm::mat4 outlineModel = selObj.getWorldTransform(currentScene);
-                    outlineModel = outlineModel * glm::scale(glm::mat4(1.0f), glm::vec3(1.003f));
-                    sceneShader->setMat4("model", outlineModel);
-
-                    if (selObj.meshRenderer && selObj.meshRenderer->isResident()) {
-                        selObj.meshRenderer->render(*sceneShader);
-                    } else if (!selObj.modelPath.empty()) {
-                        try {
-                            auto model = getOrLoadModelCached(selObj.modelPath);
-                            if (model) model->Draw(*sceneShader);
-                        } catch (...) {}
-                    }
-
-                    glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-                    glLineWidth(1.0f);
-                    glDepthFunc(GL_LESS);
-                }
-            }
-        }
-    }
-    renderTarget->unbind();
-    renderDraw_calls = localDrawCalls;
-    renderVertex_count = localVertices;
+    // Vulkan/SDL3: El renderizado se realiza en el motor principal.
+    // Aquí solo se actualizan estadísticas si hay panel de stats.
     if (statsPanel) {
-        statsPanel->setVertexCount(renderVertex_count);
-        statsPanel->setDrawCalls(renderDraw_calls);
-        statsPanel->setTriangleCount(localTriangles);
-        statsPanel->setTotalVertexCount(totalVertices);
-        statsPanel->setTotalDrawCalls(totalDrawCalls);
-        statsPanel->setTotalTriangleCount(totalTriangles);
+        statsPanel->setVertexCount(Application::getLastRenderedVertices());
+        statsPanel->setDrawCalls(Application::getLastRenderedDrawCalls());
+        statsPanel->setTriangleCount(Application::getLastRenderedTriangles());
+        statsPanel->setTotalVertexCount(Application::getLastTotalVertices());
+        statsPanel->setTotalDrawCalls(Application::getLastTotalDrawCalls());
+        statsPanel->setTotalTriangleCount(Application::getLastTotalTriangles());
+        statsPanel->setVisibleChunkCount(Application::getLastVisibleChunks());
+        statsPanel->setResidentChunkCount(Application::getLastResidentChunks());
+        statsPanel->setPendingChunkLoads(Application::getLastPendingChunkLoads());
+        statsPanel->setPendingChunkEvictions(Application::getLastPendingChunkEvictions());
+        statsPanel->setResidentMemoryMB(Application::getLastResidentMemoryMB());
+        statsPanel->setTrackedChunkCount(Application::getLastTrackedChunks());
+        statsPanel->setMaxMemoryMB(Application::getLastMaxMemoryMB());
     }
+    // El swapchain de Vulkan se presenta en el render loop principal.
+    // Aquí no se hace ningún render local.
+    return;
 }
 
 void ViewportPanel::updateCameraFromInput(float deltaTime) {
@@ -713,8 +360,8 @@ void ViewportPanel::updateCameraFromInput(float deltaTime) {
     }
 
     // WASD solo cuando el viewport tiene foco y no hay inputs activos
-    if (camera && isViewportFocused && glfwWindow && !ImGui::IsAnyItemActive()) {
-        camera->processInput(glfwWindow, deltaTime);
+    if (camera && isViewportFocused && !ImGui::IsAnyItemActive()) {
+        camera->processInput(deltaTime);
     }
 }
 
@@ -773,18 +420,13 @@ void ViewportPanel::onImGuiRender() {
     if (newW < 1) newW = 1;
     if (newH < 1) newH = 1;
 
-    if (!renderTarget || newW != width || newH != height) {
-        width = newW;
-        height = newH;
-        recreateRenderTarget();
-    }
 
-    ImGui::Image(
-        (void*)(intptr_t)renderTarget->getColorTexture(),
-        ImVec2((float)width, (float)height),
-        ImVec2(0, 0),
-        ImVec2(1, 1)
-    );
+    // En Vulkan+SDL3, la imagen del swapchain se presenta automáticamente.
+    // Si se quiere mostrar una textura, debe ser compatible con Vulkan/SDL3.
+    // Aquí solo se reserva el espacio del viewport.
+    ImGui::Dummy(ImVec2((float)newW, (float)newH));
+    width = newW;
+    height = newH;
 
     viewportMin = ImGui::GetItemRectMin();
     viewportMax = ImGui::GetItemRectMax();
