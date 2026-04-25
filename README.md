@@ -10,8 +10,6 @@ Haruka Engine is a C++17 OpenGL 4.6 real-time engine with:
 The repository builds three main applications from the same codebase:
 
 - `HarukaEditor` (tools and authoring)
-- `HarukaEngine` (runtime client)
-- `HarukaServer` (dedicated server with database support)
 
 ---
 
@@ -33,7 +31,21 @@ The engine library target is `HarukaEngineLib` and is linked by runtime/editor.
 
 ---
 
-## 2) Rendering Features
+## Download Dependencies
+
+Dev dependencies
+```bash
+sudo dnf install cmake gcc-c++ glfw3-devel assimp-devel openssl-devel openal-soft-devel postgresql-libs gtk3-devel pkgconf-pkg-config glm-devel vulkan-loader vulkan-loader-devel vulkan-headers vulkan-tools sdl3-devel boost-devel asio-devel
+```
+
+Optional dependencies for compiling SDL3 (at the moment none rpm in dnf)
+```bash
+sudo dnf install libX11-devel libXext-devel libXrandr-devel libXcursor-devel libXinerama-devel libXi-devel libXScrnSaver-devel wayland-devel libxkbcommon-devel mesa-libgbm-devel libdrm-devel libXtst-devel   
+```
+
+---
+
+## Rendering Features
 
 Haruka includes:
 
