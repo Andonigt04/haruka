@@ -1,12 +1,12 @@
 cmake_minimum_required(VERSION 3.14)
-project(HarukaEditor)
+project(HarukaEditor VERSION 0.2.0)
 
 # ==== 1. Configuración de Estándares y Optimización ====
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 if(NOT CMAKE_BUILD_TYPE)
-    set(CMAKE_BUILD_TYPE Release)
+    set(CMAKE_BUILD_TYPE Debug)
 endif()
 
 if(NOT MSVC)
@@ -34,6 +34,7 @@ find_package(SDL3 REQUIRED)
 find_package(Vulkan REQUIRED)
 find_package(OpenSSL REQUIRED)
 find_package(OpenAL REQUIRED)
+find_package(PostgreSQL REQUIRED)
 
 # Buscamos ASIO (necesario para la red) y GTK3 (para diálogos de archivos)
 find_path(ASIO_INCLUDE_DIR asio.hpp)
@@ -119,6 +120,7 @@ target_link_libraries(HarukaEditor PRIVATE
     PkgConfig::GTK3
     OpenSSL::Crypto
     OpenAL::OpenAL
+    PostgreSQL::PostgreSQL
     ${CMAKE_DL_LIBS}
     pthread
     m
