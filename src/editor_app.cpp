@@ -1,4 +1,3 @@
-
 #include "editor_app.h"
 #include "core/camera.h"
 #include "core/error_reporter.h"
@@ -127,16 +126,41 @@ void EditorApplication::init() {
     deviceCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
     deviceCreateInfo.queueCreateInfoCount = 1;
     deviceCreateInfo.pQueueCreateInfos = &queueCreateInfo;
-    deviceCreateInfo.enabledExtensionCount = 0;
-    deviceCreateInfo.ppEnabledExtensionNames = nullptr;
+    const std::vector<const char*> deviceExtensions = {
+        VK_KHR_SWAPCHAIN_EXTENSION_NAME
+    };
+
+    deviceCreateInfo.enabledExtensionCount = static_cast<uint32_t>(deviceExtensions.size());
+    deviceCreateInfo.ppEnabledExtensionNames = deviceExtensions.data();
     if (vkCreateDevice(vkPhysicalDevice, &deviceCreateInfo, nullptr, &vkDevice) != VK_SUCCESS) {
         throw std::runtime_error("Failed to create Vulkan device");
     }
     vkGetDeviceQueue(vkDevice, graphicsQueueFamily, 0, &vkQueue);
 
+    // Cargar funciones KHR explícitamente (necesario con algunos loaders/drivers)
+    auto pfnCreateSwapchain = (PFN_vkCreateSwapchainKHR)
+        vkGetDeviceProcAddr(vkDevice, "vkCreateSwapchainKHR");
+    auto pfnGetSwapchainImages = (PFN_vkGetSwapchainImagesKHR)
+        vkGetDeviceProcAddr(vkDevice, "vkGetSwapchainImagesKHR");
+    auto pfnAcquireNextImage = (PFN_vkAcquireNextImageKHR)
+        vkGetDeviceProcAddr(vkDevice, "vkAcquireNextImageKHR");
+    auto pfnQueuePresent = (PFN_vkQueuePresentKHR)
+        vkGetDeviceProcAddr(vkDevice, "vkQueuePresentKHR");
+
+    if (!pfnCreateSwapchain || !pfnGetSwapchainImages || !pfnAcquireNextImage || !pfnQueuePresent)
+        throw std::runtime_error("No se pudieron cargar las funciones KHR del swapchain");
+
     // 5. Crear swapchain (simplificado, sin manejo de recreación ni selección avanzada)
     VkSurfaceCapabilitiesKHR surfaceCapabilities;
     vkGetPhysicalDeviceSurfaceCapabilitiesKHR(vkPhysicalDevice, vkSurface, &surfaceCapabilities);
+
+    // LOG para diagnosticar
+    printf("[DEBUG] extent: %ux%u\n", surfaceCapabilities.currentExtent.width, surfaceCapabilities.currentExtent.height);
+    printf("[DEBUG] minImageCount: %u, maxImageCount: %u\n", surfaceCapabilities.minImageCount, surfaceCapabilities.maxImageCount);
+    printf("[DEBUG] supportedCompositeAlpha: %u\n", surfaceCapabilities.supportedCompositeAlpha);
+    printf("[DEBUG] supportedUsageFlags: %u\n", surfaceCapabilities.supportedUsageFlags);
+    fflush(stdout);
+
     uint32_t formatCount = 0;
     vkGetPhysicalDeviceSurfaceFormatsKHR(vkPhysicalDevice, vkSurface, &formatCount, nullptr);
     std::vector<VkSurfaceFormatKHR> formats(formatCount);
@@ -147,11 +171,24 @@ void EditorApplication::init() {
     std::vector<VkPresentModeKHR> presentModes(presentModeCount);
     vkGetPhysicalDeviceSurfacePresentModesKHR(vkPhysicalDevice, vkSurface, &presentModeCount, presentModes.data());
     VkPresentModeKHR presentMode = VK_PRESENT_MODE_FIFO_KHR;
-    VkExtent2D extent = surfaceCapabilities.currentExtent;
+    VkExtent2D extent;
+    if (surfaceCapabilities.currentExtent.width != UINT32_MAX) {
+        extent = surfaceCapabilities.currentExtent;
+    } else {
+        // Wayland no proporciona el extent — usar el tamaño de ventana
+        int w, h;
+        SDL_GetWindowSizeInPixels(window, &w, &h);
+        extent.width  = std::clamp((uint32_t)w, surfaceCapabilities.minImageExtent.width,  surfaceCapabilities.maxImageExtent.width);
+        extent.height = std::clamp((uint32_t)h, surfaceCapabilities.minImageExtent.height, surfaceCapabilities.maxImageExtent.height);
+    }
     VkSwapchainCreateInfoKHR swapchainInfo{};
     swapchainInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
     swapchainInfo.surface = vkSurface;
-    swapchainInfo.minImageCount = 2;
+    uint32_t imageCount = surfaceCapabilities.minImageCount + 1;
+    if (surfaceCapabilities.maxImageCount > 0 && imageCount > surfaceCapabilities.maxImageCount) {
+        imageCount = surfaceCapabilities.maxImageCount;
+    }
+    swapchainInfo.minImageCount = imageCount;
     swapchainInfo.imageFormat = surfaceFormat.format;
     swapchainInfo.imageColorSpace = surfaceFormat.colorSpace;
     swapchainInfo.imageExtent = extent;
@@ -163,13 +200,17 @@ void EditorApplication::init() {
     swapchainInfo.presentMode = presentMode;
     swapchainInfo.clipped = VK_TRUE;
     swapchainInfo.oldSwapchain = VK_NULL_HANDLE;
-    if (vkCreateSwapchainKHR(vkDevice, &swapchainInfo, nullptr, &vkSwapchain) != VK_SUCCESS) {
-        throw std::runtime_error("Failed to create swapchain");
+
+    // TODO: Manejar errores específicos de swapchain (e.g. VK_ERROR_OUT_OF_DATE_KHR) y recreación
+    VkResult scResult = pfnCreateSwapchain(vkDevice, &swapchainInfo, nullptr, &vkSwapchain);
+    if (scResult != VK_SUCCESS) {
+        throw std::runtime_error("Failed to create swapchain, VkResult: " + std::to_string(scResult));
     }
+
     uint32_t swapchainImageCount = 0;
-    vkGetSwapchainImagesKHR(vkDevice, vkSwapchain, &swapchainImageCount, nullptr);
+    pfnGetSwapchainImages(vkDevice, vkSwapchain, &swapchainImageCount, nullptr);
     swapchainImages.resize(swapchainImageCount);
-    vkGetSwapchainImagesKHR(vkDevice, vkSwapchain, &swapchainImageCount, swapchainImages.data());
+    pfnGetSwapchainImages(vkDevice, vkSwapchain, &swapchainImageCount, swapchainImages.data());
     // Crear image views
     swapchainImageViews.resize(swapchainImageCount);
     for (uint32_t i = 0; i < swapchainImageCount; ++i) {
@@ -270,32 +311,7 @@ void EditorApplication::init() {
         throw std::runtime_error("Failed to create ImGui descriptor pool");
     }
 
-    // 9. Inicializar ImGui Vulkan backend
-    if (ImGui_ImplSDL3_InitForVulkan(window)) {
-        imguiSDLInitialized = true;
-    }
-    ImGui_ImplVulkan_InitInfo init_info = {};
-    init_info.Instance = vkInstance;
-    init_info.PhysicalDevice = vkPhysicalDevice;
-    init_info.Device = vkDevice;
-    init_info.QueueFamily = graphicsQueueFamily;
-    init_info.Queue = vkQueue;
-    init_info.PipelineCache = VK_NULL_HANDLE;
-    init_info.DescriptorPool = vkDescriptorPool;
-    init_info.MinImageCount = 2;
-    init_info.ImageCount = 2;
-    init_info.Allocator = nullptr;
-    init_info.CheckVkResultFn = nullptr; // Puedes poner un callback de error
-    // API moderna: RenderPass, Subpass y MSAASamples van en PipelineInfoMain
-    init_info.PipelineInfoMain.RenderPass = vkRenderPass;
-    init_info.PipelineInfoMain.Subpass = 0;
-    init_info.PipelineInfoMain.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
-    if (ImGui_ImplVulkan_Init(&init_info)) {
-        imguiVulkanInitialized = true;
-    } else {
-        throw std::runtime_error("ImGui_ImplVulkan_Init failed");
-    }
-    // ===== ImGui Setup =====
+    // 9. Inicializar ImGui — orden obligatorio: contexto → backends
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
@@ -310,7 +326,32 @@ void EditorApplication::init() {
         style.Colors[ImGuiCol_WindowBg].w = 1.0f;
     }
 
-    ImGui_ImplSDL3_InitForVulkan(window);
+    if (ImGui_ImplSDL3_InitForVulkan(window)) {
+        imguiSDLInitialized = true;
+    } else {
+        throw std::runtime_error("ImGui_ImplSDL3_InitForVulkan failed");
+    }
+
+    ImGui_ImplVulkan_InitInfo init_info = {};
+    init_info.Instance = vkInstance;
+    init_info.PhysicalDevice = vkPhysicalDevice;
+    init_info.Device = vkDevice;
+    init_info.QueueFamily = graphicsQueueFamily;
+    init_info.Queue = vkQueue;
+    init_info.PipelineCache = VK_NULL_HANDLE;
+    init_info.DescriptorPool = vkDescriptorPool;
+    init_info.MinImageCount = imageCount;
+    init_info.ImageCount = imageCount;
+    init_info.Allocator = nullptr;
+    init_info.CheckVkResultFn = nullptr;
+    init_info.PipelineInfoMain.RenderPass = vkRenderPass;
+    init_info.PipelineInfoMain.Subpass = 0;
+    init_info.PipelineInfoMain.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
+    if (ImGui_ImplVulkan_Init(&init_info)) {
+        imguiVulkanInitialized = true;
+    } else {
+        throw std::runtime_error("ImGui_ImplVulkan_Init failed");
+    }
 
     // ===== Scene & Project Setup =====
     currentScene = std::make_unique<Haruka::Scene>("Untitled");
@@ -498,7 +539,7 @@ void EditorApplication::render() {
 
     // === Vulkan Render Loop ===
     uint32_t imageIndex;
-    VkResult result = vkAcquireNextImageKHR(vkDevice, vkSwapchain, UINT64_MAX, VK_NULL_HANDLE, VK_NULL_HANDLE, &imageIndex);
+    VkResult result = pfnAcquireNextImage(vkDevice, vkSwapchain, UINT64_MAX, VK_NULL_HANDLE, VK_NULL_HANDLE, &imageIndex);
     if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
         throw std::runtime_error("Failed to acquire swapchain image");
     }
@@ -546,7 +587,7 @@ void EditorApplication::render() {
     presentInfo.pSwapchains = &vkSwapchain;
     presentInfo.pImageIndices = &imageIndex;
     presentInfo.pResults = nullptr;
-    vkQueuePresentKHR(vkQueue, &presentInfo);
+    pfnQueuePresent(vkQueue, &presentInfo);
 
     vkFreeCommandBuffers(vkDevice, vkCommandPool, 1, &cmd);
 }

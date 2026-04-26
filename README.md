@@ -43,6 +43,23 @@ Optional dependencies for compiling SDL3 (at the moment none rpm in dnf)
 sudo dnf install libX11-devel libXext-devel libXrandr-devel libXcursor-devel libXinerama-devel libXi-devel libXScrnSaver-devel wayland-devel libxkbcommon-devel mesa-libgbm-devel libdrm-devel libXtst-devel   
 ```
 
+AMD dependencies
+```bash
+sudo dnf install mesa-vulkan-drivers vulkan-loader
+```
+
+Intel dependencies
+```bash
+sudo dnf install mesa-vulkan-drivers vulkan-loader
+```
+
+NVIDIA dependencies
+```bash
+sudo dnf install nvidia-driver
+# o si usas nouveau:
+sudo dnf install mesa-vulkan-drivers
+```
+
 ---
 
 ## Rendering Features

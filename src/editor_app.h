@@ -79,6 +79,11 @@ private:
     VkDescriptorPool vkDescriptorPool = VK_NULL_HANDLE;
     VkSwapchainKHR vkSwapchain = VK_NULL_HANDLE;
     VkRenderPass vkRenderPass = VK_NULL_HANDLE;
+    // Punteros de función KHR cargados explícitamente en init()
+    PFN_vkCreateSwapchainKHR    pfnCreateSwapchain    = nullptr;
+    PFN_vkGetSwapchainImagesKHR pfnGetSwapchainImages = nullptr;
+    PFN_vkAcquireNextImageKHR   pfnAcquireNextImage   = nullptr;
+    PFN_vkQueuePresentKHR       pfnQueuePresent       = nullptr;
     std::vector<VkImage> swapchainImages;
     std::vector<VkImageView> swapchainImageViews;
     std::vector<VkFramebuffer> swapchainFramebuffers;
