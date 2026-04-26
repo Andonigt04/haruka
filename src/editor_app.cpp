@@ -62,256 +62,57 @@ void EditorApplication::init() {
     if (!window) {
         throw std::runtime_error(std::string("Failed to create SDL3 window: ") + SDL_GetError());
     }
-    // ===== Vulkan Instance, Surface, Device, Swapchain, etc. =====
-    // 1. Crear instancia Vulkan
-    VkApplicationInfo appInfo{};
-    appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
-    appInfo.pApplicationName = "Haruka Editor";
-    appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
-    appInfo.pEngineName = "Haruka Engine";
-    appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
-    appInfo.apiVersion = VK_API_VERSION_1_2;
-
-
-    Uint32 sdlExtensionCount = 0;
-    const char* const* extensions = SDL_Vulkan_GetInstanceExtensions(&sdlExtensionCount);
-    if (!extensions || sdlExtensionCount == 0) {
-        throw std::runtime_error("SDL_Vulkan_GetInstanceExtensions failed");
-    }
-    std::vector<const char*> extensionsVec(extensions, extensions + sdlExtensionCount);
-
-    VkInstanceCreateInfo createInfo{};
-    createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
-    createInfo.pApplicationInfo = &appInfo;
-    createInfo.enabledExtensionCount = sdlExtensionCount;
-    createInfo.ppEnabledExtensionNames = extensionsVec.data();
-    createInfo.enabledLayerCount = 0;
-    createInfo.ppEnabledLayerNames = nullptr;
-    if (vkCreateInstance(&createInfo, nullptr, &vkInstance) != VK_SUCCESS) {
-        throw std::runtime_error("Failed to create Vulkan instance");
-    }
-
-    // 2. Crear surface SDL
-    if (!SDL_Vulkan_CreateSurface(window, vkInstance, nullptr, &vkSurface)) {
-        throw std::runtime_error("Failed to create Vulkan surface");
-    }
-
-    // 3. Seleccionar dispositivo físico
-    uint32_t deviceCount = 0;
-    vkEnumeratePhysicalDevices(vkInstance, &deviceCount, nullptr);
-    if (deviceCount == 0) throw std::runtime_error("No Vulkan physical devices found");
-    std::vector<VkPhysicalDevice> physicalDevices(deviceCount);
-    vkEnumeratePhysicalDevices(vkInstance, &deviceCount, physicalDevices.data());
-    vkPhysicalDevice = physicalDevices[0]; // Selección simple (mejorar si hay más de uno)
-
-    // 4. Crear logical device y colas
-    uint32_t queueFamilyCount = 0;
-    vkGetPhysicalDeviceQueueFamilyProperties(vkPhysicalDevice, &queueFamilyCount, nullptr);
-    std::vector<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
-    vkGetPhysicalDeviceQueueFamilyProperties(vkPhysicalDevice, &queueFamilyCount, queueFamilies.data());
-    uint32_t graphicsQueueFamily = 0;
-    for (uint32_t i = 0; i < queueFamilyCount; ++i) {
-        if (queueFamilies[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) {
-            graphicsQueueFamily = i;
-            break;
+    // ===== Vulkan: usar los handles del motor =====
+    // El motor inicializa Vulkan en create_vulkan_context().
+    // El editor reutiliza esos handles para no crear un segundo device.
+    {
+        auto* motorApp = MotorInstance::getInstance().getApplication();
+        if (!motorApp) {
+            if (!ownedApplication) {
+                ownedApplication = std::make_unique<Application>();
+            }
+            MotorInstance::getInstance().setApplication(ownedApplication.get());
+            motorApp = ownedApplication.get();
         }
+        motorApp->create_vulkan_context();
+
+        vkInstance       = motorApp->getVkInstance();
+        vkPhysicalDevice = motorApp->getVkPhysicalDevice();
+        vkDevice         = motorApp->getVkDevice();
+        vkQueue          = motorApp->getVkQueue();
+        vkCommandPool    = motorApp->getVkCommandPool();
+        vkRenderPass     = motorApp->getVkRenderPass();
+        vkSwapchain      = motorApp->getVkSwapchain();
+
+        if (!vkInstance || !vkDevice || !vkRenderPass)
+            throw std::runtime_error("El motor no inicializó Vulkan correctamente");
     }
-    float queuePriority = 1.0f;
-    VkDeviceQueueCreateInfo queueCreateInfo{};
-    queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-    queueCreateInfo.queueFamilyIndex = graphicsQueueFamily;
-    queueCreateInfo.queueCount = 1;
-    queueCreateInfo.pQueuePriorities = &queuePriority;
-    VkDeviceCreateInfo deviceCreateInfo{};
-    deviceCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-    deviceCreateInfo.queueCreateInfoCount = 1;
-    deviceCreateInfo.pQueueCreateInfos = &queueCreateInfo;
-    const std::vector<const char*> deviceExtensions = {
-        VK_KHR_SWAPCHAIN_EXTENSION_NAME
-    };
 
-    deviceCreateInfo.enabledExtensionCount = static_cast<uint32_t>(deviceExtensions.size());
-    deviceCreateInfo.ppEnabledExtensionNames = deviceExtensions.data();
-    if (vkCreateDevice(vkPhysicalDevice, &deviceCreateInfo, nullptr, &vkDevice) != VK_SUCCESS) {
-        throw std::runtime_error("Failed to create Vulkan device");
-    }
-    vkGetDeviceQueue(vkDevice, graphicsQueueFamily, 0, &vkQueue);
-
-    // Cargar funciones KHR explícitamente (necesario con algunos loaders/drivers)
-    auto pfnCreateSwapchain = (PFN_vkCreateSwapchainKHR)
-        vkGetDeviceProcAddr(vkDevice, "vkCreateSwapchainKHR");
-    auto pfnGetSwapchainImages = (PFN_vkGetSwapchainImagesKHR)
-        vkGetDeviceProcAddr(vkDevice, "vkGetSwapchainImagesKHR");
-    auto pfnAcquireNextImage = (PFN_vkAcquireNextImageKHR)
-        vkGetDeviceProcAddr(vkDevice, "vkAcquireNextImageKHR");
-    auto pfnQueuePresent = (PFN_vkQueuePresentKHR)
-        vkGetDeviceProcAddr(vkDevice, "vkQueuePresentKHR");
-
-    if (!pfnCreateSwapchain || !pfnGetSwapchainImages || !pfnAcquireNextImage || !pfnQueuePresent)
+    // Cargar punteros KHR desde el device del motor
+    pfnAcquireNextImage = (PFN_vkAcquireNextImageKHR) vkGetDeviceProcAddr(vkDevice, "vkAcquireNextImageKHR");
+    pfnQueuePresent     = (PFN_vkQueuePresentKHR)     vkGetDeviceProcAddr(vkDevice, "vkQueuePresentKHR");
+    if (!pfnAcquireNextImage || !pfnQueuePresent)
         throw std::runtime_error("No se pudieron cargar las funciones KHR del swapchain");
 
-    // 5. Crear swapchain (simplificado, sin manejo de recreación ni selección avanzada)
-    VkSurfaceCapabilitiesKHR surfaceCapabilities;
-    vkGetPhysicalDeviceSurfaceCapabilitiesKHR(vkPhysicalDevice, vkSurface, &surfaceCapabilities);
-
-    // LOG para diagnosticar
-    printf("[DEBUG] extent: %ux%u\n", surfaceCapabilities.currentExtent.width, surfaceCapabilities.currentExtent.height);
-    printf("[DEBUG] minImageCount: %u, maxImageCount: %u\n", surfaceCapabilities.minImageCount, surfaceCapabilities.maxImageCount);
-    printf("[DEBUG] supportedCompositeAlpha: %u\n", surfaceCapabilities.supportedCompositeAlpha);
-    printf("[DEBUG] supportedUsageFlags: %u\n", surfaceCapabilities.supportedUsageFlags);
-    fflush(stdout);
-
-    uint32_t formatCount = 0;
-    vkGetPhysicalDeviceSurfaceFormatsKHR(vkPhysicalDevice, vkSurface, &formatCount, nullptr);
-    std::vector<VkSurfaceFormatKHR> formats(formatCount);
-    vkGetPhysicalDeviceSurfaceFormatsKHR(vkPhysicalDevice, vkSurface, &formatCount, formats.data());
-    VkSurfaceFormatKHR surfaceFormat = formats[0];
-    uint32_t presentModeCount = 0;
-    vkGetPhysicalDeviceSurfacePresentModesKHR(vkPhysicalDevice, vkSurface, &presentModeCount, nullptr);
-    std::vector<VkPresentModeKHR> presentModes(presentModeCount);
-    vkGetPhysicalDeviceSurfacePresentModesKHR(vkPhysicalDevice, vkSurface, &presentModeCount, presentModes.data());
-    VkPresentModeKHR presentMode = VK_PRESENT_MODE_FIFO_KHR;
-    VkExtent2D extent;
-    if (surfaceCapabilities.currentExtent.width != UINT32_MAX) {
-        extent = surfaceCapabilities.currentExtent;
-    } else {
-        // Wayland no proporciona el extent — usar el tamaño de ventana
-        int w, h;
-        SDL_GetWindowSizeInPixels(window, &w, &h);
-        extent.width  = std::clamp((uint32_t)w, surfaceCapabilities.minImageExtent.width,  surfaceCapabilities.maxImageExtent.width);
-        extent.height = std::clamp((uint32_t)h, surfaceCapabilities.minImageExtent.height, surfaceCapabilities.maxImageExtent.height);
-    }
-    VkSwapchainCreateInfoKHR swapchainInfo{};
-    swapchainInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
-    swapchainInfo.surface = vkSurface;
-    uint32_t imageCount = surfaceCapabilities.minImageCount + 1;
-    if (surfaceCapabilities.maxImageCount > 0 && imageCount > surfaceCapabilities.maxImageCount) {
-        imageCount = surfaceCapabilities.maxImageCount;
-    }
-    swapchainInfo.minImageCount = imageCount;
-    swapchainInfo.imageFormat = surfaceFormat.format;
-    swapchainInfo.imageColorSpace = surfaceFormat.colorSpace;
-    swapchainInfo.imageExtent = extent;
-    swapchainInfo.imageArrayLayers = 1;
-    swapchainInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
-    swapchainInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    swapchainInfo.preTransform = surfaceCapabilities.currentTransform;
-    swapchainInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
-    swapchainInfo.presentMode = presentMode;
-    swapchainInfo.clipped = VK_TRUE;
-    swapchainInfo.oldSwapchain = VK_NULL_HANDLE;
-
-    // TODO: Manejar errores específicos de swapchain (e.g. VK_ERROR_OUT_OF_DATE_KHR) y recreación
-    VkResult scResult = pfnCreateSwapchain(vkDevice, &swapchainInfo, nullptr, &vkSwapchain);
-    if (scResult != VK_SUCCESS) {
-        throw std::runtime_error("Failed to create swapchain, VkResult: " + std::to_string(scResult));
-    }
-
-    uint32_t swapchainImageCount = 0;
-    pfnGetSwapchainImages(vkDevice, vkSwapchain, &swapchainImageCount, nullptr);
-    swapchainImages.resize(swapchainImageCount);
-    pfnGetSwapchainImages(vkDevice, vkSwapchain, &swapchainImageCount, swapchainImages.data());
-    // Crear image views
-    swapchainImageViews.resize(swapchainImageCount);
-    for (uint32_t i = 0; i < swapchainImageCount; ++i) {
-        VkImageViewCreateInfo viewInfo{};
-        viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-        viewInfo.image = swapchainImages[i];
-        viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-        viewInfo.format = surfaceFormat.format;
-        viewInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
-        viewInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
-        viewInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
-        viewInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
-        viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        viewInfo.subresourceRange.baseMipLevel = 0;
-        viewInfo.subresourceRange.levelCount = 1;
-        viewInfo.subresourceRange.baseArrayLayer = 0;
-        viewInfo.subresourceRange.layerCount = 1;
-        if (vkCreateImageView(vkDevice, &viewInfo, nullptr, &swapchainImageViews[i]) != VK_SUCCESS) {
-            throw std::runtime_error("Failed to create swapchain image view");
-        }
-    }
-
-    // 6. Crear render pass (simplificado)
-    VkAttachmentDescription colorAttachment{};
-    colorAttachment.format = surfaceFormat.format;
-    colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
-    colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    colorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-    colorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    colorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    colorAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-    VkAttachmentReference colorAttachmentRef{};
-    colorAttachmentRef.attachment = 0;
-    colorAttachmentRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    VkSubpassDescription subpass{};
-    subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-    subpass.colorAttachmentCount = 1;
-    subpass.pColorAttachments = &colorAttachmentRef;
-    VkRenderPassCreateInfo renderPassInfo{};
-    renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-    renderPassInfo.attachmentCount = 1;
-    renderPassInfo.pAttachments = &colorAttachment;
-    renderPassInfo.subpassCount = 1;
-    renderPassInfo.pSubpasses = &subpass;
-    if (vkCreateRenderPass(vkDevice, &renderPassInfo, nullptr, &vkRenderPass) != VK_SUCCESS) {
-        throw std::runtime_error("Failed to create render pass");
-    }
-
-    // Crear framebuffers
-    swapchainFramebuffers.resize(swapchainImageCount);
-    for (uint32_t i = 0; i < swapchainImageCount; ++i) {
-        VkImageView attachments[] = { swapchainImageViews[i] };
-        VkFramebufferCreateInfo framebufferInfo{};
-        framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-        framebufferInfo.renderPass = vkRenderPass;
-        framebufferInfo.attachmentCount = 1;
-        framebufferInfo.pAttachments = attachments;
-        framebufferInfo.width = extent.width;
-        framebufferInfo.height = extent.height;
-        framebufferInfo.layers = 1;
-        if (vkCreateFramebuffer(vkDevice, &framebufferInfo, nullptr, &swapchainFramebuffers[i]) != VK_SUCCESS) {
-            throw std::runtime_error("Failed to create framebuffer");
-        }
-    }
-
-    // Ya no es necesario llamar a ImGui_ImplVulkan_CreateFontsTexture ni DestroyFontUploadObjects (se hace automáticamente)
-    // 7. Crear command pool
-    VkCommandPoolCreateInfo poolInfo{};
-    poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-    poolInfo.queueFamilyIndex = graphicsQueueFamily;
-    poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
-    if (vkCreateCommandPool(vkDevice, &poolInfo, nullptr, &vkCommandPool) != VK_SUCCESS) {
-        throw std::runtime_error("Failed to create command pool");
-    }
-
-    // 8. Crear descriptor pool para ImGui
+    // Descriptor pool propio para ImGui
     VkDescriptorPoolSize pool_sizes[] = {
-        { VK_DESCRIPTOR_TYPE_SAMPLER, 1000 },
         { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1000 },
-        { VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1000 },
-        { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1000 },
-        { VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER, 1000 },
-        { VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER, 1000 },
-        { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1000 },
-        { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1000 },
-        { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1000 },
-        { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, 1000 },
-        { VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT, 1000 }
+        { VK_DESCRIPTOR_TYPE_SAMPLER, 1000 },
     };
     VkDescriptorPoolCreateInfo pool_info = {};
     pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     pool_info.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
-    pool_info.maxSets = 1000 * IM_ARRAYSIZE(pool_sizes);
+    pool_info.maxSets = 1000;
     pool_info.poolSizeCount = (uint32_t)IM_ARRAYSIZE(pool_sizes);
     pool_info.pPoolSizes = pool_sizes;
-    if (vkCreateDescriptorPool(vkDevice, &pool_info, nullptr, &vkDescriptorPool) != VK_SUCCESS) {
+    if (vkCreateDescriptorPool(vkDevice, &pool_info, nullptr, &vkDescriptorPool) != VK_SUCCESS)
         throw std::runtime_error("Failed to create ImGui descriptor pool");
-    }
 
-    // 9. Inicializar ImGui — orden obligatorio: contexto → backends
+    // Obtener imageCount del swapchain del motor
+    uint32_t imageCount = 0;
+    vkGetSwapchainImagesKHR(vkDevice, vkSwapchain, &imageCount, nullptr);
+
+    // ===== ImGui — orden obligatorio: contexto → backends =====
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
@@ -333,19 +134,16 @@ void EditorApplication::init() {
     }
 
     ImGui_ImplVulkan_InitInfo init_info = {};
-    init_info.Instance = vkInstance;
+    init_info.Instance       = vkInstance;
     init_info.PhysicalDevice = vkPhysicalDevice;
-    init_info.Device = vkDevice;
-    init_info.QueueFamily = graphicsQueueFamily;
-    init_info.Queue = vkQueue;
-    init_info.PipelineCache = VK_NULL_HANDLE;
+    init_info.Device         = vkDevice;
+    init_info.QueueFamily    = 0; // hardcoded en el motor
+    init_info.Queue          = vkQueue;
     init_info.DescriptorPool = vkDescriptorPool;
-    init_info.MinImageCount = imageCount;
-    init_info.ImageCount = imageCount;
-    init_info.Allocator = nullptr;
-    init_info.CheckVkResultFn = nullptr;
-    init_info.PipelineInfoMain.RenderPass = vkRenderPass;
-    init_info.PipelineInfoMain.Subpass = 0;
+    init_info.MinImageCount  = imageCount;
+    init_info.ImageCount     = imageCount;
+    init_info.PipelineInfoMain.RenderPass  = vkRenderPass;
+    init_info.PipelineInfoMain.Subpass     = 0;
     init_info.PipelineInfoMain.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
     if (ImGui_ImplVulkan_Init(&init_info)) {
         imguiVulkanInitialized = true;

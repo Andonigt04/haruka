@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/application.h"
+#include "core/application.h"
 #include "core/project.h"
 #include "core/scene.h"
 #include "core/camera.h"
@@ -79,17 +80,13 @@ private:
     VkDescriptorPool vkDescriptorPool = VK_NULL_HANDLE;
     VkSwapchainKHR vkSwapchain = VK_NULL_HANDLE;
     VkRenderPass vkRenderPass = VK_NULL_HANDLE;
-    // Punteros de función KHR cargados explícitamente en init()
-    PFN_vkCreateSwapchainKHR    pfnCreateSwapchain    = nullptr;
-    PFN_vkGetSwapchainImagesKHR pfnGetSwapchainImages = nullptr;
-    PFN_vkAcquireNextImageKHR   pfnAcquireNextImage   = nullptr;
-    PFN_vkQueuePresentKHR       pfnQueuePresent       = nullptr;
     std::vector<VkImage> swapchainImages;
     std::vector<VkImageView> swapchainImageViews;
     std::vector<VkFramebuffer> swapchainFramebuffers;
     std::unique_ptr<Haruka::Project> currentProject;
     std::unique_ptr<Haruka::Scene> currentScene;
     std::unique_ptr<Camera> viewportCamera;
+    std::unique_ptr<Application> ownedApplication; // motor propiedad del editor si nadie más lo crea
     
     // Panels
     SceneHierarchyPanel sceneHierarchyPanel;
