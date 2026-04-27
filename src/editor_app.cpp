@@ -71,6 +71,7 @@ void EditorApplication::init() {
             MotorInstance::getInstance().setApplication(ownedApplication.get());
             motorApp = ownedApplication.get();
         }
+        motorApp->set_external_window(window);
         motorApp->create_vulkan_context();
 
         vkInstance       = motorApp->getVkInstance();
