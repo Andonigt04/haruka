@@ -1,7 +1,6 @@
 #pragma once
 
 #include "core/application.h"
-#include "core/application.h"
 #include "core/project.h"
 #include "core/scene.h"
 #include "core/camera.h"
@@ -80,6 +79,9 @@ private:
     VkDescriptorPool vkDescriptorPool = VK_NULL_HANDLE;
     VkSwapchainKHR vkSwapchain = VK_NULL_HANDLE;
     VkRenderPass vkRenderPass = VK_NULL_HANDLE;
+    // Punteros KHR cargados explícitamente desde el device del motor
+    PFN_vkAcquireNextImageKHR pfnAcquireNextImage = nullptr;
+    PFN_vkQueuePresentKHR     pfnQueuePresent     = nullptr;
     std::vector<VkImage> swapchainImages;
     std::vector<VkImageView> swapchainImageViews;
     std::vector<VkFramebuffer> swapchainFramebuffers;

@@ -36,31 +36,28 @@ EditorApplication::~EditorApplication() {
 void EditorApplication::init() {
     // ===== SDL3 & Vulkan Setup =====
     // 1. Forzar logs detallados de SDL antes de empezar
+    SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "wayland,x11");
     SDL_SetLogPriorities(SDL_LOG_PRIORITY_VERBOSE);
 
     // 2. Intentar inicialización completa
 
     // TODO: Debug por error en linea 55
-    /*if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS) != 0) {
-        std::string sdlErr = SDL_GetError();
-        
-        // Diagnóstico: ¿Es solo video o es todo?
-        bool eventsWork = (SDL_Init(SDL_INIT_EVENTS) == 0);
-        std::string diagnostic = eventsWork ? 
-            " (Subsistema de EVENTOS OK, fallo en VIDEO)" : 
-            " (Fallo TOTAL de SDL)";
-
-        std::string fullMsg = "Failed to initialize SDL3: " + sdlErr + diagnostic;
-        
-        // Reportar y LANZAR excepción para detener el proceso
-        HARUKA_EDITOR_ERROR(ErrorCode::EDITOR_INIT_FAILED, fullMsg);
-        throw std::runtime_error(fullMsg); 
-    }*/
+    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS) == false) { // En SDL3 suele ser false/true
+        const char* err = SDL_GetError();
+        std::cerr << "CRITICAL SDL_Init Failure: " << err << std::endl;
+        return;
+    }
     
     // 3. Crear ventana (Solo si llegamos aquí, SDL está sano)
-    window = SDL_CreateWindow("Haruka Editor", width, height, SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE);
+    window = SDL_CreateWindow(
+        "Haruka Editor", 
+        1280, 720, 
+        SDL_WINDOW_RESIZABLE | SDL_WINDOW_VULKAN
+    );
+
     if (!window) {
-        throw std::runtime_error(std::string("Failed to create SDL3 window: ") + SDL_GetError());
+        std::cerr << "Window creation failed: " << SDL_GetError() << std::endl;
+        return;
     }
     // ===== Vulkan: usar los handles del motor =====
     // El motor inicializa Vulkan en create_vulkan_context().
