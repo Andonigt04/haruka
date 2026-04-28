@@ -421,10 +421,23 @@ void ViewportPanel::onImGuiRender() {
     if (newH < 1) newH = 1;
 
 
-    // En Vulkan+SDL3, la imagen del swapchain se presenta automáticamente.
-    // Si se quiere mostrar una textura, debe ser compatible con Vulkan/SDL3.
-    // Aquí solo se reserva el espacio del viewport.
-    ImGui::TextDisabled("[Vulkan: escena renderizada directamente en swapchain]");
+    // Obtener la textura del viewport del motor (offscreen render target)
+    IEngine* eng = MotorInstance::getInstance().getEngine();
+    EngineTextureID texID = eng ? eng->getViewportTextureID() : nullptr;
+
+    if (texID) {
+        // El motor renderizó la escena en un framebuffer offscreen —
+        // lo mostramos como textura dentro del panel de viewport.
+        ImGui::Image((ImTextureID)texID,
+                     ImVec2((float)newW, (float)newH),
+                     ImVec2(0, 0), ImVec2(1, 1));
+    } else {
+        // Fallback: reservar espacio hasta que el offscreen esté disponible
+        ImGui::Dummy(ImVec2((float)newW, (float)newH));
+        ImGui::GetWindowDrawList()->AddText(
+            ImVec2(viewportMin.x + 10, viewportMin.y + 10),
+            IM_COL32(200, 200, 200, 255), "Viewport (inicializando...)");
+    }
     width = newW;
     height = newH;
 

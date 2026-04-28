@@ -24,6 +24,7 @@ EngineInitResult HarukaVulkanEngine::init(SDL_Window* sdlWindow) {
         ownedApp = std::make_unique<Application>();
         motorApp = ownedApp.get();
         MotorInstance::getInstance().setApplication(motorApp);
+    MotorInstance::getInstance().setEngine(this);
     }
 
     // 2. El motor inicializa TODO Vulkan internamente
@@ -68,7 +69,10 @@ bool HarukaVulkanEngine::initImGui() {
 
     motorApp->setImGuiRenderCallback([](VkCommandBuffer cmd, uint32_t) {
         ImDrawData* dd = ImGui::GetDrawData();
-        if (dd) ImGui_ImplVulkan_RenderDrawData(dd, cmd);
+        if (dd) {
+            fprintf(stderr, "[ImGui] RenderDrawData llamado, cmdlists=%d\n", dd->CmdListsCount);
+            ImGui_ImplVulkan_RenderDrawData(dd, cmd);
+        }
     });
 
     // Obtener imageCount del swapchain del motor
@@ -92,7 +96,13 @@ bool HarukaVulkanEngine::initImGui() {
     info.PipelineInfoMain.Subpass     = 0;
     info.PipelineInfoMain.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
 
-    return ImGui_ImplVulkan_Init(&info);
+    if (!ImGui_ImplVulkan_Init(&info)) return false;
+
+    // Crear recursos offscreen DESPUÉS de inicializar ImGui_ImplVulkan
+    // (necesita ImGui_ImplVulkan_AddTexture que requiere el backend inicializado)
+    motorApp->createOffscreenResources();
+
+    return true;
 }
 
 // ─── shutdown ────────────────────────────────────────────────────────────────
@@ -151,9 +161,8 @@ void HarukaVulkanEngine::renderScene(Haruka::Scene* scene, Camera* camera) {
 
 // ─── getViewportTextureID ────────────────────────────────────────────────────
 EngineTextureID HarukaVulkanEngine::getViewportTextureID() const {
-    // TODO: devolver el VkDescriptorSet del render target del motor
-    // Por ahora devuelve nullptr — el viewport mostrará negro hasta implementarlo
-    return nullptr;
+    if (!motorApp) return nullptr;
+    return (EngineTextureID)motorApp->getOffscreenDescriptorSet();
 }
 
 // ─── getStats ────────────────────────────────────────────────────────────────
