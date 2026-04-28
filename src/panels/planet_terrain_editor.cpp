@@ -1,8 +1,6 @@
 #include "planet_terrain_editor.h"
 
-#include "core/components/mesh_renderer_component.h"
-#include "game/planetary_system.h"
-#include "imgui.h"
+#include <imgui.h>
 #include <glm/glm.hpp>
 #include <algorithm>
 #include <cmath>
@@ -14,6 +12,9 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+
+#include "core/components/mesh_renderer_component.h"
+#include "game/planetary_system.h"
 
 namespace fs = std::filesystem;
 
