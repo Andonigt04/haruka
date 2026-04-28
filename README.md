@@ -1,15 +1,16 @@
-# Haruka Engine
+# Haruka IDE
 
-Haruka Engine is a C++17 OpenGL 4.6 real-time engine with:
+Haruka IDE uses is a C++17 with a default Vulkan engine call HarukaEngine:
 
 - deferred rendering + PBR
 - editor/runtime/server targets
 - procedural planetary tooling
 - integrated post-processing and lighting stack
 
-The repository builds three main applications from the same codebase:
+The repository builds main applications:
 
 - `HarukaEditor` (tools and authoring)
+- `lib64/libHarukaEngine.so` (for exporting game & DevOps)
 
 ---
 
