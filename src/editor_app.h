@@ -1,6 +1,6 @@
 #pragma once
 
-#include "core/application.h"
+#include "IEngine.h"
 #include "core/project.h"
 #include "core/scene.h"
 #include "core/camera.h"
@@ -24,6 +24,7 @@
 #include "panels/planet_terrain_editor.h"
 #include "menu_bar.h"
 #include <imgui.h>
+#include <SDL3/SDL.h>
 #include <memory>
 
 class MenuBar;
@@ -31,188 +32,132 @@ class MenuBar;
 /**
  * @brief Main editor application shell.
  *
- * Owns project/scene state, viewport camera, dockable panels, play-mode state,
- * and project/file workflow actions.
+ * El IDE no sabe nada de Vulkan, OpenGL ni ninguna API gráfica.
+ * Toda la parte gráfica va a través de IEngine*.
+ * Para cambiar de motor: cambiar qué IEngine* se crea en main.cpp.
  */
-// Migración a SDL3 + Vulkan
-#include <SDL3/SDL.h>
-#include <SDL3/SDL_vulkan.h>
-#include <vulkan/vulkan.h>
-
 class EditorApplication {
 public:
-    /** @brief Constructs the editor app with default UI state. */
-    EditorApplication();
-    /** @brief Releases editor resources and UI-owned state. */
+    explicit EditorApplication(IEngine* engine);
     ~EditorApplication();
-    
-    /** @brief Runs the editor main loop. */
+
     void run();
-    /** @brief Returns the currently loaded project, if any. */
     Haruka::Project* getProject() { return currentProject.get(); }
-    
+
     friend class MenuBar;
 
 private:
-    /** @brief Initializes subsystems, panels, and runtime state. */
-    void init();
-    /** @brief Shuts down the editor and releases owned resources. */
-    void shutdown();
-    /** @brief Updates editor-side logic for the current frame. */
-    void update();
-    /** @brief Renders the active viewport/frame. */
-    void render();
-    /** @brief Renders all dockable UI panels and menus. */
-    void renderUI();
-    
-    std::unique_ptr<MenuBar> menuBar;
-
-    // UI state
+    IEngine*    engine = nullptr;
     SDL_Window* window = nullptr;
-    // Vulkan handles
-    VkInstance vkInstance = VK_NULL_HANDLE;
-    VkSurfaceKHR vkSurface = VK_NULL_HANDLE;
-    VkPhysicalDevice vkPhysicalDevice = VK_NULL_HANDLE;
-    VkDevice vkDevice = VK_NULL_HANDLE;
-    VkQueue vkQueue = VK_NULL_HANDLE;
-    VkCommandPool vkCommandPool = VK_NULL_HANDLE;
-    VkDescriptorPool vkDescriptorPool = VK_NULL_HANDLE;
-    VkSwapchainKHR vkSwapchain = VK_NULL_HANDLE;
-    VkRenderPass vkRenderPass = VK_NULL_HANDLE;
-    // Punteros KHR cargados explícitamente desde el device del motor
-    PFN_vkAcquireNextImageKHR pfnAcquireNextImage = nullptr;
-    PFN_vkQueuePresentKHR     pfnQueuePresent     = nullptr;
-    std::vector<VkImage> swapchainImages;
-    std::vector<VkImageView> swapchainImageViews;
-    std::vector<VkFramebuffer> swapchainFramebuffers;
-    std::unique_ptr<Haruka::Project> currentProject;
-    std::unique_ptr<Haruka::Scene> currentScene;
-    std::unique_ptr<Camera> viewportCamera;
-    std::unique_ptr<Application> ownedApplication; // motor propiedad del editor si nadie más lo crea
-    
-    // Panels
-    SceneHierarchyPanel sceneHierarchyPanel;
-    InspectorPanel inspectorPanel;
-    ProjectBrowserPanel projectBrowserPanel;
-    ViewportPanel viewportPanel;
-    ConsolePanel consolePanel;
-    StatsPanel statsPanel;
-    MaterialEditorPanel materialEditorPanel;
-    SettingsPanel settingsPanel;
-    AssetImporter assetImporter;
-    SearchPanel searchPanel;
-    UIBuilder uiBuilder;
-    ExportPanel exportPanel;
-    PlanetTerrainEditorPanel planetTerrainEditorPanel;
-    
-    // ImGui backend initialization flags
-    bool imguiVulkanInitialized = false;
-    bool imguiSDLInitialized = false;
 
-    // Gizmos
-    int gizmoMode = 0;
+    void init();
+    void shutdown();
+    void update();
+    void render();
+    void renderUI();
+
+    std::unique_ptr<MenuBar>         menuBar;
+    std::unique_ptr<Haruka::Project> currentProject;
+    std::unique_ptr<Haruka::Scene>   currentScene;
+    std::unique_ptr<Camera>          viewportCamera;
+
+    SceneHierarchyPanel      sceneHierarchyPanel;
+    InspectorPanel           inspectorPanel;
+    ProjectBrowserPanel      projectBrowserPanel;
+    ViewportPanel            viewportPanel;
+    ConsolePanel             consolePanel;
+    StatsPanel               statsPanel;
+    MaterialEditorPanel      materialEditorPanel;
+    SettingsPanel            settingsPanel;
+    AssetImporter            assetImporter;
+    SearchPanel              searchPanel;
+    UIBuilder                uiBuilder;
+    ExportPanel              exportPanel;
+    PlanetTerrainEditorPanel planetTerrainEditorPanel;
+
+    bool imguiInitialized = false;
+    int  gizmoMode   = 0;
     bool gizmoActive = false;
-    
-    // UI state
-    bool showDemoWindow = false;
+
+    bool showDemoWindow       = false;
     bool showNewProjectDialog = false;
     char newProjectNameBuffer[256] = {0};
     char newProjectPathBuffer[512] = {0};
-    
-    // Panel visibility
-    bool showSceneHierarchy = true;
-    bool showInspector = true;
-    bool showProjectBrowser = true;
-    bool showViewport = true;
-    bool showConsole = true;
-    bool showStats = true;
-    bool showMaterialEditor = true;
-    bool showSettings = false;
-    bool showAssetImporter = false;
-    bool showSearchPanel = false;
-    bool showUIBuilder = false;
+
+    bool showSceneHierarchy      = true;
+    bool showInspector           = true;
+    bool showProjectBrowser      = true;
+    bool showViewport            = true;
+    bool showConsole             = true;
+    bool showStats               = true;
+    bool showMaterialEditor      = true;
+    bool showSettings            = false;
+    bool showAssetImporter       = false;
+    bool showSearchPanel         = false;
+    bool showUIBuilder           = false;
     bool showPlanetTerrainEditor = true;
-    
-    int width = 1600;
-    int height = 900;
+
+    int   width     = 1600;
+    int   height    = 900;
     float deltaTime = 0.0f;
     float lastFrame = 0.0f;
 
-    // Play mode
-    /** @brief Enters play mode using a temporary runtime scene. */
     void enterPlayMode();
-    /** @brief Exits play mode and restores editor state. */
     void exitPlayMode();
-    /** @brief Updates runtime simulation while in play mode. */
-    void updatePlayMode(float deltaTime);
+    void updatePlayMode(float dt);
 
-    bool isPlayMode = false;
+    bool isPlayMode    = false;
     std::unique_ptr<Haruka::Scene> playModeScene;
-    Haruka::Scene* editorScene = nullptr;
-    float playModeTime = 0.0f;
-
+    Haruka::Scene* editorScene  = nullptr;
+    float playModeTime          = 0.0f;
     std::string playModeBackupPath = "/tmp/haruka_playmode_backup.scene";
-    
-    // Dynamic game interface (single unified callback system)
-    void* gameLibHandle = nullptr;
+
+    void*                  gameLibHandle = nullptr;
     Haruka::GameInterface* gameInterface = nullptr;
 
     CommandHistory commandHistory;
-    
+
     Haruka::WorldPos editorCamPos{};
     Haruka::Rotation editorCamRot{};
-    std::unique_ptr<StreamCapture> coutCapture;
-    std::unique_ptr<StreamCapture> cerrCapture;
+    std::unique_ptr<StreamCapture>      coutCapture;
+    std::unique_ptr<StreamCapture>      cerrCapture;
     std::unique_ptr<Haruka::InGameChat> inGameChat;
+
     bool showSaveAsPopup = false;
     char saveAsBuffer[512] = {0};
-    
-    bool sceneDirty = false;
-    bool showUnsavedChangesPopup = false;
+
+    bool        sceneDirty             = false;
+    bool        showUnsavedChangesPopup = false;
     std::string pendingSceneToLoad;
 
-    /** @brief Creates a new project at the given base path. */
     void createNewProject(const std::string& name, const std::string& basePath);
 
     std::unique_ptr<Haruka::PlanetarySystem> planetarySystem;
     bool runningPlanetarySystem = false;
 
-    /** @brief Creates a scene object of a given type. */
     void createSceneObject(const std::string& type);
-
-    /** @brief Triggers project compilation/export pipeline. */
     void compileProject();
     bool isProjectCompiling = false;
-
-    /** @brief Exports the game project with current settings. */
     void exportGame();
-    /** @brief Opens the export configuration dialog. */
     void showExportDialog();
 
-    // Auto-save system
     struct SceneFile {
         std::string path;
         std::string name;
-        bool isPrefab;
-        float lastSaveTime = 0.0f;
+        bool        isPrefab     = false;
+        float       lastSaveTime = 0.0f;
     };
-    
+
     SceneFile currentFile;
-    float autoSaveInterval = 30.0f;
+    float autoSaveInterval  = 30.0f;
     float timeSinceLastSave = 0.0f;
-    bool autoSaveEnabled = true;
-    int maxBackups = 5;
-    
-    /** @brief Saves scene or prefab data to disk. */
+    bool  autoSaveEnabled   = true;
+    int   maxBackups        = 5;
+
     void saveFile(const std::string& path, bool asPrefab = false);
-    /** @brief Loads scene or prefab data from disk. */
     void loadFile(const std::string& path);
-    /** @brief Creates a backup copy for the given file. */
     void createFileBackup(const std::string& path);
-    /** @brief Removes old backups beyond retention limit. */
     void cleanOldBackups(const std::string& path);
-    /** @brief Deletes all backups associated with one file. */
     void deleteAllBackups(const std::string& path);
-    /** @brief Returns the file classification used by the editor. */
     std::string getFileType(const std::string& path);
 };
