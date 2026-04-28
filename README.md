@@ -110,7 +110,10 @@ The repo expects `third_party/` sources (GLM, GLAD, stb, etc.).
 
 ## 4) Build and Run
 
-Typical Linux flow:
+Generated binaries:
+
+- `build/HarukaEditor`
+- `build/libHarukaEngine.so`
 
 ```bash
 mkdir -p build
@@ -118,14 +121,6 @@ cd build
 cmake ..
 make -j"$(nproc)"
 ```
-
-Generated binaries:
-
-- `build/HarukaEditor`
-- `build/HarukaEngine`
-- `build/HarukaServer`
-- `build/ChatTest`
-
 Run examples:
 
 ```bash
@@ -136,8 +131,6 @@ cd build
 Build options from CMake:
 
 - `BUILD_EDITOR` (ON by default)
-- `BUILD_RUNTIME` (ON by default)
-- `BUILD_SERVER` (ON by default)
 
 ---
 
