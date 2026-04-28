@@ -424,7 +424,7 @@ void ViewportPanel::onImGuiRender() {
     // En Vulkan+SDL3, la imagen del swapchain se presenta automáticamente.
     // Si se quiere mostrar una textura, debe ser compatible con Vulkan/SDL3.
     // Aquí solo se reserva el espacio del viewport.
-    ImGui::Dummy(ImVec2((float)newW, (float)newH));
+    ImGui::TextDisabled("[Vulkan: escena renderizada directamente en swapchain]");
     width = newW;
     height = newH;
 

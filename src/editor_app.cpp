@@ -200,7 +200,6 @@ void EditorApplication::update() {
     updatePlayMode(deltaTime);
     planetTerrainEditorPanel.update();
     exportPanel.update();
-    viewportPanel.onUpdate(deltaTime);
 
     if (autoSaveEnabled && sceneDirty && !currentFile.path.empty()) {
         timeSinceLastSave += deltaTime;
@@ -227,6 +226,8 @@ void EditorApplication::render() {
     ImGui::NewFrame();
     renderUI();
     ImGui::Render();
+
+    viewportPanel.onUpdate(deltaTime);
 
     // El motor dibuja los draw data de ImGui en Vulkan y presenta
     engine->renderImGui(ImGui::GetDrawData());
