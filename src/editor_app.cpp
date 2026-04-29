@@ -37,7 +37,7 @@ void EditorApplication::init() {
     window = SDL_CreateWindow(
         "Haruka Editor",
         width, height,
-        SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE);
+        SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY);
 
     if (!window) {
         throw std::runtime_error(std::string("SDL_CreateWindow failed: ") + SDL_GetError());
@@ -70,6 +70,18 @@ void EditorApplication::init() {
         throw std::runtime_error("engine->initImGui() failed");
     }
     imguiInitialized = true;
+
+    // Configurar escala DPI inicial para que el mouse coincida con la UI
+    {
+        int pixW, pixH, logW, logH;
+        SDL_GetWindowSizeInPixels(window, &pixW, &pixH);
+        SDL_GetWindowSize(window, &logW, &logH);
+        if (logW > 0 && logH > 0) {
+            ImGui::GetIO().DisplayFramebufferScale = ImVec2(
+                (float)pixW / (float)logW,
+                (float)pixH / (float)logH);
+        }
+    }
 
     // 5. Escena y proyecto
     currentScene   = std::make_unique<Haruka::Scene>("Untitled");
@@ -154,9 +166,8 @@ void EditorApplication::shutdown() {
     }
 
     if (imguiInitialized) {
-        // El motor hace shutdown de ImGui_ImplVulkan internamente
+        // El motor gestiona el ciclo de vida completo de ImGui (init+shutdown)
         engine->shutdown();
-        ImGui::DestroyContext();
         imguiInitialized = false;
     }
 
@@ -178,10 +189,20 @@ void EditorApplication::run() {
         while (SDL_PollEvent(&event)) {
             ImGui_ImplSDL3_ProcessEvent(&event);
             if (event.type == SDL_EVENT_QUIT) running = false;
-            if (event.type == SDL_EVENT_WINDOW_RESIZED) {
-                int w, h;
-                SDL_GetWindowSize(window, &w, &h);
-                engine->onResize(w, h);
+            if (event.type == SDL_EVENT_WINDOW_RESIZED ||
+                event.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED) {
+                int pixW, pixH;
+                SDL_GetWindowSizeInPixels(window, &pixW, &pixH);
+                engine->onResize(pixW, pixH);
+
+                // Sincronizar escala DPI para que el mouse coincida con la UI
+                int logW, logH;
+                SDL_GetWindowSize(window, &logW, &logH);
+                if (logW > 0 && logH > 0) {
+                    ImGui::GetIO().DisplayFramebufferScale = ImVec2(
+                        (float)pixW / (float)logW,
+                        (float)pixH / (float)logH);
+                }
             }
         }
 
@@ -222,7 +243,12 @@ void EditorApplication::render() {
     // El motor adquiere imagen del swapchain y arranca ImGui_ImplVulkan_NewFrame
     if (!engine->beginFrame()) return;
 
-    // El IDE solo toca ImGui::NewFrame en adelante
+    {
+        int pixW, pixH;
+        SDL_GetWindowSizeInPixels(window, &pixW, &pixH);
+        ImGui::GetIO().DisplaySize = ImVec2((float)pixW, (float)pixH);
+    }
+    
     ImGui::NewFrame();
     renderUI();
     ImGui::Render();

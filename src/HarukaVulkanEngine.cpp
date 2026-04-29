@@ -70,7 +70,6 @@ bool HarukaVulkanEngine::initImGui() {
     motorApp->setImGuiRenderCallback([](VkCommandBuffer cmd, uint32_t) {
         ImDrawData* dd = ImGui::GetDrawData();
         if (dd) {
-            fprintf(stderr, "[ImGui] RenderDrawData llamado, cmdlists=%d\n", dd->CmdListsCount);
             ImGui_ImplVulkan_RenderDrawData(dd, cmd);
         }
     });
@@ -112,21 +111,20 @@ void HarukaVulkanEngine::shutdown() {
     VkDevice dev = motorApp->getVkDevice();
     if (dev) vkDeviceWaitIdle(dev);
 
+    if (motorApp->getOffscreenDescriptorSet())
+        ImGui_ImplVulkan_RemoveTexture(motorApp->getOffscreenDescriptorSet());
+    motorApp->destroyOffscreenResources();
+
     if (ImGui::GetCurrentContext()) {
         ImGui_ImplVulkan_Shutdown();
         ImGui_ImplSDL3_Shutdown();
         ImGui::DestroyContext();
     }
 
-    destroySyncObjects();
-
-    if (imguiDescriptorPool != VK_NULL_HANDLE && dev) {
-        vkDestroyDescriptorPool(dev, imguiDescriptorPool, nullptr);
-        imguiDescriptorPool = VK_NULL_HANDLE;
-    }
-
-    ready = false;
+    MotorInstance::getInstance().clear();
     motorApp = nullptr;
+    ownedApp.reset();
+    ready = false;
 }
 
 // ─── beginFrame ──────────────────────────────────────────────────────────────
