@@ -4,7 +4,7 @@
 #include <SDL3/SDL.h>
 #include <memory>
 
-#include "engine/IEngine.h"
+#include "IEngine.h"
 #include "core/project.h"
 #include "core/scene.h"
 #include "core/camera.h"

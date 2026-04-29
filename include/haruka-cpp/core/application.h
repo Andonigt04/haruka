@@ -1,10 +1,11 @@
 #ifndef APPLICATION_H
 #define APPLICATION_H
 
-
 // Standard
 #include <memory>
 #include <vector>
+
+class VulkanDevice;
 
 // Vulkan
 #include <vulkan/vulkan.h>
@@ -114,6 +115,11 @@ public:
     Haruka::PlanetarySystem* getPlanetarySystem() { return _planetarySystem.get(); }
 
     void set_external_window(SDL_Window* window) { _window = window; }
+
+    /** @brief Inyectar VulkanDevice externo. Si se llama antes de create_vulkan_context(),
+     *  Application no creará su propio Vulkan sino que usará este device. */
+    void setExternalVulkanDevice(VulkanDevice* dev) { _externalDevice = dev; }
+    VulkanDevice* getExternalVulkanDevice() const { return _externalDevice; }
 
     void setImGuiRenderCallback(std::function<void(VkCommandBuffer, uint32_t)> cb) {
         _imguiCallback = std::move(cb);
@@ -226,7 +232,8 @@ private:
     std::vector<VkFramebuffer> vkFramebuffers;
 
     // --- Core systems ---
-    SDL_Window* _window = nullptr;
+    SDL_Window*   _window         = nullptr;
+    VulkanDevice* _externalDevice = nullptr; // inyectado por HarukaVulkanEngine
     int _width = 1280;
     int _height = 720;
     std::unique_ptr<Haruka::Scene> _currentScene;

@@ -4,6 +4,7 @@
 class Application;
 class RenderTarget;
 class Camera;
+class RenderGraph;
 class IEngine;
 
 namespace Haruka {
@@ -45,12 +46,7 @@ public:
     void setApplication(Application* app) {
         motorApplication = app;
     }
-
-    /** @brief Stores the active engine pointer. */
-    void setEngine(IEngine* eng) { motorEngine = eng; }
-    /** @brief Returns the active engine pointer. */
-    IEngine* getEngine() const { return motorEngine; }
-
+    
     /** @brief Returns the active render target pointer. */
     RenderTarget* getRenderTarget() const {
         return motorRenderTarget;
@@ -76,18 +72,32 @@ public:
         return motorScene != nullptr && motorRenderTarget != nullptr;
     }
     
+    /** @brief Stores the active RenderGraph pointer. */
+    void setRenderGraph(RenderGraph* rg) { motorRenderGraph = rg; }
+    /** @brief Returns the active RenderGraph pointer. */
+    RenderGraph* getRenderGraph() const { return motorRenderGraph; }
+
+    /** @brief Stores the active IEngine pointer. */
+    void setEngine(IEngine* eng) { motorEngine = eng; }
+    /** @brief Returns the active IEngine pointer. */
+    IEngine* getEngine() const { return motorEngine; }
+
     /** @brief Clears non-owning runtime pointers. */
     void clear() {
-        motorScene = nullptr;
-        motorCamera = nullptr;
-        motorApplication = nullptr;
-        motorEngine = nullptr;
+        motorScene        = nullptr;
+        motorCamera       = nullptr;
+        motorApplication  = nullptr;
+        motorRenderGraph  = nullptr;
+        motorEngine       = nullptr;
     }
 
 private:
     MotorInstance() = default;
+    RenderGraph* motorRenderGraph = nullptr;
+    IEngine*     motorEngine      = nullptr;
     ~MotorInstance() = default;
 
+    // Prevenir copia
     MotorInstance(const MotorInstance&) = delete;
     MotorInstance& operator=(const MotorInstance&) = delete;
 
@@ -95,7 +105,6 @@ private:
     Haruka::Scene* motorScene = nullptr;
     Camera* motorCamera = nullptr;
     Application* motorApplication = nullptr;
-    IEngine* motorEngine = nullptr;
 };
 
 #endif

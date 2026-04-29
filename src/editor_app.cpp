@@ -132,8 +132,6 @@ void EditorApplication::init() {
 
     settingsPanel.load();
     menuBar = std::make_unique<MenuBar>(this);
-
-    std::cout << "✓ Haruka Editor initialized" << std::endl;
 }
 
 // ─── shutdown ─────────────────────────────────────────────────────────────────
@@ -215,34 +213,35 @@ void EditorApplication::update() {
 
 // ─── render ──────────────────────────────────────────────────────────────────
 void EditorApplication::render() {
-    // 1. Backends arrancan el frame (ImGui_ImplVulkan_NewFrame + ImGui_ImplSDL3_NewFrame)
+    // 1. Backends arrancan el frame:
+    //    - ImGui_ImplVulkan_NewFrame (prepara recursos Vulkan)
+    //    - ImGui_ImplSDL3_NewFrame   (sobreescribe DisplaySize con tamaño lógico SDL)
     if (!engine->beginFrame()) return;
 
-    // 2. Sincronizar DisplaySize con píxeles reales cada frame (fix DPI Wayland)
+    // 2. Corregir DisplaySize DESPUÉS de beginFrame() porque ImGui_ImplSDL3_NewFrame()
+    //    sobreescribe io.DisplaySize con coordenadas lógicas de SDL.
+    //    Convención: DisplaySize = píxeles reales, FramebufferScale = 1.0
+    //    Esto es lo que el swapchain de Vulkan usa realmente.
     {
-        int pixW, pixH, logW, logH;
+        int pixW, pixH;
         SDL_GetWindowSizeInPixels(window, &pixW, &pixH);
-        SDL_GetWindowSize(window, &logW, &logH);
-        ImGuiIO& io = ImGui::GetIO();
-        io.DisplaySize = ImVec2((float)pixW, (float)pixH);
-        if (logW > 0 && logH > 0)
-            io.DisplayFramebufferScale = ImVec2(
-                (float)pixW / (float)logW,
-                (float)pixH / (float)logH);
+        if (pixW > 0 && pixH > 0) {
+            ImGuiIO& io = ImGui::GetIO();
+            io.DisplaySize             = ImVec2((float)pixW, (float)pixH);
+            io.DisplayFramebufferScale = ImVec2(1.0f, 1.0f);
+        }
     }
 
-    // 3. Frame de ImGui
+    // 3. Frame de ImGui — preparar draw data
     ImGui::NewFrame();
     renderUI();
     ImGui::Render();
 
-    // 4. Render de la escena + presentación (el motor graba el callback de ImGui)
+    // 4. El motor graba y presenta:
+    //    onUpdate() → Application::renderFrame() → acquire → record (con _imguiCallback) → present
+    //    El callback ya incluye ImGui_ImplVulkan_RenderDrawData(), así que
+    //    NO hay que llamar engine->renderImGui() ni engine->endFrame() aquí.
     viewportPanel.onUpdate(deltaTime);
-
-    engine->renderImGui(ImGui::GetDrawData());
-    engine->endFrame();
-    // NOTA: ViewportsEnable desactivado — Vulkan no soporta ventanas flotantes extra
-    // sin infraestructura adicional de swapchain por ventana.
 }
 
 // ─── renderUI — igual que antes, sin cambios ─────────────────────────────────
