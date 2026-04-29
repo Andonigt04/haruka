@@ -11,7 +11,7 @@
  */
 
 #include "editor_app.h"
-#include "HarukaVulkanEngine.h"
+#include "engine/HarukaVulkanEngine.h"
 
 #include <iostream>
 #include <memory>

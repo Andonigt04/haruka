@@ -56,14 +56,10 @@ void EditorApplication::init() {
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
-    io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
+    // ViewportsEnable desactivado: Vulkan requiere un swapchain por ventana flotante,
+    // lo que no está implementado. El docking funciona sin ViewportsEnable.
 
     ImGui::StyleColorsDark();
-    ImGuiStyle& style = ImGui::GetStyle();
-    if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
-        style.WindowRounding = 0.0f;
-        style.Colors[ImGuiCol_WindowBg].w = 1.0f;
-    }
 
     // 4. El motor conecta ImGui a Vulkan (ImGui_ImplVulkan_Init internamente)
     if (!engine->initImGui()) {
@@ -219,9 +215,10 @@ void EditorApplication::update() {
 
 // ─── render ──────────────────────────────────────────────────────────────────
 void EditorApplication::render() {
-    // El motor adquiere imagen del swapchain y arranca ImGui_ImplVulkan_NewFrame
+    // 1. Backends arrancan el frame (ImGui_ImplVulkan_NewFrame + ImGui_ImplSDL3_NewFrame)
     if (!engine->beginFrame()) return;
 
+    // 2. Sincronizar DisplaySize con píxeles reales cada frame (fix DPI Wayland)
     {
         int pixW, pixH, logW, logH;
         SDL_GetWindowSizeInPixels(window, &pixW, &pixH);
@@ -234,23 +231,18 @@ void EditorApplication::render() {
                 (float)pixH / (float)logH);
     }
 
-    if (!engine->beginFrame()) return;
+    // 3. Frame de ImGui
     ImGui::NewFrame();
     renderUI();
     ImGui::Render();
 
+    // 4. Render de la escena + presentación (el motor graba el callback de ImGui)
     viewportPanel.onUpdate(deltaTime);
 
-    // El motor dibuja los draw data de ImGui en Vulkan y presenta
     engine->renderImGui(ImGui::GetDrawData());
     engine->endFrame();
-
-    // Multi-viewport de ImGui (ventanas flotantes fuera de la ventana principal)
-    ImGuiIO& io = ImGui::GetIO();
-    if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
-        ImGui::UpdatePlatformWindows();
-        ImGui::RenderPlatformWindowsDefault();
-    }
+    // NOTA: ViewportsEnable desactivado — Vulkan no soporta ventanas flotantes extra
+    // sin infraestructura adicional de swapchain por ventana.
 }
 
 // ─── renderUI — igual que antes, sin cambios ─────────────────────────────────

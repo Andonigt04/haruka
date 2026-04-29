@@ -36,7 +36,7 @@ The engine library target is `HarukaEngineLib` and is linked by runtime/editor.
 
 Dev dependencies
 ```bash
-sudo dnf install cmake gcc-c++ glfw3-devel assimp-devel openssl-devel openal-soft-devel postgresql-libs gtk3-devel pkgconf-pkg-config glm-devel vulkan-loader vulkan-loader-devel vulkan-headers vulkan-tools sdl3-devel boost-devel asio-devel
+sudo dnf install cmake gcc-c++ assimp-devel openssl-devel openal-soft-devel postgresql-libs gtk3-devel pkgconf-pkg-config glm-devel vulkan-loader vulkan-loader-devel vulkan-headers vulkan-tools sdl3-devel boost-devel asio-devel
 ```
 
 Optional dependencies for compiling SDL3 (at the moment none rpm in dnf)

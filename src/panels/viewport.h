@@ -5,7 +5,7 @@
 #include "renderer/shader.h"
 #include "renderer/render_target.h"
 #include "renderer/motor_instance.h"
-#include "IEngine.h"
+#include "engine/IEngine.h"
 #include "renderer/simple_mesh.h"
 #include "renderer/primitive_shapes.h"
 #include "commands/command_history.h"
