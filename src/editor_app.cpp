@@ -71,18 +71,6 @@ void EditorApplication::init() {
     }
     imguiInitialized = true;
 
-    // Configurar escala DPI inicial para que el mouse coincida con la UI
-    {
-        int pixW, pixH, logW, logH;
-        SDL_GetWindowSizeInPixels(window, &pixW, &pixH);
-        SDL_GetWindowSize(window, &logW, &logH);
-        if (logW > 0 && logH > 0) {
-            ImGui::GetIO().DisplayFramebufferScale = ImVec2(
-                (float)pixW / (float)logW,
-                (float)pixH / (float)logH);
-        }
-    }
-
     // 5. Escena y proyecto
     currentScene   = std::make_unique<Haruka::Scene>("Untitled");
     currentProject = std::make_unique<Haruka::Project>();
@@ -194,15 +182,6 @@ void EditorApplication::run() {
                 int pixW, pixH;
                 SDL_GetWindowSizeInPixels(window, &pixW, &pixH);
                 engine->onResize(pixW, pixH);
-
-                // Sincronizar escala DPI para que el mouse coincida con la UI
-                int logW, logH;
-                SDL_GetWindowSize(window, &logW, &logH);
-                if (logW > 0 && logH > 0) {
-                    ImGui::GetIO().DisplayFramebufferScale = ImVec2(
-                        (float)pixW / (float)logW,
-                        (float)pixH / (float)logH);
-                }
             }
         }
 
@@ -244,11 +223,18 @@ void EditorApplication::render() {
     if (!engine->beginFrame()) return;
 
     {
-        int pixW, pixH;
+        int pixW, pixH, logW, logH;
         SDL_GetWindowSizeInPixels(window, &pixW, &pixH);
-        ImGui::GetIO().DisplaySize = ImVec2((float)pixW, (float)pixH);
+        SDL_GetWindowSize(window, &logW, &logH);
+        ImGuiIO& io = ImGui::GetIO();
+        io.DisplaySize = ImVec2((float)pixW, (float)pixH);
+        if (logW > 0 && logH > 0)
+            io.DisplayFramebufferScale = ImVec2(
+                (float)pixW / (float)logW,
+                (float)pixH / (float)logH);
     }
-    
+
+    if (!engine->beginFrame()) return;
     ImGui::NewFrame();
     renderUI();
     ImGui::Render();
