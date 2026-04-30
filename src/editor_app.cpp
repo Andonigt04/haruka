@@ -534,12 +534,37 @@ void EditorApplication::enterPlayMode() {
             
             currentScene->load(fullScenePath);
             planetTerrainEditorPanel.setScene(currentScene.get());
-            
+
+            // Apply Camera scene object at play start (game library can override afterwards)
+            // Searches top-level objects first, then prefab children
+            const Haruka::SceneObject* camObj = nullptr;
+            for (const auto& obj : currentScene->getObjects()) {
+                if (obj.type == "Camera") { camObj = &obj; break; }
+                for (const auto& child : obj.children)
+                    if (child.type == "Camera") { camObj = &child; break; }
+                if (camObj) break;
+            }
+            if (camObj) {
+                viewportCamera->position = camObj->position;
+                glm::dquat qYaw   = glm::angleAxis(glm::radians(camObj->rotation.y), glm::dvec3(0, 1, 0));
+                glm::dquat qPitch = glm::angleAxis(glm::radians(camObj->rotation.x), glm::dvec3(1, 0, 0));
+                glm::dquat qRoll  = glm::angleAxis(glm::radians(camObj->rotation.z), glm::dvec3(0, 0, 1));
+                viewportCamera->orientation = qYaw * qPitch * qRoll;
+                if (camObj->properties.is_object()) {
+                    if (camObj->properties.contains("speed"))
+                        viewportCamera->speed = camObj->properties["speed"].get<float>();
+                    if (camObj->properties.contains("sensitivity"))
+                        viewportCamera->sensitivity = camObj->properties["sensitivity"].get<float>();
+                }
+                viewportPanel.setCamera(viewportCamera.get());
+                std::cout << "✓ Camera from scene: " << camObj->name << std::endl;
+            }
+
             // Resetear selección
             sceneHierarchyPanel.setSelectedObjectIndex(-1);
             inspectorPanel.setSelectedObjectIndex(-1);
             viewportPanel.setSelectedObjectIndex(-1);
-            
+
             std::cout << "Scene loaded: " << startScenePath << std::endl;
         }
     }
