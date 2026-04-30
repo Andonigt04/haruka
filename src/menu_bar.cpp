@@ -22,9 +22,18 @@ void MenuBar::renderFileMenu() {
     if (!ImGui::BeginMenu("File")) return;
     
     if (ImGui::MenuItem("New Project")) {
-        std::snprintf(editorApp->newProjectNameBuffer, sizeof(editorApp->newProjectNameBuffer), "NewProject");
-        std::snprintf(editorApp->newProjectPathBuffer, sizeof(editorApp->newProjectPathBuffer), "/mnt/sdb1/haruka/projects/");
-        editorApp->showNewProjectDialog = true;
+        nfdchar_t* outPath = nullptr;
+        nfdresult_t result = NFD_PickFolder(nullptr, &outPath);
+
+        if (result == NFD_OKAY && outPath) {
+            std::filesystem::path selectedPath(outPath);
+            // El nombre del proyecto será el nombre de la carpeta padre
+            std::snprintf(editorApp->newProjectNameBuffer, sizeof(editorApp->newProjectNameBuffer), "%s", selectedPath.filename().string().c_str());
+            // La ruta del proyecto será la carpeta seleccionada
+            std::snprintf(editorApp->newProjectPathBuffer, sizeof(editorApp->newProjectPathBuffer), "%s", (selectedPath.string() + "/").c_str());
+            editorApp->showNewProjectDialog = true;
+            free(outPath);
+        }
     }
 
     if (ImGui::MenuItem("Open Project", "Ctrl+O")) {
