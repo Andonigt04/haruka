@@ -1,72 +1,95 @@
 cmake_minimum_required(VERSION 3.14)
 project(HarukaEditor)
 
-# ======= 1. Configuración de Rutas Dinámicas =======
-# El motor se busca exclusivamente dentro de la carpeta de build del proyecto actual.
-# Esto mantiene la raíz del repositorio limpia.
+# ======= 1. Engine Location =======
+# HARUKA_ENGINE_DIR: parent of the versioned engine folders.
+# Each installed engine version lives under a x.x.x/ subdirectory.
+# Default: build/ — run `cmake --install` for haruka-cpp into build/<version>
 set(HARUKA_ENGINE_DIR "${CMAKE_BINARY_DIR}" CACHE PATH
-    "Directorio donde se encuentran las carpetas de versiones del motor")
+    "Directory that contains versioned engine folders (e.g. build/0.3.0/)")
 
-# Parámetro de versión (ej: cmake -B build -DENGINE_VERSION=1.0.0)
-set(ENGINE_VERSION "" CACHE STRING "Versión del motor a usar")
+# ENGINE_VERSION: pick a specific version, or leave empty to auto-select latest.
+set(ENGINE_VERSION "" CACHE STRING "Engine version to use (e.g. 0.3.0)")
 
 if(ENGINE_VERSION STREQUAL "")
-    message(STATUS "ENGINE_VERSION no especificada, escaneando ${HARUKA_ENGINE_DIR}...")
-    
-    # Busca carpetas con formato de versión (x.y.z) directamente en el build
-    file(GLOB _versions RELATIVE "${HARUKA_ENGINE_DIR}" "${HARUKA_ENGINE_DIR}/[0-9]*.[0-9]*.[0-9]*")
-    
+    message(STATUS "ENGINE_VERSION not set, scanning ${HARUKA_ENGINE_DIR} ...")
+    file(GLOB _versions RELATIVE "${HARUKA_ENGINE_DIR}"
+         "${HARUKA_ENGINE_DIR}/[0-9]*.[0-9]*.[0-9]*")
     if(_versions)
-        list(SORT _versions ORDER DESCENDING)
+        list(SORT _versions)      # lexicographic ascending
+        list(REVERSE _versions)   # newest first
         list(GET _versions 0 ENGINE_VERSION)
     else()
-        message(FATAL_ERROR "No se encontró ningún motor en ${HARUKA_ENGINE_DIR}. 
-        Copia la carpeta de la versión (ej: 1.0.0/) dentro de build/ antes de configurar.")
+        message(FATAL_ERROR
+            "No engine version found under ${HARUKA_ENGINE_DIR}.\n"
+            "Install haruka-cpp first:\n"
+            "  cmake --install haruka-cpp/build --prefix haruka/build/<version>")
     endif()
 endif()
 
 set(ENGINE_PATH "${HARUKA_ENGINE_DIR}/${ENGINE_VERSION}")
-message(STATUS "Usando HarukaEngine v${ENGINE_VERSION} desde: ${ENGINE_PATH}")
+message(STATUS "HarukaEngine v${ENGINE_VERSION} -> ${ENGINE_PATH}")
 
-# ======= 2. Dependencias del Sistema =======
+# ======= 2. System Dependencies =======
+set(OpenGL_GL_PREFERENCE GLVND)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
 find_package(PkgConfig REQUIRED)
-find_package(SDL3 REQUIRED)
-find_package(OpenGL REQUIRED)
-find_package(assimp REQUIRED)
-find_package(OpenSSL REQUIRED)
-find_package(OpenAL REQUIRED)
+find_package(SDL3     REQUIRED)
+find_package(OpenGL   REQUIRED)
+find_package(assimp   REQUIRED)
+find_package(OpenSSL  REQUIRED)
+find_package(OpenAL   REQUIRED)
 pkg_check_modules(GTK3 REQUIRED gtk+-3.0)
 
-# ======= 3. Localización de Componentes del Motor (Estructura x.x.x/...) =======
+if(NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Release)
+endif()
 
-# Librería (.so) en x.x.x/bin/
+if(MSVC)
+    set(CMAKE_CXX_FLAGS_RELEASE "/O2 /Oi /Ot /GL /fp:fast /arch:AVX2")
+    set(CMAKE_EXE_LINKER_FLAGS_RELEASE "/LTCG /OPT:REF /OPT:ICF")
+else()
+    set(CMAKE_CXX_FLAGS_RELEASE "-O3 -march=native -mtune=native -flto -ffast-math")
+    set(CMAKE_EXE_LINKER_FLAGS_RELEASE "-O3 -flto")
+endif()
+
+# ======= 3. Engine Components (layout: x.x.x/bin/, x.x.x/lib64/) =======
+
+# .so -> x.x.x/bin/
 find_library(HARUKA_ENGINE_LIBRARY
     NAMES HarukaEngine
     PATHS "${ENGINE_PATH}/bin"
     NO_DEFAULT_PATH
     REQUIRED)
+message(STATUS "Engine library  : ${HARUKA_ENGINE_LIBRARY}")
 
-# Headers en x.x.x/lib64/haruka-cpp/
+# Headers -> x.x.x/lib64/haruka-cpp/
 find_path(HARUKA_ENGINE_INCLUDE_DIR
     NAMES core/application.h
     PATHS "${ENGINE_PATH}/lib64/haruka-cpp"
     NO_DEFAULT_PATH
     REQUIRED)
+message(STATUS "Engine headers  : ${HARUKA_ENGINE_INCLUDE_DIR}")
 
-# Shaders en x.x.x/bin/shaders/
+# Shaders -> x.x.x/bin/shaders/
 set(HARUKA_ENGINE_SHADERS_DIR "${ENGINE_PATH}/bin/shaders")
+if(NOT EXISTS "${HARUKA_ENGINE_SHADERS_DIR}")
+    message(WARNING
+        "Engine shaders not found: ${HARUKA_ENGINE_SHADERS_DIR}\n"
+        "Build haruka-cpp before running the editor.")
+endif()
 
-# ======= 4. Configuración de Compilación =======
-set(OpenGL_GL_PREFERENCE GLVND)
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-
+# ======= 4. Third-Party Paths =======
 set(THIRD_PARTY_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party")
 
 include_directories(
     ${HARUKA_ENGINE_INCLUDE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     "${THIRD_PARTY_DIR}/glad/include"
+    "${THIRD_PARTY_DIR}/glm"
+    "${THIRD_PARTY_DIR}/stb"
     "${THIRD_PARTY_DIR}/imgui"
     "${THIRD_PARTY_DIR}/imgui/backends"
     "${THIRD_PARTY_DIR}/ImGuizmo"
@@ -75,7 +98,7 @@ include_directories(
     ${GTK3_INCLUDE_DIRS}
 )
 
-# ======= 5. Fuentes y Target =======
+# ======= 5. Sources =======
 set(IMGUI_SOURCES
     ${THIRD_PARTY_DIR}/imgui/imgui.cpp
     ${THIRD_PARTY_DIR}/imgui/imgui_draw.cpp
@@ -93,6 +116,10 @@ set(NFD_SOURCES
 
 file(GLOB_RECURSE EDITOR_SOURCES "src/*.cpp")
 
+# ======= 6. Editor Executable =======
+# Binary goes into the same versioned bin/ so SDL_GetBasePath() resolves shaders.
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${ENGINE_PATH}/bin")
+
 add_executable(HarukaEditor
     ${EDITOR_SOURCES}
     ${IMGUI_SOURCES}
@@ -108,33 +135,42 @@ target_link_libraries(HarukaEditor PRIVATE
     OpenGL::GL
     assimp::assimp
     OpenSSL::Crypto
-    OpenAL::OpenAL
+    ${OPENAL_LIBRARY}
     ${CMAKE_DL_LIBS}
     pthread
     m
 )
 
-# RPATH para que el ejecutable encuentre el .so en su misma carpeta al ejecutarse
+target_compile_options(HarukaEditor PRIVATE ${GTK3_CFLAGS_OTHER})
+target_compile_definitions(HarukaEditor PRIVATE HARUKA_EDITOR HARUKA_HAS_NFD=1)
+
+# Find libHarukaEngine.so next to the binary at runtime.
 set_target_properties(HarukaEditor PROPERTIES
-    BUILD_RPATH  "$ORIGIN"
+    BUILD_RPATH   "$ORIGIN"
     INSTALL_RPATH "$ORIGIN"
 )
 
-# ======= 6. Post-Build: Sincronización =======
-# Copiamos la librería y shaders al nivel del ejecutable (HarukaEditor/) 
-# para que la ejecución sea independiente de la carpeta de versión.
+# ======= 7. Post-Build: Deploy to bin/ =======
+# The binary already lands in ENGINE_PATH/bin via CMAKE_RUNTIME_OUTPUT_DIRECTORY.
+# Copy shaders there too so SDL_GetBasePath()+shaders/<name>.spv works.
 add_custom_command(TARGET HarukaEditor POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${HARUKA_ENGINE_LIBRARY}"
-        "$<TARGET_FILE_DIR:HarukaEditor>/libHarukaEngine.so"
-    COMMENT "Desplegando motor v${ENGINE_VERSION}..."
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${HARUKA_ENGINE_SHADERS_DIR}"
+        "$<TARGET_FILE_DIR:HarukaEditor>/shaders"
+    COMMENT "Deploying shaders -> ${ENGINE_VERSION}/bin/shaders/"
 )
 
-if(EXISTS "${HARUKA_ENGINE_SHADERS_DIR}")
-    add_custom_command(TARGET HarukaEditor POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-            "${HARUKA_ENGINE_SHADERS_DIR}"
-            "$<TARGET_FILE_DIR:HarukaEditor>/shaders"
-        COMMENT "Desplegando shaders del motor..."
-    )
-endif()
+# ==== Install ====
+include(GNUInstallDirs)
+install(TARGETS HarukaEditor RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(FILES "${HARUKA_ENGINE_LIBRARY}" DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(DIRECTORY "${HARUKA_ENGINE_SHADERS_DIR}/"
+        DESTINATION "${CMAKE_INSTALL_BINDIR}/shaders"
+        FILES_MATCHING PATTERN "*.spv")
+
+# ==== CPack ====
+set(CPACK_PACKAGE_NAME    "HarukaEditor")
+set(CPACK_PACKAGE_VERSION "${ENGINE_VERSION}")
+set(CPACK_GENERATOR       "ZIP;DEB")
+set(CPACK_DEBIAN_PACKAGE_MAINTAINER "Haruka")
+include(CPack)

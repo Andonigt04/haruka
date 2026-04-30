@@ -1,149 +1,113 @@
-# Haruka Engine
+# Haruka Editor
 
-Haruka Engine is a C++17 OpenGL 4.6 real-time engine with:
-
-- deferred rendering + PBR
-- editor/runtime/server targets
-- procedural planetary tooling
-- integrated post-processing and lighting stack
-
-The repository builds three main applications from the same codebase:
-
-- `HarukaEditor` (tools and authoring)
-- `HarukaEngine` (runtime client)
-- `HarukaServer` (dedicated server with database support)
+ImGui-based editor for the Haruka Engine. Loads `libHarukaEngine.so` from a
+versioned build directory and provides scene authoring, asset management, and
+play-mode testing.
 
 ---
 
-## 1) Architecture Overview
+## Architecture
 
-Main source modules:
+Editor panels (`src/panels/`):
 
-- `src/core` → application shell, scene model, camera, common systems
-- `src/renderer` → rendering pipeline, GPU resources, shadows, post-process
-- `src/editor` → editor panels, command history, viewport tooling
-- `src/game` → gameplay systems, planet generation, character systems
-- `src/network` → websocket/socket client-server abstractions
-- `src/database` → PostgreSQL persistence layer
-- `src/physics` → octree, rigid-body simulation, raycast helpers
-- `src/audio` → OpenAL integration
-- `src/io` → asset streaming and loading utilities
-
-The engine library target is `HarukaEngineLib` and is linked by runtime/editor.
+- `viewport` — 3D scene view with camera and gizmo controls
+- `scene_hierarchy` — entity tree, selection, rename
+- `inspector` — component properties, transform, material
+- `project_browser` — asset file browser
+- `material_editor` — PBR material authoring
+- `console` — log output
+- `stats` — performance counters
+- `asset_importer` — model and texture import
+- `settings` — editor preferences
+- `ui_builder` — in-engine UI layout tool
+- `planet_terrain_editor` — procedural terrain parameters
+- `search_panel` — cross-asset search
+- `export_panel` — game export
 
 ---
 
-## 2) Rendering Features
+## Dependencies
 
-Haruka includes:
+```bash
+sudo dnf install cmake gcc-c++ assimp-devel openssl-devel openal-soft-devel \
+    gtk3-devel pkgconf-pkg-config sdl3-devel
+```
 
-- Deferred shading (`GBuffer` geometry + lighting passes)
+Also requires `glad`, `glm`, `stb`, `imgui`, `ImGuizmo`, and `nativefiledialog`
+under `third_party/`.
+
+The **Haruka Engine** (`haruka-cpp`) must be built and installed first — see
+[haruka-cpp/README.md](../haruka-cpp/README.md).
+
+---
+
+## Build
+
+**Step 1 — Build and install the engine:**
+
+```bash
+cmake -B haruka-cpp/build haruka-cpp/ -DENGINE_VERSION=1.0.0
+cmake --build haruka-cpp/build -j$(nproc)
+cmake --install haruka-cpp/build --prefix haruka/build
+```
+
+**Step 2 — Build the editor:**
+
+```bash
+cmake -B haruka/build haruka/
+cmake --build haruka/build -j$(nproc)
+```
+
+CMake auto-detects the newest version installed under `build/`. To pin a version:
+
+```bash
+cmake -B haruka/build haruka/ -DENGINE_VERSION=1.0.0
+```
+
+Output:
+
+```
+build/
+└── 1.0.0/
+    └── bin/
+        ├── HarukaEditor
+        ├── libHarukaEngine.so
+        └── shaders/*.spv
+```
+
+Run:
+
+```bash
+./build/1.0.0/bin/HarukaEditor
+```
+
+---
+
+## Rendering Features
+
+- Deferred shading (G-buffer geometry + lighting passes)
 - PBR material workflow (metallic/roughness)
-- Directional and point-light shadows
-- Cascaded shadow maps
-- SSAO
-- IBL (irradiance + prefilter + BRDF LUT)
-- HDR and tone mapping
-- Bloom
-- Virtual texturing
+- Directional and point-light shadows, cascaded shadow maps
+- SSAO, IBL, HDR, bloom, tone mapping
 - Compute-shader post-processing path
 
-Core shader assets are in [shaders/](shaders/).
+Core shader assets are in [haruka-cpp/shaders/](../haruka-cpp/shaders/).
 
 ---
 
-## 3) Build Requirements
+## Project Layout
 
-### Toolchain
-
-- CMake >= 3.14
-- C++17 compiler (GCC/Clang/MSVC)
-
-### Required libraries
-
-Resolved by CMake via `find_package`/`pkg-config`:
-
-- OpenGL
-- GLFW3
-- Assimp
-- OpenSSL
-- OpenAL
-- PostgreSQL client (`libpq`)
-- GTK3 (for native file dialog/editor integration)
-
-### Third-party sources
-
-The repo expects `third_party/` sources (GLM, GLAD, GLFW, stb, etc.).
-You can bootstrap the folder with [setup_deps.sh](setup_deps.sh).
+- [src/](src/) — editor source
+- [src/panels/](src/panels/) — ImGui panel implementations
+- [third_party/](third_party/) — vendored libraries
+- [template/](template/) — new project skeleton
+- [assets/](assets/) — editor assets
 
 ---
 
-## 4) Build and Run
+## Notes
 
-Typical Linux flow:
-
-```bash
-mkdir -p build
-cd build
-cmake ..
-make -j"$(nproc)"
-```
-
-Generated binaries:
-
-- `build/HarukaEditor`
-- `build/HarukaEngine`
-- `build/HarukaServer`
-- `build/ChatTest`
-
-Run examples:
-
-```bash
-cd build
-./HarukaEditor
-```
-
-Build options from CMake:
-
-- `BUILD_EDITOR` (ON by default)
-- `BUILD_RUNTIME` (ON by default)
-- `BUILD_SERVER` (ON by default)
-
----
-
-## 5) Key Runtime Pipelines
-
-### Terrain/Planet workflow
-
-1. Configure seed and terrain layer parameters.
-2. Generate base geometry (GPU when available, CPU fallback otherwise).
-3. Optionally split into chunks for editing.
-4. Persist chunk deltas and reload them on scene reopen.
-
-### Deferred render workflow
-
-1. Geometry pass fills G-buffer attachments.
-2. Lighting pass accumulates light contribution.
-3. Post passes apply SSAO/HDR/bloom/tone mapping.
-
----
-
-## 6) Project Layout
-
-Top-level folders:
-
-- [src/](src/) → engine/editor/server source
-- [shaders/](shaders/) → GLSL shaders
-- [projects/](projects/) → sample/working projects
-- [template/](template/) → project template skeleton
-- [documents/](documents/) → engineering and documentation standards
-
----
-
-## 7) Notes
-
-- `Release` is the default build type if not explicitly set.
-- CMake copies the shader directory into the build output.
-- `HarukaEngineLib` is built as a shared library and reused by client/editor.
-
-For deeper internal docs, see [documents/project_stl_standard.md](documents/project_stl_standard.md) and [documents/project_module_map.md](documents/project_module_map.md).
+- `Release` is the default build type.
+- `SDL_GetBasePath()` is used at runtime to locate shaders relative to the binary.
+- The engine `.so` is copied next to the binary at post-build; no `LD_LIBRARY_PATH` needed.
+- Multiple engine versions can coexist under `build/` — switch with `-DENGINE_VERSION`.
