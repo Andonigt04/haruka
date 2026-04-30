@@ -126,9 +126,12 @@ void ViewportPanel::setCamera(Camera* cam) {
 
 void ViewportPanel::recreateRenderTarget() {
     renderTarget = std::make_unique<RenderTarget>(width, height);
-    
-    // Registrar en MotorInstance cuando cambia el RenderTarget
     MotorInstance::getInstance().setRenderTarget(renderTarget.get());
+
+    Application* app = ownedApplication
+        ? ownedApplication.get()
+        : MotorInstance::getInstance().getApplication();
+    if (app) app->recreateFBOs(width, height);
 }
 
 glm::vec3 ViewportPanel::getRayFromMouse(const glm::mat4& proj, const glm::mat4& view) {
@@ -713,8 +716,8 @@ void ViewportPanel::updateCameraFromInput(float deltaTime) {
     }
 
     // WASD solo cuando el viewport tiene foco y no hay inputs activos
-    if (camera && isViewportFocused && glfwWindow && !ImGui::IsAnyItemActive()) {
-        camera->processInput(glfwWindow, deltaTime);
+    if (camera && isViewportFocused && !ImGui::IsAnyItemActive()) {
+        camera->processInput(sdlWindow, deltaTime);
     }
 }
 

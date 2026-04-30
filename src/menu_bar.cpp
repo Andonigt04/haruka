@@ -2,7 +2,6 @@
 #include "editor_app.h"
 #include <imgui.h>
 #include <nfd.h>
-#include <GLFW/glfw3.h>
 #include <iostream>
 #include <cstdio>
 
@@ -79,7 +78,7 @@ void MenuBar::renderFileMenu() {
     }
 
     if (ImGui::MenuItem("Exit", "Alt+F4")) {
-        glfwSetWindowShouldClose(editorApp->window, true);
+        editorApp->_shouldClose = true;
     }
 
     ImGui::EndMenu();

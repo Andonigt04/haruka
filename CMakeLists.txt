@@ -64,7 +64,7 @@ set(NFD_SOURCES
 set(NFD_INCLUDE_DIRS "${NFD_DIR}/src/include")
 set(GTK3_INCLUDE_DIRS ${GTK3_INCLUDE_DIRS})
 
-find_package(glfw3 REQUIRED)
+find_package(SDL3 REQUIRED)
 find_package(assimp REQUIRED)
 find_package(OpenGL REQUIRED)
 find_package(OpenSSL REQUIRED)
@@ -99,7 +99,7 @@ set(IMGUI_SOURCES
     ${IMGUI_DIR}/imgui_tables.cpp
     ${IMGUI_DIR}/imgui_widgets.cpp
     ${IMGUI_DIR}/imgui_demo.cpp
-    ${IMGUI_DIR}/backends/imgui_impl_glfw.cpp
+    ${IMGUI_DIR}/backends/imgui_impl_sdl3.cpp
     ${IMGUI_DIR}/backends/imgui_impl_opengl3.cpp
 )
 
@@ -124,10 +124,10 @@ if(BUILD_EDITOR)
     )
 
     # Enlaza contra la librería precompilada del motor
-    target_link_libraries(HarukaEditor 
+    target_link_libraries(HarukaEditor
         PRIVATE ${HARUKA_ENGINE_LIBRARY}
         ${GTK3_LIBRARIES}
-        glfw
+        SDL3::SDL3
         OpenGL::GL
         assimp::assimp
         OpenSSL::Crypto
@@ -153,7 +153,7 @@ install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/assets DESTINATION ${CMAKE_INSTALL
 
 # ==== CPack ====
 set(CPACK_PACKAGE_NAME "HarukaEditor")
-set(CPACK_PACKAGE_VERSION "0.1.0")
+set(CPACK_PACKAGE_VERSION "0.3.0")
 set(CPACK_GENERATOR "ZIP;DEB")
 set(CPACK_DEBIAN_PACKAGE_MAINTAINER "Haruka")
 include(CPack)

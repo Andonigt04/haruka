@@ -10,7 +10,7 @@
 #include "commands/command_history.h"
 #include <imgui.h>
 #include <memory>
-#include <GLFW/glfw3.h>
+#include <SDL3/SDL.h>
 #include "renderer/model.h"
 #include "panels/stats.h"
 #include <map>
@@ -35,8 +35,8 @@ public:
     void setScene(Haruka::Scene* scene);
     /** @brief Sets the active camera used by the viewport. */
     void setCamera(Camera* cam);
-    /** @brief Injects the GLFW window used for input handling. */
-    void setGLFWWindow(GLFWwindow* window) { glfwWindow = window; }
+    /** @brief Injects the SDL window used for input handling. */
+    void setSDLWindow(SDL_Window* window) { sdlWindow = window; }
     /** @brief Sets the command history for viewport-driven edits. */
     void setCommandHistory(CommandHistory* history) { commandHistory = history; }
     /** @brief Draws the viewport UI. */
@@ -117,7 +117,7 @@ private:
     // Command history
     CommandHistory* commandHistory = nullptr;
 
-    // GLFW window
-    GLFWwindow* glfwWindow = nullptr;
+    // SDL window
+    SDL_Window* sdlWindow = nullptr;
 
 };

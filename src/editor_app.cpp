@@ -7,10 +7,10 @@
 #include "renderer/primitive_shapes.h"
 
 #include <glad/glad.h>
-#include <GLFW/glfw3.h>
+#include <SDL3/SDL.h>
 #include <glm/glm.hpp>
 #include <imgui.h>
-#include <imgui_impl_glfw.h>
+#include <imgui_impl_sdl3.h>
 #include <imgui_impl_opengl3.h>
 #include <nfd.h>
 #include <dlfcn.h>
@@ -34,25 +34,30 @@ EditorApplication::~EditorApplication() {
 }
 
 void EditorApplication::init() {
-    // ===== GLFW & GLAD Setup =====
-    if (!glfwInit()) {
-        HARUKA_EDITOR_ERROR(ErrorCode::EDITOR_INIT_FAILED, "Failed to initialize GLFW in Editor");
-        throw std::runtime_error("Failed to initialize GLFW");
+    // ===== SDL3 & GLAD Setup =====
+    if (!SDL_Init(SDL_INIT_VIDEO)) {
+        HARUKA_EDITOR_ERROR(ErrorCode::EDITOR_INIT_FAILED, "Failed to initialize SDL3 in Editor");
+        throw std::runtime_error("Failed to initialize SDL3");
     }
 
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);
-    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 6);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
 
-    window = glfwCreateWindow(width, height, "Haruka Editor", nullptr, nullptr);
+    window = SDL_CreateWindow("Haruka Editor", width, height,
+                              SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE);
     if (!window) {
-        throw std::runtime_error("Failed to create GLFW window");
+        throw std::runtime_error("Failed to create SDL3 window");
     }
 
-    glfwMakeContextCurrent(window);
-    glfwSwapInterval(1);
+    glContext = SDL_GL_CreateContext(window);
+    if (!glContext) {
+        throw std::runtime_error("Failed to create OpenGL context");
+    }
+    SDL_GL_MakeCurrent(window, glContext);
+    SDL_GL_SetSwapInterval(1);
 
-    if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) {
+    if (!gladLoadGLLoader((GLADloadproc)SDL_GL_GetProcAddress)) {
         throw std::runtime_error("Failed to initialize GLAD");
     }
 
@@ -71,7 +76,7 @@ void EditorApplication::init() {
         style.Colors[ImGuiCol_WindowBg].w = 1.0f;
     }
 
-    ImGui_ImplGlfw_InitForOpenGL(window, true);
+    ImGui_ImplSDL3_InitForOpenGL(window, glContext);
     ImGui_ImplOpenGL3_Init("#version 460");
 
     // ===== Scene & Project Setup =====
@@ -102,7 +107,7 @@ void EditorApplication::init() {
 
     viewportPanel.setScene(currentScene.get());
     viewportPanel.setCamera(viewportCamera.get());
-    viewportPanel.setGLFWWindow(window);
+    viewportPanel.setSDLWindow(window);
     viewportPanel.setStatsPanel(&statsPanel);
 
     editorCamPos = viewportCamera->position;
@@ -164,28 +169,40 @@ void EditorApplication::shutdown() {
     }
 
     ImGui_ImplOpenGL3_Shutdown();
-    ImGui_ImplGlfw_Shutdown();
+    ImGui_ImplSDL3_Shutdown();
     ImGui::DestroyContext();
 
-    if (window) glfwDestroyWindow(window);
-    glfwTerminate();
+    if (glContext) SDL_GL_DestroyContext(glContext);
+    if (window) SDL_DestroyWindow(window);
+    SDL_Quit();
 }
 
 void EditorApplication::run() {
     init();
-    while (!glfwWindowShouldClose(window)) {
+    while (!_shouldClose) {
         update();
         render();
     }
 }
 
 void EditorApplication::update() {
-    float currentFrame = static_cast<float>(glfwGetTime());
+    float currentFrame = SDL_GetTicks() / 1000.0f;
     deltaTime = currentFrame - lastFrame;
     lastFrame = currentFrame;
 
     statsPanel.update(deltaTime);
-    glfwPollEvents();
+
+    SDL_Event event;
+    while (SDL_PollEvent(&event)) {
+        ImGui_ImplSDL3_ProcessEvent(&event);
+        if (event.type == SDL_EVENT_QUIT) {
+            _shouldClose = true;
+        } else if (event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED &&
+                   event.window.windowID == SDL_GetWindowID(window)) {
+            _shouldClose = true;
+        }
+    }
+
     updatePlayMode(deltaTime);
     planetTerrainEditorPanel.update();
     exportPanel.update();
@@ -233,11 +250,11 @@ void EditorApplication::render() {
         title += " - " + currentFile.name + " (" + getFileType(currentFile.path) + ")";
     }
     if (sceneDirty) title += " *";
-    glfwSetWindowTitle(window, title.c_str());
+    SDL_SetWindowTitle(window, title.c_str());
 
     // ImGui frame setup
     ImGui_ImplOpenGL3_NewFrame();
-    ImGui_ImplGlfw_NewFrame();
+    ImGui_ImplSDL3_NewFrame();
     ImGui::NewFrame();
 
     renderUI();
@@ -245,7 +262,7 @@ void EditorApplication::render() {
     // Render
     ImGui::Render();
     int display_w, display_h;
-    glfwGetFramebufferSize(window, &display_w, &display_h);
+    SDL_GetWindowSizeInPixels(window, &display_w, &display_h);
     glViewport(0, 0, display_w, display_h);
     glClear(GL_COLOR_BUFFER_BIT);
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
@@ -253,13 +270,14 @@ void EditorApplication::render() {
     // Handle multi-viewport
     ImGuiIO& io = ImGui::GetIO();
     if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
-        GLFWwindow* backup_current_context = glfwGetCurrentContext();
+        SDL_Window*   backup_window  = SDL_GL_GetCurrentWindow();
+        SDL_GLContext backup_context = SDL_GL_GetCurrentContext();
         ImGui::UpdatePlatformWindows();
         ImGui::RenderPlatformWindowsDefault();
-        glfwMakeContextCurrent(backup_current_context);
+        SDL_GL_MakeCurrent(backup_window, backup_context);
     }
 
-    glfwSwapBuffers(window);
+    SDL_GL_SwapWindow(window);
 }
 
 void EditorApplication::renderUI() {
@@ -788,10 +806,10 @@ void EditorApplication::saveFile(const std::string& path, bool asPrefab) {
         currentFile.path = path;
         currentFile.name = p.stem().string();
         currentFile.isPrefab = isPrefab;
-        currentFile.lastSaveTime = glfwGetTime();
+        currentFile.lastSaveTime = SDL_GetTicks() / 1000.0f;
         sceneDirty = false;
         timeSinceLastSave = 0.0f;
-        
+
         std::string type = isPrefab ? "Prefab" : "Scene";
         std::cout << "✓ " << type << " saved: " << path << std::endl;
     } else {
@@ -808,8 +826,8 @@ void EditorApplication::loadFile(const std::string& path) {
         currentFile.path = path;
         currentFile.name = std::filesystem::path(path).stem().string();
         currentFile.isPrefab = (path.find(".prefab") != std::string::npos);
-        currentFile.lastSaveTime = glfwGetTime();
-        
+        currentFile.lastSaveTime = SDL_GetTicks() / 1000.0f;
+
         // Resetear estado de cambios
         sceneDirty = false;
         timeSinceLastSave = 0.0f;

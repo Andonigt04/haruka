@@ -63,7 +63,9 @@ private:
     std::unique_ptr<MenuBar> menuBar;
 
     // UI state
-    GLFWwindow* window;
+    SDL_Window*   window    = nullptr;
+    SDL_GLContext glContext  = nullptr;
+    bool          _shouldClose = false;
     std::unique_ptr<Haruka::Project> currentProject;
     std::unique_ptr<Haruka::Scene> currentScene;
     std::unique_ptr<Camera> viewportCamera;
