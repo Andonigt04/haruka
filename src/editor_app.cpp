@@ -863,10 +863,30 @@ void EditorApplication::loadFile(const std::string& path) {
         viewportPanel.setScene(currentScene.get());
         planetTerrainEditorPanel.setScene(currentScene.get());
         
+        // Sync editor camera to the scene Camera object if present
+        for (const auto& obj : currentScene->getObjects()) {
+            if (obj.type == "Camera") {
+                viewportCamera->position = obj.position;
+                glm::dquat qYaw   = glm::angleAxis(glm::radians(obj.rotation.y), glm::dvec3(0, 1, 0));
+                glm::dquat qPitch = glm::angleAxis(glm::radians(obj.rotation.x), glm::dvec3(1, 0, 0));
+                glm::dquat qRoll  = glm::angleAxis(glm::radians(obj.rotation.z), glm::dvec3(0, 0, 1));
+                viewportCamera->orientation = qYaw * qPitch * qRoll;
+                if (obj.properties.is_object()) {
+                    if (obj.properties.contains("speed"))
+                        viewportCamera->speed = obj.properties["speed"].get<float>();
+                    if (obj.properties.contains("sensitivity"))
+                        viewportCamera->sensitivity = obj.properties["sensitivity"].get<float>();
+                }
+                viewportPanel.setCamera(viewportCamera.get());
+                std::cout << "✓ Editor camera synced to: " << obj.name << std::endl;
+                break;
+            }
+        }
+
         // Resetear selección a ningún objeto
         sceneHierarchyPanel.setSelectedObjectIndex(-1);
         inspectorPanel.setSelectedObjectIndex(-1);
-        
+
         std::string type = currentFile.isPrefab ? "Prefab" : "Scene";
         std::cout << "✓ " << type << " loaded: " << path << std::endl;
     } else {

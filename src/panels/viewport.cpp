@@ -82,7 +82,10 @@ void releaseModelFromCache(const std::string& path) {
 }
 }
 
-ViewportPanel::ViewportPanel() {}
+ViewportPanel::ViewportPanel()
+    : editorWorldSystem(std::make_unique<Haruka::WorldSystem>())
+    , editorTerrainStreaming(std::make_unique<Haruka::TerrainStreamingSystem>())
+{}
 
 ViewportPanel::~ViewportPanel() = default;
 
@@ -443,6 +446,24 @@ void ViewportPanel::renderScene() {
     computeSceneStats(totalVertices, totalTriangles, totalDrawCalls);
     if (currentScene) {
         glm::dvec3 camPos = camera ? glm::dvec3(camera->position) : glm::dvec3(0.0);
+
+        // Run terrain streaming every frame in the editor so chunks are generated
+        // without requiring play mode.
+        if (editorTerrainStreaming && editorWorldSystem && camera) {
+            Haruka::TerrainStreamingStats tStats;
+            editorTerrainStreaming->update(currentScene, editorWorldSystem.get(),
+                                           nullptr, nullptr, camera, &tStats);
+            if (statsPanel) {
+                statsPanel->setVisibleChunkCount(tStats.visibleChunks);
+                statsPanel->setResidentChunkCount(tStats.residentChunks);
+                statsPanel->setPendingChunkLoads(tStats.pendingChunkLoads);
+                statsPanel->setPendingChunkEvictions(tStats.pendingChunkEvictions);
+                statsPanel->setResidentMemoryMB(tStats.residentMemoryMB);
+                statsPanel->setTrackedChunkCount(tStats.trackedChunks);
+                statsPanel->setMaxMemoryMB(tStats.maxMemoryMB);
+            }
+        }
+
         bool shaderReady = true;
         if (!sceneShader) {
             try {
@@ -502,7 +523,7 @@ void ViewportPanel::renderScene() {
                     (float)width / (float)height,
                     nearPlane,
                     farPlane,
-                    60.0f);
+                    144.0f);
             }
 
             // Shadow depth pass
@@ -564,11 +585,25 @@ void ViewportPanel::renderScene() {
             sceneShader->setFloat("ambientStrength", 0.12f);
             sceneShader->setBool("useShadowMap", false);
 
+            // Find planet root once for camDir, hemisphere culling, and terrain shader uniforms.
+            glm::dvec3 planetCenter(0.0);
+            float planetRadius = 1.0f;
+            for (const auto& o : currentScene->getObjects()) {
+                if (o.properties.is_object() && o.properties.contains("terrainEditor") &&
+                    o.properties["terrainEditor"].value("isPlanetRoot", false)) {
+                    planetCenter = o.getWorldPosition(currentScene);
+                    glm::vec3 sc = glm::vec3(o.scale);
+                    planetRadius = glm::length(sc) / std::sqrt(3.0f);
+                    break;
+                }
+            }
+
+            // Compute camDir as direction from planet center to camera (planet-local space).
             glm::vec3 camDir = glm::vec3(0.0f, 0.0f, 1.0f);
             if (camera) {
-                glm::vec3 cp = camera->position;
-                float cpl = glm::length(cp);
-                if (cpl > 1e-6f) camDir = cp / cpl;
+                glm::dvec3 relPos = camera->position - planetCenter;
+                double rpl = glm::length(relPos);
+                if (rpl > 1e-6) camDir = glm::vec3(relPos / rpl);
             }
 
             auto isChunkFacingCamera = [&](const Haruka::SceneObject& obj) -> bool {
@@ -577,24 +612,32 @@ void ViewportPanel::renderScene() {
                 const auto& te = obj.properties["terrainEditor"];
                 if (!te.is_object() || !te.value("isChunk", false)) return true;
 
-                if (!te.contains("chunkX") || !te.contains("chunkY") || !te.contains("chunkTilesX") || !te.contains("chunkTilesY")) return true;
+                if (!te.contains("chunkFace") || !te.contains("chunkX") || !te.contains("chunkY") ||
+                    !te.contains("chunkTilesX") || !te.contains("chunkTilesY")) return true;
 
-                int chunkX = te.value("chunkX", -1);
-                int chunkY = te.value("chunkY", -1);
-                int tilesX = te.value("chunkTilesX", 0);
-                int tilesY = te.value("chunkTilesY", 0);
-                if (chunkX < 0 || chunkY < 0 || tilesX <= 0 || tilesY <= 0) return true;
+                int face  = te.value("chunkFace", 0);
+                int tileX = te.value("chunkX", 0);
+                int tileY = te.value("chunkY", 0);
+                int tilesX = te.value("chunkTilesX", 1);
+                int tilesY = te.value("chunkTilesY", 1);
+                if (tilesX <= 0 || tilesY <= 0) return true;
 
-                constexpr float kPiLocal = 3.14159265358979323846f;
-                float lat = ((static_cast<float>(chunkY) + 0.5f) / static_cast<float>(tilesY)) * kPiLocal - (kPiLocal * 0.5f);
-                float lon = ((static_cast<float>(chunkX) + 0.5f) / static_cast<float>(tilesX)) * (2.0f * kPiLocal) - kPiLocal;
-                glm::vec3 chunkDir(
-                    std::cos(lat) * std::cos(lon),
-                    std::sin(lat),
-                    std::cos(lat) * std::sin(lon)
-                );
+                // Compute the cube-sphere direction for this tile's center (same mapping
+                // as generateChunkInternal) so the facing test is geometrically correct.
+                float u = (static_cast<float>(tileX) + 0.5f) / static_cast<float>(tilesX) * 2.0f - 1.0f;
+                float v = (static_cast<float>(tileY) + 0.5f) / static_cast<float>(tilesY) * 2.0f - 1.0f;
+                glm::vec3 cube;
+                switch (face) {
+                    case 0: cube = glm::vec3( 1.0f,  v, -u); break;
+                    case 1: cube = glm::vec3(-1.0f,  v,  u); break;
+                    case 2: cube = glm::vec3( u,  1.0f, -v); break;
+                    case 3: cube = glm::vec3( u, -1.0f,  v); break;
+                    case 4: cube = glm::vec3( u,  v,  1.0f); break;
+                    default:cube = glm::vec3(-u,  v, -1.0f); break;
+                }
+                glm::vec3 chunkDir = glm::normalize(cube);
 
-                // Render near/front hemisphere of the planet plus a small margin.
+                // Render front hemisphere plus a small back-face margin.
                 return glm::dot(chunkDir, camDir) > -0.15f;
             };
 
@@ -622,6 +665,16 @@ void ViewportPanel::renderScene() {
                 float emission = isLightObj ? std::max((float)obj.intensity, 0.0f) : 1.0f;
                 glm::vec3 c = isLightObj ? (baseColor * emission) : baseColor;
                 sceneShader->setVec3("lightColor", c);
+
+                const bool isTerrainChunk = obj.properties.is_object() &&
+                    obj.properties.contains("terrainEditor") &&
+                    obj.properties["terrainEditor"].is_object() &&
+                    obj.properties["terrainEditor"].value("isChunk", false);
+                sceneShader->setBool("useProceduralTerrain", isTerrainChunk);
+                if (isTerrainChunk) {
+                    sceneShader->setVec3("planetCenter", glm::vec3(planetCenter));
+                    sceneShader->setFloat("planetRadius", planetRadius);
+                }
                 if (obj.meshRenderer && obj.meshRenderer->isResident()) {
                     obj.meshRenderer->render(*sceneShader);
                     localDrawCalls++;
