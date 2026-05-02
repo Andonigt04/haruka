@@ -506,13 +506,16 @@ void EditorApplication::renderUI() {
 
 
 void EditorApplication::enterPlayMode() {
-    if (isPlayMode || !currentProject) return;
-    
+    if (isPlayMode) return;
+
     isPlayMode = true;
     playModeTime = 0.0f;
-    
+
     viewportPanel.setPlayMode(true);
     inspectorPanel.setPlayMode(true);
+
+    // Sin proyecto: entrar en play con la escena actual (útil para testing)
+    if (!currentProject) return;
 
     // Cargar escena de inicio
     std::string projectPath = currentProject->getPath();
@@ -647,7 +650,7 @@ void EditorApplication::enterPlayMode() {
             std::cout << "⚠ getGameInterface not found, project may not implement it" << std::endl;
         }
     } else {
-        HARUKA_EDITOR_ERROR(ErrorCode::MOTOR_LIBRARY, "Could not load project library: " + std::string(dlerror()));
+        std::cout << "⚠ No game library found (" << logicLib << "), running without game logic\n";
     }
 
     std::cout << "▶ Play Mode started" << std::endl;

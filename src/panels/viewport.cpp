@@ -11,6 +11,36 @@
 namespace {
 std::unordered_map<std::string, std::shared_ptr<Model>> g_modelCache;
 
+// Compiles an inline GLSL vert+frag pair, returns program ID (0 on failure).
+GLuint compileInlineGLSL(const char* vertSrc, const char* fragSrc) {
+    auto compile = [](GLenum type, const char* src) -> GLuint {
+        GLuint s = glCreateShader(type);
+        glShaderSource(s, 1, &src, nullptr);
+        glCompileShader(s);
+        GLint ok; glGetShaderiv(s, GL_COMPILE_STATUS, &ok);
+        if (!ok) {
+            char log[512]; glGetShaderInfoLog(s, sizeof(log), nullptr, log);
+            std::cerr << "[Viewport] shader compile error: " << log << "\n";
+            glDeleteShader(s); return 0;
+        }
+        return s;
+    };
+    GLuint vs = compile(GL_VERTEX_SHADER, vertSrc);
+    GLuint fs = compile(GL_FRAGMENT_SHADER, fragSrc);
+    if (!vs || !fs) { glDeleteShader(vs); glDeleteShader(fs); return 0; }
+    GLuint prog = glCreateProgram();
+    glAttachShader(prog, vs); glAttachShader(prog, fs);
+    glLinkProgram(prog);
+    glDeleteShader(vs); glDeleteShader(fs);
+    GLint ok; glGetProgramiv(prog, GL_LINK_STATUS, &ok);
+    if (!ok) {
+        char log[512]; glGetProgramInfoLog(prog, sizeof(log), nullptr, log);
+        std::cerr << "[Viewport] program link error: " << log << "\n";
+        glDeleteProgram(prog); return 0;
+    }
+    return prog;
+}
+
 bool isRenderDisabledByEditor(const Haruka::SceneObject& obj) {
     if (!obj.properties.is_object()) return false;
     if (!obj.properties.contains("terrainEditor")) return false;
@@ -87,7 +117,12 @@ ViewportPanel::ViewportPanel()
     , editorTerrainStreaming(std::make_unique<Haruka::TerrainStreamingSystem>())
 {}
 
-ViewportPanel::~ViewportPanel() = default;
+ViewportPanel::~ViewportPanel() {
+    if (editorCubeProgram) {
+        glDeleteProgram(editorCubeProgram);
+        editorCubeProgram = 0;
+    }
+}
 
 void ViewportPanel::setScene(Haruka::Scene* scene) {
     currentScene = scene;
@@ -434,7 +469,7 @@ void ViewportPanel::renderScene() {
     // Render local (editor o fallback)
     renderTarget->bindForWriting();
     glViewport(0, 0, width, height);
-    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClearColor(0.05f, 0.05f, 0.08f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     int localDrawCalls = 0;
@@ -444,6 +479,58 @@ void ViewportPanel::renderScene() {
     int totalTriangles = 0;
     int totalDrawCalls = 0;
     computeSceneStats(totalVertices, totalTriangles, totalDrawCalls);
+
+    // ── Test cube: inline GLSL shader (no SPIR-V), always visible in editor ──
+    {
+        if (!editorCubeProgram) {
+            static const char* kVert = R"(
+#version 460 core
+layout(location = 0) in vec3 aPos;
+layout(location = 1) in vec3 aNormal;
+uniform mat4 uMVP;
+uniform mat4 uModel;
+out vec3 vNormal;
+void main() {
+    vNormal = mat3(transpose(inverse(uModel))) * aNormal;
+    gl_Position = uMVP * vec4(aPos, 1.0);
+}
+)";
+            static const char* kFrag = R"(
+#version 460 core
+in vec3 vNormal;
+out vec4 fragColor;
+void main() {
+    vec3 lightDir = normalize(vec3(0.4, 0.8, 0.5));
+    float diff = max(dot(normalize(vNormal), lightDir), 0.0) * 0.7 + 0.3;
+    fragColor = vec4(vec3(0.6, 0.8, 1.0) * diff, 1.0);
+}
+)";
+            editorCubeProgram = compileInlineGLSL(kVert, kFrag);
+        }
+        if (editorCubeProgram) {
+            glm::mat4 proj = glm::perspective(glm::radians(60.0f),
+                                              (float)width / (float)height, 0.1f, 10000.0f);
+            glm::mat4 view = camera ? camera->getViewMatrix()
+                                    : glm::lookAt(glm::vec3(0,2,8), glm::vec3(0,0,0), glm::vec3(0,1,0));
+            glm::mat4 model = glm::mat4(1.0f);
+            glm::mat4 mvp = proj * view * model;
+
+            glUseProgram(editorCubeProgram);
+            glUniformMatrix4fv(glGetUniformLocation(editorCubeProgram, "uMVP"),   1, GL_FALSE, glm::value_ptr(mvp));
+            glUniformMatrix4fv(glGetUniformLocation(editorCubeProgram, "uModel"), 1, GL_FALSE, glm::value_ptr(model));
+
+            if (!editorTestCube) {
+                std::vector<glm::vec3> v, n;
+                std::vector<unsigned int> idx;
+                PrimitiveShapes::createCube(1.0f, v, n, idx);
+                editorTestCube = std::make_unique<SimpleMesh>(v, n, idx);
+            }
+            glEnable(GL_DEPTH_TEST);
+            editorTestCube->draw();
+            localDrawCalls++;
+        }
+    }
+
     if (currentScene) {
         glm::dvec3 camPos = camera ? glm::dvec3(camera->position) : glm::dvec3(0.0);
 
@@ -464,21 +551,7 @@ void ViewportPanel::renderScene() {
             }
         }
 
-        bool shaderReady = true;
-        if (!sceneShader) {
-            try {
-                // Shader simple/estable para editor local
-                sceneShader = std::make_unique<Shader>("shaders/simple.vert", "shaders/light_cube.frag");
-            } catch (const std::exception& e) {
-                std::cerr << "[ViewportPanel] Error al crear sceneShader: " << e.what() << std::endl;
-                shaderReady = false;
-            }
-        }
-        if (!sceneShader) {
-            std::cerr << "[ViewportPanel] sceneShader es nullptr, abortando render local" << std::endl;
-            shaderReady = false;
-        }
-        if (shaderReady) {
+        if (sceneShader) {
             Application* motorApp = MotorInstance::getInstance().getApplication();
             CascadedShadowMap* cascadedShadow = motorApp ? motorApp->getCascadedShadowMap() : nullptr;
             Shader* cascadeShadowShader = motorApp ? motorApp->getCascadedShadowShader() : nullptr;
@@ -826,8 +899,8 @@ void ViewportPanel::onImGuiRender() {
     ImVec2 size = ImGui::GetContentRegionAvail();
     int newW = (int)size.x;
     int newH = (int)size.y;
-    if (newW < 1) newW = 1;
-    if (newH < 1) newH = 1;
+    if (newW < 16) newW = 16;
+    if (newH < 16) newH = 16;
 
     if (!renderTarget || newW != width || newH != height) {
         width = newW;

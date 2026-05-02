@@ -72,7 +72,10 @@ public:
     Model* getOrLoadModel(const std::string& path);
 
     void setStatsPanel(StatsPanel* panel) { statsPanel = panel; }
-    void setPlayMode(bool play) { playMode = play; }
+    void setPlayMode(bool play) {
+        playMode = play;
+        MotorInstance::getInstance().setPlayMode(play);
+    }
     void setGizmoMode(int mode) { gizmoMode = mode; }
     void setSelectedObjectIndex(int index) { selectedObjectIndex = index; }
     int getSelectedObjectIndex() const { return selectedObjectIndex; }
@@ -109,8 +112,14 @@ private:
     // OpenGL/ImGui resources
     std::unique_ptr<RenderTarget> renderTarget;
 
-    // Shader para render local/editor
+    // Shader para render local/editor (SPIR-V, used for scene objects)
     std::unique_ptr<Shader> sceneShader;
+
+    // Inline GLSL program for the always-visible editor test cube (no SPIR-V dependency)
+    GLuint editorCubeProgram = 0;
+
+    // Test cube — siempre visible en editor para confirmar que GL funciona
+    std::unique_ptr<SimpleMesh> editorTestCube;
 
     // Terrain streaming for editor viewport (runs outside play mode)
     std::unique_ptr<Haruka::WorldSystem> editorWorldSystem;
