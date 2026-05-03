@@ -126,7 +126,7 @@ ViewportPanel::~ViewportPanel() {
 
 void ViewportPanel::setScene(Haruka::Scene* scene) {
     currentScene = scene;
-    
+
     // Inicializar Application si no existe
     if (scene) {
         auto* motorApp = MotorInstance::getInstance().getApplication();
@@ -136,19 +136,29 @@ void ViewportPanel::setScene(Haruka::Scene* scene) {
             }
             MotorInstance::getInstance().setApplication(ownedApplication.get());
             ownedApplication->init(*scene);
-            if (!camera) {
-                camera = ownedApplication->getCamera();
-                MotorInstance::getInstance().setCamera(camera);
-            }
+            if (renderTarget) ownedApplication->setEditorTarget(renderTarget.get());
+            camera = ownedApplication->getCamera();
+            MotorInstance::getInstance().setCamera(camera);
         } else {
             motorApp->init(*scene);
-            if (!camera) {
-                camera = motorApp->getCamera();
-                MotorInstance::getInstance().setCamera(camera);
+            if (renderTarget) motorApp->setEditorTarget(renderTarget.get());
+            camera = motorApp->getCamera();
+            MotorInstance::getInstance().setCamera(camera);
+        }
+
+        // Sync viewport yaw/pitch/speed from the scene's Camera object so
+        // updateCameraFromInput() doesn't immediately overwrite init()'s orientation.
+        for (const auto& obj : scene->getObjects()) {
+            if (obj.type == "Camera") {
+                camYaw   = static_cast<float>(obj.rotation.y);
+                camPitch = static_cast<float>(obj.rotation.x);
+                if (obj.properties.contains("speed"))
+                    moveSpeed = obj.properties["speed"].get<float>();
+                break;
             }
         }
     }
-    
+
     // Registrar en MotorInstance cuando cambia la escena
     MotorInstance::getInstance().setScene(scene);
 }
@@ -169,7 +179,10 @@ void ViewportPanel::recreateRenderTarget() {
     Application* app = ownedApplication
         ? ownedApplication.get()
         : MotorInstance::getInstance().getApplication();
-    if (app) app->recreateFBOs(width, height);
+    if (app) {
+        app->setEditorTarget(renderTarget.get());
+        app->recreateFBOs(width, height);
+    }
 }
 
 glm::vec3 ViewportPanel::getRayFromMouse(const glm::mat4& proj, const glm::mat4& view) {
@@ -466,11 +479,48 @@ void ViewportPanel::renderScene() {
         }
     }
 
-    // Render local (editor o fallback)
+    // Render local (editor o fallback).
+    // engineActiveThisFrame: the engine is wired up and has rendered to OUR target.
+    // When active, preserve the engine's colour+depth output instead of clearing.
+    // When inactive (no app or wrong render target), clear to the editor background.
+    // The test cube is ALWAYS drawn so the user always has a GL sanity indicator.
+    // Depth testing naturally hides it behind scene objects when the camera is
+    // outside them; when the camera is inside a huge body (e.g. planet) the cube
+    // at origin is closer and therefore always wins the depth test, confirming GL.
+    const bool engineActiveThisFrame =
+        !playMode &&
+        renderTarget != nullptr &&
+        MotorInstance::getInstance().getRenderTarget() == renderTarget.get() &&
+        (ownedApplication || MotorInstance::getInstance().getApplication());
+
+    // ONE-TIME VIEWPORT DIAGNOSTIC
+    static bool s_vpDiagDone = false;
+    if (!s_vpDiagDone) {
+        s_vpDiagDone = true;
+        std::cout << "[ViewportDiag] engineActive=" << engineActiveThisFrame
+                  << " playMode=" << playMode
+                  << " rtPtr=" << renderTarget.get()
+                  << " motorRT=" << MotorInstance::getInstance().getRenderTarget()
+                  << " ownedApp=" << (bool)ownedApplication
+                  << " lastVerts=" << Application::getLastRenderedVertices()
+                  << " camPos=(" << (camera ? camera->position.x : 0) << ","
+                                 << (camera ? camera->position.y : 0) << ","
+                                 << (camera ? camera->position.z : 0) << ")\n"
+                  << std::flush;
+    }
+
     renderTarget->bindForWriting();
     glViewport(0, 0, width, height);
-    glClearColor(0.05f, 0.05f, 0.08f, 1.0f);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LESS);
+    glDepthMask(GL_TRUE);
+    glDisable(GL_CULL_FACE);
+    glDisable(GL_BLEND);
+    glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+    if (!engineActiveThisFrame) {
+        glClearColor(0.05f, 0.05f, 0.08f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    }
 
     int localDrawCalls = 0;
     int localVertices = 0;
@@ -480,8 +530,8 @@ void ViewportPanel::renderScene() {
     int totalDrawCalls = 0;
     computeSceneStats(totalVertices, totalTriangles, totalDrawCalls);
 
-    // ── Test cube: inline GLSL shader (no SPIR-V), always visible in editor ──
-    {
+    // ── Test cube: only when no scene is loaded (default/empty state) ──
+    if (!currentScene || currentScene->getObjects().empty()) {
         if (!editorCubeProgram) {
             static const char* kVert = R"(
 #version 460 core
@@ -529,14 +579,24 @@ void main() {
             editorTestCube->draw();
             localDrawCalls++;
         }
-    }
+    } // end test cube block
 
     if (currentScene) {
         glm::dvec3 camPos = camera ? glm::dvec3(camera->position) : glm::dvec3(0.0);
 
-        // Run terrain streaming every frame in the editor so chunks are generated
-        // without requiring play mode.
-        if (editorTerrainStreaming && editorWorldSystem && camera) {
+        // Run terrain streaming only when the scene actually has terrain objects.
+        bool hasTerrainObjects = false;
+        for (const auto& obj : currentScene->getObjects()) {
+            if (obj.properties.is_object() && obj.properties.contains("terrainEditor")) {
+                hasTerrainObjects = true; break;
+            }
+            if (obj.meshRenderer && obj.meshRenderer->getSourceVertices().size() > 1000
+                    && glm::length(glm::vec3(obj.scale)) > 1000.0f) {
+                hasTerrainObjects = true; break;
+            }
+        }
+
+        if (hasTerrainObjects && editorTerrainStreaming && editorWorldSystem && camera) {
             Haruka::TerrainStreamingStats tStats;
             editorTerrainStreaming->update(currentScene, editorWorldSystem.get(),
                                            nullptr, nullptr, camera, &tStats);
@@ -549,9 +609,17 @@ void main() {
                 statsPanel->setTrackedChunkCount(tStats.trackedChunks);
                 statsPanel->setMaxMemoryMB(tStats.maxMemoryMB);
             }
+        } else if (statsPanel) {
+            statsPanel->setVisibleChunkCount(0);
+            statsPanel->setResidentChunkCount(0);
+            statsPanel->setPendingChunkLoads(0);
+            statsPanel->setPendingChunkEvictions(0);
+            statsPanel->setResidentMemoryMB(0);
+            statsPanel->setTrackedChunkCount(0);
+            statsPanel->setMaxMemoryMB(0);
         }
 
-        if (sceneShader) {
+        if (!engineActiveThisFrame && sceneShader) {
             Application* motorApp = MotorInstance::getInstance().getApplication();
             CascadedShadowMap* cascadedShadow = motorApp ? motorApp->getCascadedShadowMap() : nullptr;
             Shader* cascadeShadowShader = motorApp ? motorApp->getCascadedShadowShader() : nullptr;
@@ -811,12 +879,35 @@ void main() {
     renderDraw_calls = localDrawCalls;
     renderVertex_count = localVertices;
     if (statsPanel) {
-        statsPanel->setVertexCount(renderVertex_count);
-        statsPanel->setDrawCalls(renderDraw_calls);
-        statsPanel->setTriangleCount(localTriangles);
-        statsPanel->setTotalVertexCount(totalVertices);
-        statsPanel->setTotalDrawCalls(totalDrawCalls);
-        statsPanel->setTotalTriangleCount(totalTriangles);
+        Application* app = ownedApplication
+            ? ownedApplication.get()
+            : MotorInstance::getInstance().getApplication();
+        if (engineActiveThisFrame && app) {
+            // Read from instance members — the inline statics live in separate
+            // copies in the editor and engine binaries, so the statics always
+            // read 0 here. Instance members on the Application object are shared
+            // through the pointer and give the real values.
+            statsPanel->setVertexCount(app->getRenderedVertices());
+            statsPanel->setDrawCalls(app->getRenderedDrawCalls());
+            statsPanel->setTriangleCount(app->getRenderedTriangles());
+            statsPanel->setTotalVertexCount(app->getTotalVertices());
+            statsPanel->setTotalDrawCalls(app->getTotalDrawCalls());
+            statsPanel->setTotalTriangleCount(app->getTotalTriangles());
+            statsPanel->setVisibleChunkCount(app->getVisibleChunks());
+            statsPanel->setResidentChunkCount(app->getResidentChunks());
+            statsPanel->setPendingChunkLoads(app->getPendingChunkLoads());
+            statsPanel->setPendingChunkEvictions(app->getPendingChunkEvictions());
+            statsPanel->setResidentMemoryMB(app->getResidentMemoryMB());
+            statsPanel->setTrackedChunkCount(app->getTrackedChunks());
+            statsPanel->setMaxMemoryMB(app->getMaxMemoryMB());
+        } else {
+            statsPanel->setVertexCount(renderVertex_count);
+            statsPanel->setDrawCalls(renderDraw_calls);
+            statsPanel->setTriangleCount(localTriangles);
+            statsPanel->setTotalVertexCount(totalVertices);
+            statsPanel->setTotalDrawCalls(totalDrawCalls);
+            statsPanel->setTotalTriangleCount(totalTriangles);
+        }
     }
 }
 
@@ -932,8 +1023,25 @@ void ViewportPanel::onImGuiRender() {
     ImGui::End();
 }
 
-void ViewportPanel::onUpdate(float deltaTime) {    
+void ViewportPanel::onUpdate(float deltaTime) {
     updateCameraFromInput(deltaTime);
+
+    // ONE-TIME onUpdate diagnostic — written before renderFrame() so we catch
+    // the case where renderFrame() itself is never reached.
+    static bool s_updateDiagDone = false;
+    if (!s_updateDiagDone) {
+        s_updateDiagDone = true;
+        static FILE* s_ulog = fopen("/tmp/haruka_update.log", "w");
+        if (s_ulog) {
+            fprintf(s_ulog,
+                "[onUpdate] ownedApp=%p motorApp=%p currentScene=%p playMode=%d\n",
+                (void*)ownedApplication.get(),
+                (void*)MotorInstance::getInstance().getApplication(),
+                (void*)currentScene,
+                (int)playMode);
+            fflush(s_ulog);
+        }
+    }
 
     if (ownedApplication) {
         ownedApplication->renderFrame();
