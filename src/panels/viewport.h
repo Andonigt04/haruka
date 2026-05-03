@@ -4,6 +4,7 @@
 #include "core/scene.h"
 #include "core/world_system.h"
 #include "core/terrain_streaming_system.h"
+#include "game/planetary_system.h"
 #include "renderer/shader.h"
 #include "renderer/render_target.h"
 #include "renderer/motor_instance.h"
@@ -124,6 +125,7 @@ private:
     // Terrain streaming for editor viewport (runs outside play mode)
     std::unique_ptr<Haruka::WorldSystem> editorWorldSystem;
     std::unique_ptr<Haruka::TerrainStreamingSystem> editorTerrainStreaming;
+    std::unique_ptr<Haruka::PlanetarySystem> editorPlanetarySystem;
 
     // Stats panel
     StatsPanel* statsPanel = nullptr;

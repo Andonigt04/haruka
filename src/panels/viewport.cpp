@@ -115,6 +115,7 @@ void releaseModelFromCache(const std::string& path) {
 ViewportPanel::ViewportPanel()
     : editorWorldSystem(std::make_unique<Haruka::WorldSystem>())
     , editorTerrainStreaming(std::make_unique<Haruka::TerrainStreamingSystem>())
+    , editorPlanetarySystem(std::make_unique<Haruka::PlanetarySystem>())
 {}
 
 ViewportPanel::~ViewportPanel() {
@@ -536,7 +537,7 @@ void ViewportPanel::renderScene() {
         if (hasTerrainObjects && editorTerrainStreaming && editorWorldSystem && camera) {
             Haruka::TerrainStreamingStats tStats;
             editorTerrainStreaming->update(currentScene, editorWorldSystem.get(),
-                                           nullptr, nullptr, camera, &tStats);
+                                           editorPlanetarySystem.get(), nullptr, camera, &tStats);
             if (statsPanel) {
                 statsPanel->setVisibleChunkCount(tStats.visibleChunks);
                 statsPanel->setResidentChunkCount(tStats.residentChunks);
