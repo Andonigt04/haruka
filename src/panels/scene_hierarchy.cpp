@@ -4,6 +4,7 @@
 #include "core/math_types.h"
 
 #include "renderer/primitive_shapes.h"
+#include "core/object_types.h"
 #include "core/components/material_component.h"
 #include "core/components/mesh_renderer_component.h"
 #include "commands/scene_commands.h"
@@ -164,21 +165,26 @@ void SceneHierarchyPanel::createPrimitive(const std::string& name, const std::st
     std::vector<glm::vec3> verts, norms;
     std::vector<unsigned int> indices;
     
+    using PT = Haruka::PrimitiveMeshType;
+    auto setMeshType = [&](PT t) {
+        obj.properties["meshRenderer"]["meshType"] = Haruka::primitiveMeshTypeToString(t);
+    };
+
     if (type == "cube") {
         PrimitiveShapes::createCube(1.0f, verts, norms, indices);
-        obj.properties["meshRenderer"]["meshType"] = "cube";
+        setMeshType(PT::CUBE);
         obj.material = std::make_shared<Haruka::MaterialComponent>();
         obj.material->albedo = glm::vec3(0.8f, 0.8f, 0.8f);
     } else if (type == "sphere") {
         PrimitiveShapes::createSphere(1.0f, 32, 32, verts, norms, indices);
-        obj.properties["meshRenderer"]["meshType"] = "sphere";
+        setMeshType(PT::SPHERE);
         obj.properties["meshRenderer"]["radius"] = 1.0f;
         obj.properties["meshRenderer"]["segments"] = 32;
         obj.material = std::make_shared<Haruka::MaterialComponent>();
         obj.material->albedo = glm::vec3(0.5f, 0.7f, 0.5f);
     } else if (type == "capsule") {
         PrimitiveShapes::createCapsule(0.5f, 2.0f, 24, 16, verts, norms, indices);
-        obj.properties["meshRenderer"]["meshType"] = "capsule";
+        setMeshType(PT::CAPSULE);
         obj.properties["meshRenderer"]["radius"] = 0.5f;
         obj.properties["meshRenderer"]["height"] = 2.0f;
         obj.properties["meshRenderer"]["segments"] = 24;
@@ -189,7 +195,7 @@ void SceneHierarchyPanel::createPrimitive(const std::string& name, const std::st
         obj.scale = glm::dvec3(0.00095f);
     } else if (type == "plane") {
         PrimitiveShapes::createPlane(2.0f, 2.0f, 10, verts, norms, indices);
-        obj.properties["meshRenderer"]["meshType"] = "plane";
+        setMeshType(PT::PLANE);
         obj.properties["meshRenderer"]["width"] = 2.0f;
         obj.properties["meshRenderer"]["height"] = 2.0f;
         obj.properties["meshRenderer"]["subdivisions"] = 10;
@@ -197,7 +203,7 @@ void SceneHierarchyPanel::createPrimitive(const std::string& name, const std::st
         obj.material->albedo = glm::vec3(0.7f, 0.7f, 0.7f);
     } else if (type == "light" || type == "pointlight") {
         PrimitiveShapes::createSphere(0.5f, 16, 16, verts, norms, indices);
-        obj.properties["meshRenderer"]["meshType"] = "sphere";
+        setMeshType(PT::SPHERE);
         obj.properties["meshRenderer"]["radius"] = 0.5f;
         obj.properties["meshRenderer"]["segments"] = 16;
         obj.material = std::make_shared<Haruka::MaterialComponent>();
@@ -206,7 +212,7 @@ void SceneHierarchyPanel::createPrimitive(const std::string& name, const std::st
         obj.intensity = 2.0f;
     } else if (type == "directionallight") {
         PrimitiveShapes::createCube(0.2f, verts, norms, indices);
-        obj.properties["meshRenderer"]["meshType"] = "cube";
+        setMeshType(PT::CUBE);
         obj.properties["meshRenderer"]["size"] = 0.2f;
         obj.material = std::make_shared<Haruka::MaterialComponent>();
         obj.material->albedo = glm::vec3(1.0f, 0.95f, 0.8f);
@@ -214,12 +220,11 @@ void SceneHierarchyPanel::createPrimitive(const std::string& name, const std::st
         obj.intensity = 1.0f;
     } else if (type == "sun") {
         using namespace Haruka::Units;
-        const double sunRadiusKm = STAR_RADIUS_MEDIUM;
-        const double baseMeshRadius = 1.0;
-        const double sunScale = kmToRender(sunRadiusKm) / baseMeshRadius;
-        
+        const double sunRadiusKm = STAR_RADIUS_MEDIUM / KM;
+        const double sunScale = kmToRender(sunRadiusKm);
+
         PrimitiveShapes::createSphere(1.0f, 32, 32, verts, norms, indices);
-        obj.properties["meshRenderer"]["meshType"] = "sphere";
+        setMeshType(PT::SPHERE);
         obj.properties["meshRenderer"]["radius"] = 1.0f;
         obj.properties["meshRenderer"]["segments"] = 32;
         obj.material = std::make_shared<Haruka::MaterialComponent>();
@@ -230,12 +235,11 @@ void SceneHierarchyPanel::createPrimitive(const std::string& name, const std::st
         obj.type = "Light";
     } else if (type == "planet") {
         using namespace Haruka::Units;
-        const double planetRadiusKm = PLANETARY_RADIUS_MEDIUM;
-        const double baseMeshRadius = 1.0;
-        const double planetScale = kmToRender(planetRadiusKm) / baseMeshRadius;
-        
+        const double planetRadiusKm = PLANETARY_RADIUS_MEDIUM / KM; // km value
+        const double planetScale = kmToRender(planetRadiusKm);
+
         PrimitiveShapes::createSphere(1.0f, 48, 48, verts, norms, indices);
-        obj.properties["meshRenderer"]["meshType"] = "sphere";
+        setMeshType(PT::SPHERE);
         obj.properties["meshRenderer"]["radius"] = 1.0f;
         obj.properties["meshRenderer"]["segments"] = 48;
         obj.material = std::make_shared<Haruka::MaterialComponent>();
@@ -243,6 +247,22 @@ void SceneHierarchyPanel::createPrimitive(const std::string& name, const std::st
         obj.color = glm::vec3(0.25f, 0.45f, 1.0f);
         obj.scale = glm::dvec3(planetScale);
         obj.type = "Mesh";
+        obj.properties["terrainEditor"]["isPlanetRoot"] = true;
+        obj.properties["terrainEditor"]["tilesPerFace"] = 8;
+        obj.properties["terrainEditor"]["maxLod"] = 3;
+        obj.properties["terrainEditor"]["generator"]["seed"] = 42;
+        obj.properties["terrainEditor"]["generator"]["baseRadiusKm"] = planetRadiusKm;
+        obj.properties["terrainEditor"]["generator"]["enableContinents"] = true;
+        obj.properties["terrainEditor"]["generator"]["enableMountains"] = true;
+        obj.properties["terrainEditor"]["generator"]["seaLevel"] = 0.52f;
+        obj.properties["terrainEditor"]["generator"]["continentFrequency"] = 1.2f;
+        obj.properties["terrainEditor"]["generator"]["continentHeightStrength"] = 0.08f;
+        obj.properties["terrainEditor"]["generator"]["macroFrequency"] = 3.5f;
+        obj.properties["terrainEditor"]["generator"]["macroHeightStrength"] = 0.15f;
+        obj.properties["terrainEditor"]["generator"]["detailFrequency"] = 12.0f;
+        obj.properties["terrainEditor"]["generator"]["detailHeightStrength"] = 0.03f;
+        obj.properties["terrainEditor"]["generator"]["persistence"] = 0.5f;
+        obj.properties["terrainEditor"]["generator"]["lacunarity"] = 2.0f;
     }
     
     obj.meshRenderer->setMesh(verts, norms, indices);
@@ -387,19 +407,23 @@ void SceneHierarchyPanel::createChildObject(int parentIndex, const std::string& 
     child.meshRenderer = std::make_shared<MeshRendererComponent>();
     std::vector<glm::vec3> verts, norms;
     std::vector<unsigned int> indices;
+    using CPT = Haruka::PrimitiveMeshType;
+    auto setChildMeshType = [&](CPT t) {
+        child.properties["meshRenderer"]["meshType"] = Haruka::primitiveMeshTypeToString(t);
+    };
     if (primitiveType == "Sphere") {
         PrimitiveShapes::createSphere(1.0f, 24, 24, verts, norms, indices);
-        child.properties["meshRenderer"]["meshType"] = "sphere";
+        setChildMeshType(CPT::SPHERE);
         child.properties["meshRenderer"]["radius"] = 1.0f;
         child.properties["meshRenderer"]["segments"] = 24;
     } else if (primitiveType == "Light") {
         PrimitiveShapes::createSphere(0.4f, 16, 16, verts, norms, indices);
-        child.properties["meshRenderer"]["meshType"] = "sphere";
+        setChildMeshType(CPT::SPHERE);
         child.properties["meshRenderer"]["radius"] = 0.4f;
         child.properties["meshRenderer"]["segments"] = 16;
     } else {
         PrimitiveShapes::createCube(1.0f, verts, norms, indices);
-        child.properties["meshRenderer"]["meshType"] = "cube";
+        setChildMeshType(CPT::CUBE);
         child.properties["meshRenderer"]["size"] = 1.0f;
     }
     child.meshRenderer->setMesh(verts, norms, indices);

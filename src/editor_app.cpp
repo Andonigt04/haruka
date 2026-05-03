@@ -95,10 +95,8 @@ void EditorApplication::init() {
     projectBrowserPanel.setProject(currentProject.get());
     projectBrowserPanel.setScene(currentScene.get());
     planetTerrainEditorPanel.setScene(currentScene.get());
-    // Inyectar instancia de PlanetarySystem desde Application
-    if (MotorInstance::getInstance().getApplication()) {
-        planetTerrainEditorPanel.setPlanetarySystem(MotorInstance::getInstance().getApplication()->getPlanetarySystem());
-    }
+    planetarySystem = std::make_unique<Haruka::PlanetarySystem>();
+    planetTerrainEditorPanel.setPlanetarySystem(planetarySystem.get());
     
     // ===== Camera Setup =====
     viewportCamera = std::make_unique<Camera>(Haruka::WorldPos(0.0f, 5.0f, 15.0f));
@@ -846,7 +844,13 @@ void EditorApplication::saveFile(const std::string& path, bool asPrefab) {
 }
 
 void EditorApplication::loadFile(const std::string& path) {
-    // Crear una nueva escena para cargar el archivo
+    // Clear panel scene pointers before destroying the old scene to avoid dangling refs
+    sceneHierarchyPanel.setScene(nullptr);
+    inspectorPanel.setScene(nullptr);
+    viewportPanel.setScene(nullptr);
+    planetTerrainEditorPanel.setScene(nullptr);
+    projectBrowserPanel.setScene(nullptr);
+
     currentScene = std::make_unique<Haruka::Scene>();
 
     if (currentScene->load(path)) {
