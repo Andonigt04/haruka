@@ -418,23 +418,29 @@ void ViewportPanel::renderScene() {
 
     bool useMotorOutput = playMode && !forceLocalRender;
     if (useMotorOutput) {
-        if (motorTarget && motorRenderDirecto) {
-            // El motor ya renderiza directo en este target, no hacer nada más
-            if (statsPanel) {
-                statsPanel->setVertexCount(Application::getLastRenderedVertices());
-                statsPanel->setDrawCalls(Application::getLastRenderedDrawCalls());
-                statsPanel->setTriangleCount(Application::getLastRenderedTriangles());
-                statsPanel->setTotalVertexCount(Application::getLastTotalVertices());
-                statsPanel->setTotalDrawCalls(Application::getLastTotalDrawCalls());
-                statsPanel->setTotalTriangleCount(Application::getLastTotalTriangles());
-                statsPanel->setVisibleChunkCount(Application::getLastVisibleChunks());
-                statsPanel->setResidentChunkCount(Application::getLastResidentChunks());
-                statsPanel->setPendingChunkLoads(Application::getLastPendingChunkLoads());
-                statsPanel->setPendingChunkEvictions(Application::getLastPendingChunkEvictions());
-                statsPanel->setResidentMemoryMB(Application::getLastResidentMemoryMB());
-                statsPanel->setTrackedChunkCount(Application::getLastTrackedChunks());
-                statsPanel->setMaxMemoryMB(Application::getLastMaxMemoryMB());
+        Application* motorApp = ownedApplication
+            ? ownedApplication.get()
+            : MotorInstance::getInstance().getApplication();
+        auto pushMotorStats = [&]() {
+            if (!statsPanel) return;
+            if (motorApp) {
+                statsPanel->setVertexCount(motorApp->getRenderedVertices());
+                statsPanel->setDrawCalls(motorApp->getRenderedDrawCalls());
+                statsPanel->setTriangleCount(motorApp->getRenderedTriangles());
+                statsPanel->setTotalVertexCount(motorApp->getTotalVertices());
+                statsPanel->setTotalDrawCalls(motorApp->getTotalDrawCalls());
+                statsPanel->setTotalTriangleCount(motorApp->getTotalTriangles());
+                statsPanel->setVisibleChunkCount(motorApp->getVisibleChunks());
+                statsPanel->setResidentChunkCount(motorApp->getResidentChunks());
+                statsPanel->setPendingChunkLoads(motorApp->getPendingChunkLoads());
+                statsPanel->setPendingChunkEvictions(motorApp->getPendingChunkEvictions());
+                statsPanel->setResidentMemoryMB(motorApp->getResidentMemoryMB());
+                statsPanel->setTrackedChunkCount(motorApp->getTrackedChunks());
+                statsPanel->setMaxMemoryMB(motorApp->getMaxMemoryMB());
             }
+        };
+        if (motorTarget && motorRenderDirecto) {
+            pushMotorStats();
             return;
         } else if (motorTarget) {
             // Copiar textura del motor al renderTarget del viewport
@@ -442,21 +448,7 @@ void ViewportPanel::renderScene() {
             glBindFramebuffer(GL_DRAW_FRAMEBUFFER, renderTarget->getFBO());
             glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL_COLOR_BUFFER_BIT, GL_LINEAR);
             glBindFramebuffer(GL_FRAMEBUFFER, 0);
-            if (statsPanel) {
-                statsPanel->setVertexCount(Application::getLastRenderedVertices());
-                statsPanel->setDrawCalls(Application::getLastRenderedDrawCalls());
-                statsPanel->setTriangleCount(Application::getLastRenderedTriangles());
-                statsPanel->setTotalVertexCount(Application::getLastTotalVertices());
-                statsPanel->setTotalDrawCalls(Application::getLastTotalDrawCalls());
-                statsPanel->setTotalTriangleCount(Application::getLastTotalTriangles());
-                statsPanel->setVisibleChunkCount(Application::getLastVisibleChunks());
-                statsPanel->setResidentChunkCount(Application::getLastResidentChunks());
-                statsPanel->setPendingChunkLoads(Application::getLastPendingChunkLoads());
-                statsPanel->setPendingChunkEvictions(Application::getLastPendingChunkEvictions());
-                statsPanel->setResidentMemoryMB(Application::getLastResidentMemoryMB());
-                statsPanel->setTrackedChunkCount(Application::getLastTrackedChunks());
-                statsPanel->setMaxMemoryMB(Application::getLastMaxMemoryMB());
-            }
+            pushMotorStats();
             return;
         } else {
             // Sin render target del motor: mantener el viewport sin renderizar la ruta local inestable.
@@ -502,7 +494,6 @@ void ViewportPanel::renderScene() {
                   << " rtPtr=" << renderTarget.get()
                   << " motorRT=" << MotorInstance::getInstance().getRenderTarget()
                   << " ownedApp=" << (bool)ownedApplication
-                  << " lastVerts=" << Application::getLastRenderedVertices()
                   << " camPos=(" << (camera ? camera->position.x : 0) << ","
                                  << (camera ? camera->position.y : 0) << ","
                                  << (camera ? camera->position.z : 0) << ")\n"
