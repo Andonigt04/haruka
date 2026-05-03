@@ -371,6 +371,14 @@ void ViewportPanel::renderScene() {
     renderVertex_count = 0;
     renderDraw_calls = 0;
 
+    // --- Variables unificadas de estadísticas ---
+    int localDrawCalls = 0;
+    int localVertices = 0;
+    int localTriangles = 0;
+    int totalVertices = 0;
+    int totalTriangles = 0;
+    int totalDrawCalls = 0;
+
     // --- Render del motor vs render local ---
     // Si quieres forzar render local en el editor, usa esta bandera:
     #ifdef HARUKA_EDITOR
@@ -388,6 +396,7 @@ void ViewportPanel::renderScene() {
     bool motorTieneCam = (MotorInstance::getInstance().getCamera() != nullptr);
     bool motorRenderDirecto = (motorTarget && (motorTarget == renderTarget.get()));
 
+    // Función lambda para calcular totales de la escena en memoria
     auto computeSceneStats = [&](int& outVertices, int& outTriangles, int& outDrawCalls) {
         outVertices = 0;
         outTriangles = 0;
@@ -471,14 +480,10 @@ void ViewportPanel::renderScene() {
         }
     }
 
+    // Calculamos el total de la escena (si hay escena)
+    computeSceneStats(totalVertices, totalTriangles, totalDrawCalls);
+
     // Render local (editor o fallback).
-    // engineActiveThisFrame: the engine is wired up and has rendered to OUR target.
-    // When active, preserve the engine's colour+depth output instead of clearing.
-    // When inactive (no app or wrong render target), clear to the editor background.
-    // The test cube is ALWAYS drawn so the user always has a GL sanity indicator.
-    // Depth testing naturally hides it behind scene objects when the camera is
-    // outside them; when the camera is inside a huge body (e.g. planet) the cube
-    // at origin is closer and therefore always wins the depth test, confirming GL.
     const bool engineActiveThisFrame =
         !playMode &&
         renderTarget != nullptr &&
@@ -512,65 +517,6 @@ void ViewportPanel::renderScene() {
         glClearColor(0.05f, 0.05f, 0.08f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     }
-
-    int localDrawCalls = 0;
-    int localVertices = 0;
-    int localTriangles = 0;
-    int totalVertices = 0;
-    int totalTriangles = 0;
-    int totalDrawCalls = 0;
-    computeSceneStats(totalVertices, totalTriangles, totalDrawCalls);
-
-    // ── Test cube: only when no scene is loaded (default/empty state) ──
-    if (!currentScene || currentScene->getObjects().empty()) {
-        if (!editorCubeProgram) {
-            static const char* kVert = R"(
-#version 460 core
-layout(location = 0) in vec3 aPos;
-layout(location = 1) in vec3 aNormal;
-uniform mat4 uMVP;
-uniform mat4 uModel;
-out vec3 vNormal;
-void main() {
-    vNormal = mat3(transpose(inverse(uModel))) * aNormal;
-    gl_Position = uMVP * vec4(aPos, 1.0);
-}
-)";
-            static const char* kFrag = R"(
-#version 460 core
-in vec3 vNormal;
-out vec4 fragColor;
-void main() {
-    vec3 lightDir = normalize(vec3(0.4, 0.8, 0.5));
-    float diff = max(dot(normalize(vNormal), lightDir), 0.0) * 0.7 + 0.3;
-    fragColor = vec4(vec3(0.6, 0.8, 1.0) * diff, 1.0);
-}
-)";
-            editorCubeProgram = compileInlineGLSL(kVert, kFrag);
-        }
-        if (editorCubeProgram) {
-            glm::mat4 proj = glm::perspective(glm::radians(60.0f),
-                                              (float)width / (float)height, 0.1f, 10000.0f);
-            glm::mat4 view = camera ? camera->getViewMatrix()
-                                    : glm::lookAt(glm::vec3(0,2,8), glm::vec3(0,0,0), glm::vec3(0,1,0));
-            glm::mat4 model = glm::mat4(1.0f);
-            glm::mat4 mvp = proj * view * model;
-
-            glUseProgram(editorCubeProgram);
-            glUniformMatrix4fv(glGetUniformLocation(editorCubeProgram, "uMVP"),   1, GL_FALSE, glm::value_ptr(mvp));
-            glUniformMatrix4fv(glGetUniformLocation(editorCubeProgram, "uModel"), 1, GL_FALSE, glm::value_ptr(model));
-
-            if (!editorTestCube) {
-                std::vector<glm::vec3> v, n;
-                std::vector<unsigned int> idx;
-                PrimitiveShapes::createCube(1.0f, v, n, idx);
-                editorTestCube = std::make_unique<SimpleMesh>(v, n, idx);
-            }
-            glEnable(GL_DEPTH_TEST);
-            editorTestCube->draw();
-            localDrawCalls++;
-        }
-    } // end test cube block
 
     if (currentScene) {
         glm::dvec3 camPos = camera ? glm::dvec3(camera->position) : glm::dvec3(0.0);
@@ -754,8 +700,7 @@ void main() {
                 int tilesY = te.value("chunkTilesY", 1);
                 if (tilesX <= 0 || tilesY <= 0) return true;
 
-                // Compute the cube-sphere direction for this tile's center (same mapping
-                // as generateChunkInternal) so the facing test is geometrically correct.
+                // Compute the cube-sphere direction for this tile's center
                 float u = (static_cast<float>(tileX) + 0.5f) / static_cast<float>(tilesX) * 2.0f - 1.0f;
                 float v = (static_cast<float>(tileY) + 0.5f) / static_cast<float>(tilesY) * 2.0f - 1.0f;
                 glm::vec3 cube;
@@ -809,6 +754,7 @@ void main() {
                 }
                 if (obj.meshRenderer && obj.meshRenderer->isResident()) {
                     obj.meshRenderer->render(*sceneShader);
+                    // Acumulamos solo si se renderiza
                     localDrawCalls++;
                     localVertices += obj.meshRenderer->getResidentVertexCount();
                     localTriangles += obj.meshRenderer->getResidentTriangleCount();
@@ -819,6 +765,7 @@ void main() {
                         auto model = getOrLoadModelCached(obj.modelPath);
                         if (model) {
                             model->Draw(*sceneShader);
+                            // Acumulamos solo si se renderiza
                             localDrawCalls++;
                             localVertices += model->getVertexCount();
                             localTriangles += model->getTriangleCount();
@@ -869,31 +816,25 @@ void main() {
     renderTarget->unbind();
     renderDraw_calls = localDrawCalls;
     renderVertex_count = localVertices;
+
+    // Actualización del panel de estadísticas
     if (statsPanel) {
         Application* app = ownedApplication
             ? ownedApplication.get()
             : MotorInstance::getInstance().getApplication();
+            
         if (engineActiveThisFrame && app) {
-            // Read from instance members — the inline statics live in separate
-            // copies in the editor and engine binaries, so the statics always
-            // read 0 here. Instance members on the Application object are shared
-            // through the pointer and give the real values.
+            // Datos del motor
             statsPanel->setVertexCount(app->getRenderedVertices());
             statsPanel->setDrawCalls(app->getRenderedDrawCalls());
             statsPanel->setTriangleCount(app->getRenderedTriangles());
             statsPanel->setTotalVertexCount(app->getTotalVertices());
             statsPanel->setTotalDrawCalls(app->getTotalDrawCalls());
             statsPanel->setTotalTriangleCount(app->getTotalTriangles());
-            statsPanel->setVisibleChunkCount(app->getVisibleChunks());
-            statsPanel->setResidentChunkCount(app->getResidentChunks());
-            statsPanel->setPendingChunkLoads(app->getPendingChunkLoads());
-            statsPanel->setPendingChunkEvictions(app->getPendingChunkEvictions());
-            statsPanel->setResidentMemoryMB(app->getResidentMemoryMB());
-            statsPanel->setTrackedChunkCount(app->getTrackedChunks());
-            statsPanel->setMaxMemoryMB(app->getMaxMemoryMB());
         } else {
-            statsPanel->setVertexCount(renderVertex_count);
-            statsPanel->setDrawCalls(renderDraw_calls);
+            // Datos calculados localmente en este render pass
+            statsPanel->setVertexCount(localVertices);
+            statsPanel->setDrawCalls(localDrawCalls);
             statsPanel->setTriangleCount(localTriangles);
             statsPanel->setTotalVertexCount(totalVertices);
             statsPanel->setTotalDrawCalls(totalDrawCalls);
@@ -949,30 +890,30 @@ void ViewportPanel::onImGuiRender() {
     // Panel superior en una sola fila
     if (camera) {
         glm::vec3 pos = glm::vec3(camera->position);
-        ImGui::SetNextItemWidth(100);
+        ImGui::SetNextItemWidth(200);
         if (ImGui::InputFloat3("Pos##cam", &pos.x, "%.1f")) {
             camera->position = Haruka::WorldPos(pos.x, pos.y, pos.z);
         }
-        ImGui::SameLine(140);
+        ImGui::SameLine(340);
         
         ImGui::SetNextItemWidth(80);
         ImGui::DragFloat("Yaw##cam", &camYaw, 1.0f, -180.0f, 180.0f, "%.0f°");
-        ImGui::SameLine(240);
-        
-        ImGui::SetNextItemWidth(80);
-        ImGui::DragFloat("Pitch##cam", &camPitch, 1.0f, -90.0f, 90.0f, "%.0f°");
-        ImGui::SameLine(340);
-        
-        ImGui::SetNextItemWidth(70);
-        ImGui::SliderFloat("Speed##cam", &moveSpeed, 0.1f, 20.0f, "%.1f");
         ImGui::SameLine(430);
         
         ImGui::SetNextItemWidth(80);
+        ImGui::DragFloat("Pitch##cam", &camPitch, 1.0f, -90.0f, 90.0f, "%.0f°");
+        ImGui::SameLine(510);
+        
+        ImGui::SetNextItemWidth(70);
+        ImGui::SliderFloat("Speed##cam", &moveSpeed, 0.1f, 20.0f, "%.1f");
+        ImGui::SameLine(580);
+        
+        ImGui::SetNextItemWidth(80);
         ImGui::SliderFloat("Sens##cam", &mouseSensitivity, 0.01f, 0.5f, "%.2f");
-        ImGui::SameLine(530);
+        ImGui::SameLine(660);
         
         ImGui::Checkbox("Grid##show", &showGrid);
-        ImGui::SameLine(600);
+        ImGui::SameLine(670);
         ImGui::TextDisabled("50x50m | MB3:Rotate | WASD:Move");
     }
     
