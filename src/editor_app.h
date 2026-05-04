@@ -5,6 +5,8 @@
 #include "core/scene.h"
 #include "core/camera.h"
 #include "core/game_interface.h"
+#include "core/event_manager.h"
+#include "core/events.h"
 #include "panels/scene_hierarchy.h"
 #include "panels/inspector.h"
 #include "panels/project_browser.h"
@@ -134,6 +136,7 @@ private:
     Haruka::GameInterface* gameInterface = nullptr;
 
     CommandHistory commandHistory;
+    Haruka::EventManager eventManager;
     
     Haruka::WorldPos editorCamPos{};
     Haruka::Rotation editorCamRot{};
@@ -149,6 +152,8 @@ private:
 
     /** @brief Creates a new project at the given base path. */
     void createNewProject(const std::string& name, const std::string& basePath);
+    /** @brief Drains EventManager queue and applies each event to the scene + CommandHistory. */
+    void processEditorEvents();
 
     std::unique_ptr<Haruka::PlanetarySystem> planetarySystem;
     bool runningPlanetarySystem = false;

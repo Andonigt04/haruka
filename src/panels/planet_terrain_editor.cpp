@@ -1082,6 +1082,7 @@ void PlanetTerrainEditorPanel::finalizeSplitTask() {
     if (Haruka::SceneObject* source = currentScene->getObject(splitTask.sourceName)) {
         source->properties["terrainEditor"]["disableRender"] = hideSourceAfterChunking;
         source->properties["terrainEditor"]["chunked"] = true;
+        source->properties["terrainEditor"]["isPlanetRoot"] = true;
         source->properties["terrainEditor"]["chunkTilesY"] = latSections;
         source->properties["terrainEditor"]["chunkTilesX"] = lonSections;
         source->properties["terrainEditor"]["chunkFace"] = 0;

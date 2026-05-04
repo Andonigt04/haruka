@@ -25,8 +25,6 @@ private:
     void renderFileMenu();
     /** @brief Renders edit menu items. */
     void renderEditMenu();
-    /** @brief Renders object creation/management menu items. */
-    void renderObjectsMenu();
     /** @brief Renders view/panel visibility menu items. */
     void renderViewMenu();
     /** @brief Renders play/pause controls. */

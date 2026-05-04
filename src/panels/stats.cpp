@@ -35,15 +35,21 @@ void StatsPanel::onImGuiRender() {
 
     ImGui::Separator();
     ImGui::Text("Rendering");
-    ImGui::BulletText("Verts:  %d", renderedVertexCount);
-    ImGui::BulletText("Tris:   %d", renderedTriangleCount);
-    ImGui::BulletText("Draws:  %d", renderedDrawCalls);
+    ImGui::BulletText("Verts:  %d/%d", renderedVertexCount, totalVertexCount);
+    ImGui::BulletText("Tris:   %d/%d", renderedTriangleCount, totalTriangleCount);
+    ImGui::BulletText("Draws:  %d/%d", renderedDrawCalls, totalDrawCalls);
 
+    
     ImGui::Separator();
     ImGui::Text("Terrain");
     ImGui::BulletText("Visible:  %d", visibleChunkCount);
     ImGui::BulletText("Resident: %d", residentChunkCount);
-    ImGui::BulletText("Memory:   %d MB", residentMemoryMB);
+    ImGui::BulletText("Pending Loads: %d", pendingChunkLoads);
+    ImGui::BulletText("Pending Evictions: %d", pendingChunkEvictions);
+    ImGui::BulletText("Tracked: %d", trackedChunkCount);
+    ImGui::Separator();
+    ImGui::Text("Memory");
+    ImGui::BulletText("Resident: %d/%d MB", residentMemoryMB, maxMemoryMB);
 
     ImGui::End();
 }

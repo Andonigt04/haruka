@@ -5,6 +5,8 @@
 #include <glm/gtx/intersect.hpp>
 #include <algorithm>
 #include "commands/scene_commands.h"
+#include "core/events.h"
+#include <nlohmann/json.hpp>
 #include <ImGuizmo.h>
 #include <glm/gtc/type_ptr.hpp>
 
@@ -48,69 +50,7 @@ bool isRenderDisabledByEditor(const Haruka::SceneObject& obj) {
     return te.value("disableRender", false);
 }
 
-void buildPrimitiveMeshFromProperties(Haruka::SceneObject& obj) {
-    if (!obj.meshRenderer) {
-        obj.meshRenderer = std::make_shared<MeshRendererComponent>();
-    }
-    if (!obj.meshRenderer || obj.meshRenderer->isResident()) return;
-    if (!obj.properties.contains("meshRenderer")) return;
-
-    const auto& mr = obj.properties["meshRenderer"];
-    std::string meshType = mr.value("meshType", "");
-    std::vector<glm::vec3> verts, norms;
-    std::vector<unsigned int> indices;
-
-    if (meshType == "cube") {
-        PrimitiveShapes::createCube(mr.value("size", 1.0f), verts, norms, indices);
-    } else if (meshType == "sphere") {
-        float radius = mr.value("radius", 1.0f);
-        int segments = mr.value("segments", 32);
-        PrimitiveShapes::createSphere(radius, segments, segments, verts, norms, indices);
-    } else if (meshType == "capsule") {
-        PrimitiveShapes::createCapsule(
-            mr.value("radius", 0.5f),
-            mr.value("height", 2.0f),
-            mr.value("segments", 24),
-            mr.value("stacks", 16),
-            verts, norms, indices);
-    } else if (meshType == "plane") {
-        PrimitiveShapes::createPlane(
-            mr.value("width", 2.0f),
-            mr.value("height", 2.0f),
-            mr.value("subdivisions", 10),
-            verts, norms, indices);
-    }
-
-    if (!verts.empty()) {
-        obj.meshRenderer->setMesh(verts, norms, indices);
-    }
-}
-
-void maybeReleasePrimitiveMesh(Haruka::SceneObject& obj) {
-    if (obj.meshRenderer && obj.meshRenderer->isResident()) {
-        obj.meshRenderer->releaseMesh();
-    }
-}
-
-std::shared_ptr<Model> getOrLoadModelCached(const std::string& path) {
-    auto it = g_modelCache.find(path);
-    if (it != g_modelCache.end()) {
-        return it->second;
-    }
-
-    try {
-        auto model = std::make_shared<Model>(path);
-        g_modelCache[path] = model;
-        return model;
-    } catch (...) {
-        return nullptr;
-    }
-}
-
-void releaseModelFromCache(const std::string& path) {
-    g_modelCache.erase(path);
-}
-}
+} // namespace
 
 ViewportPanel::ViewportPanel()
     : editorWorldSystem(std::make_unique<Haruka::WorldSystem>())
@@ -118,12 +58,7 @@ ViewportPanel::ViewportPanel()
     , editorPlanetarySystem(std::make_unique<Haruka::PlanetarySystem>())
 {}
 
-ViewportPanel::~ViewportPanel() {
-    if (editorCubeProgram) {
-        glDeleteProgram(editorCubeProgram);
-        editorCubeProgram = 0;
-    }
-}
+ViewportPanel::~ViewportPanel() {};
 
 void ViewportPanel::setScene(Haruka::Scene* scene) {
     currentScene = scene;
@@ -334,36 +269,31 @@ void ViewportPanel::handleGizmoInput() {
 }
 
 void ViewportPanel::handleAssetDrop() {
-    if (ImGui::BeginDragDropTarget()) {
-        if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("ASSET_PATH")) {
-            std::string assetPath = (const char*)payload->Data;
-            
-            // Soportar múltiples formatos de modelo
-            bool isModel = (assetPath.find(".obj") != std::string::npos ||
-                           assetPath.find(".gltf") != std::string::npos ||
-                           assetPath.find(".glb") != std::string::npos ||
-                           assetPath.find(".fbx") != std::string::npos);
-            
-            if (currentScene && isModel) {
-                Haruka::SceneObject obj;
-                obj.name = "Model_" + std::to_string(currentScene->getObjects().size());
-                obj.type = "Model";
-                obj.modelPath = assetPath;
-                obj.position = glm::vec3(0, 0, 0);
-                obj.rotation = glm::vec3(0, 0, 0);
-                obj.scale = glm::vec3(1, 1, 1);
-                
-                if (commandHistory) {
-                    commandHistory->execute(std::make_unique<AddObjectCommand>(currentScene, obj));
-                } else {
-                    currentScene->addObject(obj);
-                }
-                
-                std::cout << "Model added: " << assetPath << std::endl;
-            }
+    if (!ImGui::BeginDragDropTarget()) return;
+
+    if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("ASSET_PATH")) {
+        std::string assetPath = (const char*)payload->Data;
+
+        bool isModel = assetPath.find(".obj")  != std::string::npos ||
+                       assetPath.find(".gltf") != std::string::npos ||
+                       assetPath.find(".glb")  != std::string::npos ||
+                       assetPath.find(".fbx")  != std::string::npos;
+
+        if (isModel && eventManager) {
+            nlohmann::json data;
+            data["modelPath"]   = assetPath;
+            data["parentIndex"] = -1;
+            std::string objName = "Model_" +
+                std::to_string(currentScene ? currentScene->getObjects().size() : 0);
+
+            eventManager->post(std::make_shared<Haruka::ObjectEvent>(
+                objName, "Model", Haruka::ObjectEvent::ActionType::Created, data));
+            eventManager->post(std::make_shared<Haruka::LogEvent>(
+                Haruka::LogEvent::Level::Info, "Drop model: " + assetPath));
         }
-        ImGui::EndDragDropTarget();
     }
+
+    ImGui::EndDragDropTarget();
 }
 
 void ViewportPanel::renderScene() {
@@ -579,9 +509,31 @@ void ViewportPanel::renderScene() {
 
             glm::vec3 sunDir = glm::normalize(sunPos);
             glm::mat4 cameraView = camera ? camera->getViewMatrix() : glm::lookAt(glm::vec3(0.0f, 2.0f, 8.0f), glm::vec3(0.0f), glm::vec3(0, 1, 0));
-            float camDist = camera ? glm::length(glm::vec3(camera->position)) : 1000.0f;
-            float nearPlane = std::clamp(camDist * 0.001f, 0.5f, 20.0f);
-            float farPlane = std::max(200000.0f, camDist * 400.0f);
+
+            // Dynamic near/far based on altitude above planet surface.
+            // Reduces far/near ratio at orbital distances for better depth precision.
+            float nearPlane = 0.1f;
+            float farPlane = 300000000000.0f;
+            {
+                float vpPlanetRadius = 0.0f;
+                glm::dvec3 vpPlanetCenter(0.0);
+                for (const auto& o : currentScene->getObjects()) {
+                    if (!o.properties.is_object() || !o.properties.contains("terrainEditor")) continue;
+                    if (!o.properties["terrainEditor"].value("isPlanetRoot", false)) continue;
+                    vpPlanetCenter = o.getWorldPosition(currentScene);
+                    glm::vec3 sc = glm::vec3(o.scale);
+                    vpPlanetRadius = glm::length(sc) / std::sqrt(3.0f);
+                    break;
+                }
+                if (vpPlanetRadius > 1.0f && camera) {
+                    double distToCenter = glm::length(camera->position - vpPlanetCenter);
+                    double altitude = std::max(0.0, distToCenter - (double)vpPlanetRadius);
+                    nearPlane = (float)std::max(0.1, altitude * 0.001);
+                } else if (camera) {
+                    float camDist = glm::length(glm::vec3(camera->position));
+                    nearPlane = std::max(0.1f, camDist * 0.001f);
+                }
+            }
             if (currentScene && currentScene->getObject("Sun")) {
                 const auto* sunObj = currentScene->getObject("Sun");
                 glm::vec3 sunPosObj = glm::vec3(sunObj->getWorldPosition(currentScene));
@@ -724,15 +676,7 @@ void ViewportPanel::renderScene() {
                 if (!isChunkFacingCamera(obj)) continue;
                 int layer = std::clamp(obj.renderLayer, 1, 5);
                 double unloadDistance = Application::getLayerMaxDistance(layer);
-                if (obj.meshRenderer && layer >= 4) {
-                    glm::dvec3 worldPos = obj.getWorldPosition(currentScene);
-                    double dist = glm::length(worldPos - camPos);
-                    if (dist > unloadDistance * 1.15) {
-                        maybeReleasePrimitiveMesh(obj);
-                    } else if (!obj.meshRenderer->isResident() && dist < unloadDistance * 0.85) {
-                        buildPrimitiveMeshFromProperties(obj);
-                    }
-                }
+                // Mesh LOD build/release is handled by the engine; viewport only renders resident meshes.
 
                 glm::mat4 modelMatrix = obj.getWorldTransform(currentScene);
                 sceneShader->setMat4("model", modelMatrix);
@@ -1013,7 +957,19 @@ bool ViewportPanel::rayIntersectsAxis(const glm::vec3& rayOrigin, const glm::vec
 }
 
 Model* ViewportPanel::getOrLoadModel(const std::string& path) {
-    return nullptr;
+    return getOrLoadModelCached(path);
+}
+
+Model* ViewportPanel::getOrLoadModelCached(const std::string& path) {
+    auto it = g_modelCache.find(path);
+    if (it != g_modelCache.end()) return it->second.get();
+    try {
+        auto model = std::make_shared<Model>(path);
+        g_modelCache[path] = model;
+        return model.get();
+    } catch (...) {
+        return nullptr;
+    }
 }
 
 void ViewportPanel::renderGrid(const glm::mat4& view, const glm::mat4& proj) {}

@@ -3,94 +3,66 @@
 #include "command.h"
 #include "core/scene.h"
 #include <string>
+#include <glm/glm.hpp>
 
-/** @brief Command that adds one object to a scene. */
+// Adds one object to the scene; undo removes it by name.
 class AddObjectCommand : public ICommand {
 public:
-    /** @brief Stores the target scene and object snapshot. */
-    AddObjectCommand(Haruka::Scene* scene, const Haruka::SceneObject& obj)
-        : scene(scene), object(obj) {}
-    
-    /** @brief Adds the object to the scene. */
-    void execute() override {
-        scene->addObject(object);
-    }
-    
-    /** @brief Removes the object from the scene. */
-    void undo() override {
-        scene->removeObject(object.name);
-    }
+    AddObjectCommand(Haruka::Scene* scene, Haruka::SceneObject obj)
+        : scene_(scene), obj_(std::move(obj)) {}
+
+    void execute() override { scene_->addObject(obj_); }
+    void undo()    override { scene_->removeObject(obj_.name); }
 
 private:
-    Haruka::Scene* scene;
-    Haruka::SceneObject object;
+    Haruka::Scene* scene_;
+    Haruka::SceneObject obj_;
 };
 
-/** @brief Command that deletes one object from a scene. */
+// Removes an object by name; undo re-adds it.
 class DeleteObjectCommand : public ICommand {
 public:
-    /** @brief Stores the scene and object name, capturing a backup copy if found. */
-    DeleteObjectCommand(Haruka::Scene* scene, const std::string& name)
-        : scene(scene), objectName(name) {
-        // Capture object snapshot before deletion
-        auto* obj = scene->getObject(name);
-        if (obj) savedObject = *obj;
-    }
-    
-    /** @brief Deletes the object by name. */
+    DeleteObjectCommand(Haruka::Scene* scene, std::string name)
+        : scene_(scene), name_(std::move(name)) {}
+
     void execute() override {
-        scene->removeObject(objectName);
+        auto* o = scene_->getObject(name_);
+        if (o) backup_ = *o;
+        scene_->removeObject(name_);
     }
-    
-    /** @brief Restores the previously saved object snapshot. */
     void undo() override {
-        scene->addObject(savedObject);
+        if (!backup_.name.empty()) scene_->addObject(backup_);
     }
 
 private:
-    Haruka::Scene* scene;
-    std::string objectName;
-    Haruka::SceneObject savedObject;
+    Haruka::Scene* scene_;
+    std::string name_;
+    Haruka::SceneObject backup_;
 };
 
-/** @brief Command that modifies object transform. */
+// Records a transform change; undo restores the previous transform.
 class TransformObjectCommand : public ICommand {
 public:
-    /** @brief Captures old/new transform state for undo/redo. */
-    TransformObjectCommand(Haruka::Scene* scene, const std::string& name,
-                          const glm::vec3& newPos, const glm::vec3& newRot, const glm::vec3& newScale)
-        : scene(scene), objectName(name), newPosition(newPos), newRotation(newRot), newScale(newScale) {
-        auto* obj = scene->getObject(name);
-        if (obj) {
-            oldPosition = obj->position;
-            oldRotation = obj->rotation;
-            oldScale = obj->scale;
-        }
-    }
-    
-    /** @brief Applies the new transform values. */
+    TransformObjectCommand(Haruka::Scene* scene, std::string name,
+                           glm::dvec3 newPos, glm::dvec3 newRot, glm::dvec3 newScale)
+        : scene_(scene), name_(std::move(name)),
+          newPos_(newPos), newRot_(newRot), newScale_(newScale) {}
+
     void execute() override {
-        auto* obj = scene->getObject(objectName);
-        if (obj) {
-            obj->position = newPosition;
-            obj->rotation = newRotation;
-            obj->scale = newScale;
-        }
+        auto* o = scene_->getObject(name_);
+        if (!o) return;
+        oldPos_   = o->position; oldRot_   = o->rotation; oldScale_ = o->scale;
+        o->position = newPos_;   o->rotation = newRot_;   o->scale  = newScale_;
     }
-    
-    /** @brief Restores the original transform values. */
     void undo() override {
-        auto* obj = scene->getObject(objectName);
-        if (obj) {
-            obj->position = oldPosition;
-            obj->rotation = oldRotation;
-            obj->scale = oldScale;
-        }
+        auto* o = scene_->getObject(name_);
+        if (!o) return;
+        o->position = oldPos_; o->rotation = oldRot_; o->scale = oldScale_;
     }
 
 private:
-    Haruka::Scene* scene;
-    std::string objectName;
-    glm::vec3 oldPosition, oldRotation, oldScale;
-    glm::vec3 newPosition, newRotation, newScale;
+    Haruka::Scene* scene_;
+    std::string name_;
+    glm::dvec3 newPos_, newRot_, newScale_;
+    glm::dvec3 oldPos_{}, oldRot_{}, oldScale_{};
 };

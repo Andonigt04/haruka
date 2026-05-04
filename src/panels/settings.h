@@ -3,7 +3,12 @@
 #include <imgui.h>
 #include <string>
 #include <unordered_map>
-
+/*
+* @file settings.h
+* @brief Defines the SettingsPanel class for managing editor settings and preferences.
+* This panel allows users to configure graphics options, editor behavior, render quality, and project settings.
+* TODO: For the moment does not work.
+*/
 class SettingsPanel {
 public:
     /** @brief Constructs settings panel with default values. */

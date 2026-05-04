@@ -1,7 +1,7 @@
 #define GLM_ENABLE_EXPERIMENTAL
 #include "scene_hierarchy.h"
-#include "core/error_reporter.h"
-#include "core/math_types.h"
+#include "core/events.h"
+#include "core/primitive_types.h"
 
 #include "renderer/primitive_shapes.h"
 #include "core/object_types.h"
@@ -13,132 +13,100 @@
 #include <cstdint>
 #include <algorithm>
 #include <cctype>
-#include <glm/gtc/matrix_transform.hpp>
-#include <glm/gtx/matrix_decompose.hpp>
-#include <glm/gtx/quaternion.hpp>
+#include <iostream>
+#include <cstdlib>
 
-namespace {
-glm::mat4 composeLocalTransform(const glm::dvec3& position, const glm::dvec3& rotation, const glm::dvec3& scale) {
-    // Usar dmat4 para mantener precisión durante la composición
-    // (especialmente importante con valores en metros en lugar de km)
-    glm::dmat4 transform(1.0);
-    transform = glm::translate(transform, position);
-    transform = glm::rotate(transform, glm::radians(rotation.x), glm::dvec3(1, 0, 0));
-    transform = glm::rotate(transform, glm::radians(rotation.y), glm::dvec3(0, 1, 0));
-    transform = glm::rotate(transform, glm::radians(rotation.z), glm::dvec3(0, 0, 1));
-    transform = glm::scale(transform, scale);
-    // Convertir a float32 solo al final
-    return glm::mat4(transform);
+// ---------------------------------------------------------------------------
+// createPrimitive — posts a minimal Created event; engine applies defaults
+// ---------------------------------------------------------------------------
+
+void SceneHierarchyPanel::createPrimitive(const std::string& name,
+                                          const std::string& type,
+                                          int parentIndex)
+{
+    if (!eventManager) {
+        std::cerr << "[SceneHierarchy] No EventManager — cannot create " << name << "\n";
+        return;
+    }
+
+    nlohmann::json data;
+    data["parentIndex"] = parentIndex; // -1 = root
+
+    std::string objName = name + "_" + std::to_string(rand() & 0xFFFF);
+
+    eventManager->post(std::make_shared<Haruka::ObjectEvent>(
+        objName, type, Haruka::ObjectEvent::ActionType::Created, data));
+    eventManager->post(std::make_shared<Haruka::LogEvent>(
+        Haruka::LogEvent::Level::Info, "Create requested: " + objName + " [" + type + "]"));
 }
 
-void decomposeTransform(const glm::mat4& transform, glm::dvec3& position, glm::dvec3& rotation, glm::dvec3& scale) {
-    glm::vec3 skew;
-    glm::vec4 perspective;
-    glm::vec3 translation;
-    glm::quat orientation;
-    glm::vec3 localScale;
-
-    glm::decompose(transform, localScale, orientation, translation, skew, perspective);
-    position = glm::dvec3(translation);
-    scale = glm::dvec3(localScale);
-    rotation = glm::dvec3(glm::degrees(glm::eulerAngles(orientation)));
-}
-}
-
-void SceneHierarchyPanel::setScene(Haruka::Scene* scene) {
-    currentScene = scene;
-}
-
-void SceneHierarchyPanel::setSelectedObjectIndex(int index) {
-    selectedObjectIndex = index;
-}
-
-void SceneHierarchyPanel::setCommandHistory(CommandHistory* history) {
-    commandHistory = history;
-}
+// ---------------------------------------------------------------------------
+// onImGuiRender
+// ---------------------------------------------------------------------------
 
 void SceneHierarchyPanel::onImGuiRender() {
     ImGui::Begin("Scene Hierarchy");
-    
-    // Botón + para abrir navegador de objetos
+
     if (ImGui::Button("+##AddObject", ImVec2(40, 0))) {
         showObjectBrowser = true;
         objectSearchBuffer[0] = '\0';
     }
-    
     ImGui::SameLine();
-    if (ImGui::Button("Cube", ImVec2(-1, 0))) {
-        createPrimitive("Cube", "cube");
-    }
-    
-    // Modal de búsqueda y selección de objetos
-    if (showObjectBrowser) {
-        ImGui::OpenPopup("Object Browser##Modal");
-    }
-    
-    if (ImGui::BeginPopupModal("Object Browser##Modal", &showObjectBrowser, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::Text("Buscar objeto:");
-        ImGui::InputText("##ObjectSearch", objectSearchBuffer, sizeof(objectSearchBuffer));
+    if (ImGui::Button("Cube", ImVec2(-1, 0)))
+        createPrimitive("Cube", PrimitiveType::Cube);
+
+    if (showObjectBrowser) ImGui::OpenPopup("Object Browser##Modal");
+
+    if (ImGui::BeginPopupModal("Object Browser##Modal", &showObjectBrowser,
+                               ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("Search:");
+        ImGui::InputText("##ObjSearch", objectSearchBuffer, sizeof(objectSearchBuffer));
         ImGui::Separator();
-        
-        std::string searchStr = objectSearchBuffer;
-        std::transform(searchStr.begin(), searchStr.end(), searchStr.begin(), ::tolower);
-        
-        // Lista de tipos disponibles
-        std::vector<std::pair<std::string, std::string>> objectTypes = {
-            {"Cube", "cube"},
-            {"Sphere", "sphere"},
-            {"Plane", "plane"},
-            {"Capsule", "capsule"},
-            {"Light", "light"},
-            {"Point Light", "pointlight"},
-            {"Directional Light", "directionallight"},
-            {"Sun (Sistema de unidades)", "sun"},
-            {"Planet (Sistema de unidades)", "planet"},
-            {"Cylinder", "cylinder"},
-            {"Torus", "torus"},
-            {"Model Loader", "model"},
-        };
-        
+
+        std::string query = objectSearchBuffer;
+        std::transform(query.begin(), query.end(), query.begin(), ::tolower);
+
         ImGui::BeginChild("ObjectList", ImVec2(0, 200));
-        for (const auto& [displayName, type] : objectTypes) {
-            std::string lowerName = displayName;
-            std::transform(lowerName.begin(), lowerName.end(), lowerName.begin(), ::tolower);
-            
-            if (searchStr.empty() || lowerName.find(searchStr) != std::string::npos) {
+        for (const auto& [displayName, typeStr] : objectTypes) {
+            std::string lower = displayName;
+            std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+            if (query.empty() || lower.find(query) != std::string::npos) {
                 if (ImGui::Selectable(displayName.c_str())) {
-                    createPrimitive(displayName, type);
+                    createPrimitive(displayName, typeStr);
                     showObjectBrowser = false;
                     ImGui::CloseCurrentPopup();
                 }
             }
         }
         ImGui::EndChild();
-        
+
         ImGui::Separator();
-        if (ImGui::Button("Cerrar##ObjectBrowser", ImVec2(120, 0))) {
+        if (ImGui::Button("Close##ObjBrowser", ImVec2(120, 0))) {
             showObjectBrowser = false;
             ImGui::CloseCurrentPopup();
         }
-        
         ImGui::EndPopup();
     }
-    
+
     ImGui::Separator();
-    
+
     if (currentScene) {
         const auto& objects = currentScene->getObjects();
-        for (size_t i = 0; i < objects.size(); ++i) {
-            try {
-                if (objects[i].parentIndex == -1) {
-                    renderObjectNode((int)i);
-                }
-            } catch (...) {
-                std::cerr << "Error rendering object at index " << i << std::endl;
-            }
+
+        // Rebuild children map each frame from parentIndex.
+        m_childrenMap.assign(objects.size(), {});
+        for (int i = 0; i < (int)objects.size(); ++i) {
+            int p = objects[i].parentIndex;
+            if (p >= 0 && p < (int)objects.size())
+                m_childrenMap[p].push_back(i);
+        }
+
+        for (int i = 0; i < (int)objects.size(); ++i) {
+            if (objects[i].parentIndex == -1)
+                renderObjectNode(i);
         }
     }
-    
+
     ImGui::End();
 }
 
@@ -272,62 +240,55 @@ void SceneHierarchyPanel::createPrimitive(const std::string& name, const std::st
 }
 
 void SceneHierarchyPanel::renderObjectNode(int index) {
-    if (!currentScene || index < 0 || index >= (int)currentScene->getObjects().size()) {
-        return;
-    }
-    
-    // Acceder al objeto sin mantener referencia (puede invalidarse)
-    const auto& objects = currentScene->getObjects();
-    if (index >= (int)objects.size()) return;  // Double check
-    
-    std::string objName = objects[index].name;
-    bool hasChildren = !objects[index].childrenIndices.empty() || !objects[index].children.empty();
-    
-    ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth;
+    if (!currentScene || index < 0 ||
+        index >= (int)currentScene->getObjects().size()) return;
+
+    const auto& obj = currentScene->getObjects()[index];
+
+    ImGuiTreeNodeFlags flags =
+        ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth;
     if (index == selectedObjectIndex) flags |= ImGuiTreeNodeFlags_Selected;
-    if (!hasChildren) flags |= ImGuiTreeNodeFlags_Leaf;
-    
-    bool nodeOpen = ImGui::TreeNodeEx((void*)(intptr_t)index, flags, "%s", objName.c_str());
-    
+    if (m_childrenMap[index].empty())  flags |= ImGuiTreeNodeFlags_Leaf;
+
+    bool nodeOpen = ImGui::TreeNodeEx(
+        (obj.name + " (" + obj.type + ")##" + std::to_string(index)).c_str(), flags);
+
     if (ImGui::IsItemClicked()) {
         selectedObjectIndex = index;
         if (onObjectSelectedByIndex) onObjectSelectedByIndex(index);
-        if (onObjectSelectedByName) onObjectSelectedByName(objName);
+        if (onObjectSelectedByName)  onObjectSelectedByName(obj.name);
+        if (eventManager) {
+            eventManager->post(std::make_shared<Haruka::ObjectEvent>(
+                obj.name, obj.type, Haruka::ObjectEvent::ActionType::Selected));
+        }
     }
-    
+
+    // Drag-and-drop for reparenting.
     if (ImGui::BeginDragDropSource()) {
-        ImGui::SetDragDropPayload("SCENE_OBJECT", &index, sizeof(int));
-        ImGui::Text("Move: %s", objName.c_str());
+        ImGui::SetDragDropPayload("SCENE_OBJ_IDX", &index, sizeof(int));
+        ImGui::Text("%s", obj.name.c_str());
         ImGui::EndDragDropSource();
     }
-    
     if (ImGui::BeginDragDropTarget()) {
-        if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("SCENE_OBJECT")) {
-            int draggedIndex = *(int*)payload->Data;
-            reparentObject(draggedIndex, index);
+        if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("SCENE_OBJ_IDX")) {
+            int dragged = *(const int*)p->Data;
+            if (dragged != index && eventManager) {
+                nlohmann::json d;
+                d["newParentIndex"] = index;
+                const auto& draggedObj = currentScene->getObjects()[dragged];
+                eventManager->post(std::make_shared<Haruka::ObjectEvent>(
+                    draggedObj.name, draggedObj.type,
+                    Haruka::ObjectEvent::ActionType::Reparented, d));
+            }
         }
         ImGui::EndDragDropTarget();
     }
-    
+
     showContextMenu(index);
-    
+
     if (nodeOpen) {
-        // Re-validar índice antes de acceder
-        if (index >= 0 && index < (int)currentScene->getObjects().size()) {
-            const auto& obj = currentScene->getObjects()[index];
-            
-            for (int childIndex : obj.childrenIndices) {
-                if (childIndex >= 0 && childIndex < (int)currentScene->getObjects().size()) {
-                    renderObjectNode(childIndex);
-                }
-            }
-            
-            // Renderizar children vector (hijos del prefab, etc)
-            for (size_t i = 0; i < obj.children.size(); ++i) {
-                renderChildObject(obj.children[i], i);
-            }
-        }
-        
+        for (int childIdx : m_childrenMap[index])
+            renderObjectNode(childIdx);
         ImGui::TreePop();
     }
 }
@@ -452,46 +413,37 @@ void SceneHierarchyPanel::duplicateObject(int index) {
 }
 
 void SceneHierarchyPanel::showContextMenu(int index) {
-    if (ImGui::BeginPopupContextItem()) {
-        auto& obj = currentScene->getObjects()[index];
-        
-        // Abrir escena si el tipo es "Scene"
-        if (obj.type == "Scene") {
-            if (ImGui::MenuItem("Enter Scene")) {
-                std::string scenePath = currentProjectPath + "/scenes/" + obj.name + ".scene";
-                currentScene->load(scenePath);
-            }
-        }
-        
-        // Abrir prefab si el tipo es "Prefab"
-        if (obj.type == "Prefab") {
-            if (ImGui::MenuItem("Enter Prefab")) {
-                std::string prefabPath = currentProjectPath + "/assets/prefabs/" + obj.name + ".prefab";
-                currentScene->load(prefabPath);
-            }
-        }
-        
-        if (ImGui::MenuItem("Duplicate")) {
-            duplicateObject(index);
-        }
+    if (!ImGui::BeginPopupContextItem()) return;
 
-        if (ImGui::BeginMenu("Create Child")) {
-            if (ImGui::MenuItem("Cube")) createChildObject(index, "Cube");
-            if (ImGui::MenuItem("Sphere")) createChildObject(index, "Sphere");
-            if (ImGui::MenuItem("Light")) createChildObject(index, "Light");
-            ImGui::EndMenu();
+    const auto& obj = currentScene->getObjects()[index];
+
+    if (ImGui::BeginMenu("Create Child")) {
+        for (const auto& [displayName, typeStr] : objectTypes) {
+            if (ImGui::MenuItem(displayName.c_str()))
+                createPrimitive(displayName, typeStr, index);
         }
-        
-        if (ImGui::MenuItem("Delete")) {
-            const auto& obj = currentScene->getObjects()[index];
-            if (commandHistory) {
-                commandHistory->execute(std::make_unique<DeleteObjectCommand>(currentScene, obj.name));
-            } else {
-                currentScene->removeObject(obj.name);
-            }
-            selectedObjectIndex = -1;
-        }
-        
-        ImGui::EndPopup();
+        ImGui::EndMenu();
     }
+
+    if (ImGui::MenuItem("Duplicate")) {
+        if (eventManager) {
+            nlohmann::json d;
+            d["parentIndex"] = obj.parentIndex;
+            if (!obj.modelPath.empty()) d["modelPath"] = obj.modelPath;
+            eventManager->post(std::make_shared<Haruka::ObjectEvent>(
+                obj.name, obj.type, Haruka::ObjectEvent::ActionType::Duplicated, d));
+        }
+    }
+
+    if (ImGui::MenuItem("Delete")) {
+        if (eventManager) {
+            eventManager->post(std::make_shared<Haruka::ObjectEvent>(
+                obj.name, obj.type, Haruka::ObjectEvent::ActionType::Deleted));
+            eventManager->post(std::make_shared<Haruka::LogEvent>(
+                Haruka::LogEvent::Level::Info, "Delete requested: " + obj.name));
+        }
+        selectedObjectIndex = -1;
+    }
+
+    ImGui::EndPopup();
 }

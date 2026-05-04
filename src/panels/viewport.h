@@ -4,6 +4,8 @@
 #include "core/scene.h"
 #include "core/world_system.h"
 #include "core/terrain_streaming_system.h"
+#include "core/event_manager.h"
+#include "core/events.h"
 #include "game/planetary_system.h"
 #include "renderer/shader.h"
 #include "renderer/render_target.h"
@@ -72,6 +74,7 @@ public:
     /** @brief Loads a model from cache or disk. */
     Model* getOrLoadModel(const std::string& path);
 
+    void setEventManager(Haruka::EventManager* mgr) { eventManager = mgr; }
     void setStatsPanel(StatsPanel* panel) { statsPanel = panel; }
     void setPlayMode(bool play) {
         playMode = play;
@@ -116,12 +119,6 @@ private:
     // Shader para render local/editor (SPIR-V, used for scene objects)
     std::unique_ptr<Shader> sceneShader;
 
-    // Inline GLSL program for the always-visible editor test cube (no SPIR-V dependency)
-    GLuint editorCubeProgram = 0;
-
-    // Test cube — siempre visible en editor para confirmar que GL funciona
-    std::unique_ptr<SimpleMesh> editorTestCube;
-
     // Terrain streaming for editor viewport (runs outside play mode)
     std::unique_ptr<Haruka::WorldSystem> editorWorldSystem;
     std::unique_ptr<Haruka::TerrainStreamingSystem> editorTerrainStreaming;
@@ -137,4 +134,9 @@ private:
     // SDL window
     SDL_Window* sdlWindow = nullptr;
 
+    // Event manager for asset-drop and other viewport-driven creation requests.
+    Haruka::EventManager* eventManager = nullptr;
+
+    // Model cache lookup for the viewport's local editor render path.
+    Model* getOrLoadModelCached(const std::string& path);
 };

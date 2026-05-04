@@ -4,6 +4,9 @@
 #include "core/camera.h"
 #include "core/error_reporter.h"
 #include "core/components/mesh_renderer_component.h"
+#include "core/components/material_component.h"
+#include "core/primitive_types.h"
+#include "commands/scene_commands.h"
 #include "renderer/primitive_shapes.h"
 
 #include <glad/glad.h>
@@ -85,6 +88,11 @@ void EditorApplication::init() {
     currentFile.path = "scenes/Untitled.scene";
     currentFile.name = "Untitled";
     currentFile.isPrefab = false;
+
+    // ===== EventManager — wire to panels and scene =====
+    currentScene->setEventManager(&eventManager);
+    sceneHierarchyPanel.setEventManager(&eventManager);
+    viewportPanel.setEventManager(&eventManager);
 
     // ===== Panels Setup =====
     sceneHierarchyPanel.setScene(currentScene.get());
@@ -214,6 +222,7 @@ void EditorApplication::update() {
         }
     }
     
+    processEditorEvents();
     viewportPanel.onUpdate(deltaTime);
 }
 
@@ -852,6 +861,7 @@ void EditorApplication::loadFile(const std::string& path) {
     projectBrowserPanel.setScene(nullptr);
 
     currentScene = std::make_unique<Haruka::Scene>();
+    currentScene->setEventManager(&eventManager); // notify engine of loaded objects
 
     if (currentScene->load(path)) {
         // Actualizar estado del archivo
@@ -994,7 +1004,142 @@ std::string EditorApplication::getFileType(const std::string& path) {
 
 void EditorApplication::createSceneObject(const std::string& type) {
     if (!currentScene) return;
-    
     sceneHierarchyPanel.createPrimitive(type, type);
     sceneDirty = true;
+}
+
+// ---------------------------------------------------------------------------
+// buildSceneObjectForType — engine applies default props per primitive type
+// ---------------------------------------------------------------------------
+static Haruka::SceneObject buildSceneObjectForType(const std::string& name,
+                                                    const std::string& type,
+                                                    const nlohmann::json& data)
+{
+    Haruka::SceneObject obj;
+    obj.name        = name;
+    obj.type        = type;
+    obj.position    = glm::dvec3(0.0);
+    obj.rotation    = glm::dvec3(0.0);
+    obj.scale       = glm::dvec3(1.0);
+    obj.color       = glm::dvec3(1.0);
+    obj.intensity   = 1.0;
+    obj.renderLayer = 1;
+    obj.parentIndex = data.value("parentIndex", -1);
+    obj.modelPath   = data.value("modelPath", "");
+    if (!data.value("fromLoad", false)) obj.properties = data;
+
+    // Populate default meshRenderer properties based on type.
+    std::vector<glm::vec3> verts, norms;
+    std::vector<unsigned int> indices;
+
+    if (type == PrimitiveType::Cube) {
+        PrimitiveShapes::createCube(1.0f, verts, norms, indices);
+        obj.properties["meshRenderer"]["meshType"] = PrimitiveType::Cube;
+        obj.properties["meshRenderer"]["size"]     = 1.0f;
+    } else if (type == PrimitiveType::Sphere) {
+        PrimitiveShapes::createSphere(1.0f, 32, 32, verts, norms, indices);
+        obj.properties["meshRenderer"]["meshType"]  = PrimitiveType::Sphere;
+        obj.properties["meshRenderer"]["radius"]    = 1.0f;
+        obj.properties["meshRenderer"]["segments"]  = 32;
+    } else if (type == PrimitiveType::Capsule) {
+        PrimitiveShapes::createCapsule(0.5f, 2.0f, 24, 16, verts, norms, indices);
+        obj.properties["meshRenderer"]["meshType"]  = PrimitiveType::Capsule;
+        obj.properties["meshRenderer"]["radius"]    = 0.5f;
+        obj.properties["meshRenderer"]["height"]    = 2.0f;
+        obj.properties["meshRenderer"]["segments"]  = 24;
+        obj.properties["meshRenderer"]["stacks"]    = 16;
+    } else if (type == PrimitiveType::Plane) {
+        PrimitiveShapes::createPlane(2.0f, 2.0f, 10, verts, norms, indices);
+        obj.properties["meshRenderer"]["meshType"]     = PrimitiveType::Plane;
+        obj.properties["meshRenderer"]["width"]        = 2.0f;
+        obj.properties["meshRenderer"]["height"]       = 2.0f;
+        obj.properties["meshRenderer"]["subdivisions"] = 10;
+    } else if (type == PrimitiveType::PointLight || type == PrimitiveType::DirectionalLight) {
+        PrimitiveShapes::createSphere(0.4f, 16, 16, verts, norms, indices);
+        obj.color     = glm::dvec3(1.0, 0.95, 0.8);
+        obj.intensity = 5.0;
+    } else if (type == PrimitiveType::Sun) {
+        PrimitiveShapes::createSphere(1.0f, 32, 32, verts, norms, indices);
+        obj.color     = glm::dvec3(1.0, 0.98, 0.9);
+        obj.intensity = 20.0;
+    } else if (type == PrimitiveType::Planet) {
+        PrimitiveShapes::createSphere(1.0f, 48, 48, verts, norms, indices);
+    }
+
+    if (!verts.empty()) {
+        obj.meshRenderer = std::make_shared<MeshRendererComponent>();
+        obj.meshRenderer->setMesh(verts, norms, indices);
+        obj.material = std::make_shared<Haruka::MaterialComponent>();
+        obj.material->albedo = glm::vec3(obj.color);
+    }
+    return obj;
+}
+
+// ---------------------------------------------------------------------------
+// processEditorEvents — drains EventManager queue each frame
+// ---------------------------------------------------------------------------
+void EditorApplication::processEditorEvents() {
+    while (auto optEvt = eventManager.poll()) {
+        auto& evt = *optEvt;
+
+        if (auto* objEvt = dynamic_cast<Haruka::ObjectEvent*>(evt.get())) {
+            using AT = Haruka::ObjectEvent::ActionType;
+
+            if (objEvt->action == AT::Created) {
+                bool fromLoad = objEvt->data.value("fromLoad", false);
+                if (!fromLoad && currentScene) {
+                    // Engine builds the SceneObject with correct default props.
+                    Haruka::SceneObject obj = buildSceneObjectForType(
+                        objEvt->objectName, objEvt->objectType, objEvt->data);
+                    commandHistory.execute(
+                        std::make_unique<AddObjectCommand>(currentScene.get(), obj));
+                    sceneDirty = true;
+                }
+                // fromLoad=true objects are already in the scene (Scene::load() added them).
+
+            } else if (objEvt->action == AT::Deleted) {
+                if (currentScene) {
+                    commandHistory.execute(
+                        std::make_unique<DeleteObjectCommand>(
+                            currentScene.get(), objEvt->objectName));
+                    sceneDirty = true;
+                }
+
+            } else if (objEvt->action == AT::Duplicated) {
+                if (currentScene) {
+                    auto* src = currentScene->getObject(objEvt->objectName);
+                    if (src) {
+                        Haruka::SceneObject dup = *src;
+                        dup.name      = src->name + "_copy";
+                        dup.position += glm::dvec3(1.0, 0.0, 0.0);
+                        commandHistory.execute(
+                            std::make_unique<AddObjectCommand>(currentScene.get(), dup));
+                        sceneDirty = true;
+                    }
+                }
+
+            } else if (objEvt->action == AT::Reparented) {
+                if (currentScene) {
+                    int newParent = objEvt->data.value("newParentIndex", -1);
+                    auto& objs = currentScene->getObjectsMutable();
+                    auto it = std::find_if(objs.begin(), objs.end(),
+                        [&](const Haruka::SceneObject& o){ return o.name == objEvt->objectName; });
+                    if (it != objs.end()) {
+                        it->parentIndex = newParent;
+                        sceneDirty = true;
+                    }
+                }
+
+            } else if (objEvt->action == AT::Selected) {
+                // Selection handled by viewport/hierarchy via callbacks; nothing extra needed.
+            }
+
+        } else if (auto* logEvt = dynamic_cast<Haruka::LogEvent*>(evt.get())) {
+            // Forward to console output (std::cout captured by ConsolePanel).
+            if (logEvt->level == Haruka::LogEvent::Level::Error)
+                std::cerr << "[Engine] " << logEvt->message << "\n";
+            else
+                std::cout << "[Engine] " << logEvt->message << "\n";
+        }
+    }
 }

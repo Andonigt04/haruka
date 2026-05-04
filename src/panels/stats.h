@@ -44,20 +44,31 @@ public:
     void setMaxMemoryMB(int mb) { maxMemoryMB = mb; }
 
 private:
+    // Frame timing
     float fps = 0.0f;
     float frameTime = 0.0f;
+    
+    // Rendering stats
     int renderedVertexCount = 0;
-    int renderedDrawCalls = 0;
     int renderedTriangleCount = 0;
+    int renderedDrawCalls = 0;
+
+    // Total vertices/triangles/draw calls updated by the application each frame (not just this render pass)
     int totalVertexCount = 0;
     int totalDrawCalls = 0;
     int totalTriangleCount = 0;
+
+    // Terrain streaming stats
     int visibleChunkCount = 0;
+    
     int residentChunkCount = 0;
     int pendingChunkLoads = 0;
+
     int pendingChunkEvictions = 0;
-    int residentMemoryMB = 0;
     int trackedChunkCount = 0;
+
+    // Memory stats
+    int residentMemoryMB = 0;
     int maxMemoryMB = 0;
     
     std::deque<float> fpsHistory;
