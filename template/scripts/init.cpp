@@ -60,68 +60,6 @@ void gameOnInit(Haruka::Scene* scene) {
         }
     }
 
-    {
-        CelestialBody earthBody;
-        earthBody.name = "Earth";
-        earthBody.worldPos = Haruka::WorldPos(earthWorldPos.x, earthWorldPos.y, earthWorldPos.z);
-        earthBody.localPos = glm::vec3(0.0f);
-        earthBody.velocity = glm::vec3(0.0f);
-        earthBody.radius = 6371.0f;
-        earthBody.mass = 5.972e24f;
-        earthBody.color = glm::vec3(0.36f, 0.26f, 0.16f);
-        earthBody.emissionStrength = 0.0f;
-        earthBody.visible = 1;
-        earthBody.lodLevel = 0;
-        g_planetarySystem->addBody(earthBody);
-
-        if (kEnableDetailedPlanetSurface) {
-            // Configuración profesional del planeta (ajustar según necesidades)
-            Haruka::PlanetGenerator::PlanetConfig cfg;
-            cfg.radius = 1.0f;
-            cfg.subdivisions = 8;
-            cfg.seedBase = kPlanetSeed;
-            cfg.seedContinents = kPlanetSeed + 100;
-            cfg.seedMacro = kPlanetSeed + 200;
-            cfg.seedDetail = kPlanetSeed + 300;
-            cfg.continentFrequency = 0.95f;
-            cfg.continentWarpStrength = 0.10f;
-            cfg.continentHeightStrength = 0.022f;
-            cfg.macroFrequency = 2.8f;
-            cfg.macroHeightStrength = 0.0065f;
-            cfg.detailFrequency = 11.5f;
-            cfg.detailHeightStrength = 0.0018f;
-            cfg.seaLevel = 0.49f;
-
-            g_planetarySystem->generatePlanet(cfg, "Earth");
-            const auto* detailed = g_planetarySystem->getPlanetData("Earth");
-            if (detailed) {
-                double supportAlongUp = 1.0;
-                for (const auto& v : detailed->vertices) {
-                    supportAlongUp = std::max(supportAlongUp, glm::dot(glm::dvec3(v), playerSpawnDirection));
-                }
-                playerSpawnHeightKm = earthBody.radius * supportAlongUp + 3.0;
-
-                if (scene) {
-                    if (auto* earthObj = scene->getObject("Earth")) {
-                        if (!earthObj->meshRenderer) {
-                            earthObj->meshRenderer = std::make_shared<MeshRendererComponent>();
-                        }
-                        if (earthObj->meshRenderer) {
-                            earthObj->meshRenderer->setMesh(detailed->vertices, detailed->normals, detailed->indices);
-                        }
-                    }
-                }
-
-                std::cout << "[Game] Detailed Earth surface: "
-                          << detailed->vertices.size() << " vertices, "
-                          << (detailed->indices.size() / 3) << " triangles"
-                          << " | minR=" << (earthBody.radius * detailed->minHeight)
-                          << " km maxR=" << (earthBody.radius * detailed->maxHeight)
-                          << " km" << std::endl;
-            }
-        }
-    }
-
     Haruka::WorldPos playerPos = Haruka::WorldPos(earthWorldPos + playerSpawnDirection * playerSpawnHeightKm);
     auto playerOwned = std::make_unique<Haruka::Character>(playerPos, "player1");
     g_gameCamera = playerOwned->getCamera();
