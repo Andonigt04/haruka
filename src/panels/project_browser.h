@@ -1,7 +1,7 @@
 #pragma once
 
 #include "core/project.h"
-#include "core/scene.h"
+#include "core/scene/scene_manager.h"
 #include <imgui.h>
 #include <memory>
 #include <string>
@@ -29,7 +29,7 @@ public:
     /** @brief Binds the project root used by the browser. */
     void setProject(Haruka::Project* project);
     /** @brief Binds the scene for scene-aware file actions. */
-    void setScene(Haruka::Scene* scene);
+    void setScene(Haruka::SceneManager* scene);
     /** @brief Draws the browser UI. */
     void onImGuiRender();
 
@@ -38,7 +38,7 @@ public:
 
 private:
     Haruka::Project* currentProject = nullptr;
-    Haruka::Scene* currentScene = nullptr;
+    Haruka::SceneManager* currentScene = nullptr;
     std::string selectedPath;
     std::string selectedExtension;
     std::string draggedPath;

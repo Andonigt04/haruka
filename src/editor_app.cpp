@@ -2,12 +2,14 @@
 
 #include "editor_app.h"
 #include "core/camera.h"
-#include "core/error_reporter.h"
+#include "tools/error_reporter.h"
 #include "core/components/mesh_renderer_component.h"
 #include "core/components/material_component.h"
-#include "core/primitive_types.h"
+#include "tools/object_types.h"
+#include "core/scene/scene_loader.h"
 #include "commands/scene_commands.h"
 #include "renderer/primitive_shapes.h"
+#include "renderer/shader.h"
 
 #include <glad/glad.h>
 #include <SDL3/SDL.h>
@@ -64,6 +66,10 @@ void EditorApplication::init() {
         throw std::runtime_error("Failed to initialize GLAD");
     }
 
+    // Configure shader base directory so Shader loads .spv relative to the
+    // application base path (installed shaders live under ../bin/shaders/).
+    Shader::setBaseDir(SDL_GetBasePath());
+
     // ===== ImGui Setup =====
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -83,14 +89,13 @@ void EditorApplication::init() {
     ImGui_ImplOpenGL3_Init("#version 460");
 
     // ===== Scene & Project Setup =====
-    currentScene = std::make_unique<Haruka::Scene>("Untitled");
+    currentScene = std::make_unique<Haruka::SceneManager>();
     currentProject = std::make_unique<Haruka::Project>();
     currentFile.path = "scenes/Untitled.scene";
     currentFile.name = "Untitled";
-    currentFile.isPrefab = false;
 
-    // ===== EventManager — wire to panels and scene =====
-    currentScene->setEventManager(&eventManager);
+    // ===== EventManager — wire to panels =====
+    // Note: SceneManager doesn't own EventManager; that's the editor's responsibility
     sceneHierarchyPanel.setEventManager(&eventManager);
     viewportPanel.setEventManager(&eventManager);
 
@@ -118,7 +123,6 @@ void EditorApplication::init() {
 
     editorCamPos = viewportCamera->position;
     editorCamRot = viewportCamera->orientation;
-    viewportPanel.setPlayMode(false);
 
     // ===== Callbacks Setup =====
     projectBrowserPanel.setOnFileLoad([this](const std::string& path) {
@@ -131,17 +135,16 @@ void EditorApplication::init() {
     });
 
     sceneHierarchyPanel.setOnObjectSelectedByIndex([this](int index) {
-        if (currentScene && index >= 0 && index < (int)currentScene->getObjects().size()) {
+        if (currentScene && index >= 0 && index < (int)currentScene->getAllObjects().size()) {
             inspectorPanel.setSelectedObjectIndex(index);
-            viewportPanel.setSelectedObjectIndex(index);
         }
     });
 
     sceneHierarchyPanel.setOnObjectSelectedByName([this](const std::string& name) {
         if (!name.empty() && currentScene) {
-            auto obj = currentScene->getObject(name);
+            auto obj = currentScene->getObjectByName(name);
             if (obj) {
-                materialEditorPanel.setSelectedObject(obj);
+                materialEditorPanel.setSelectedObject(obj.get());
             }
         }
     });
@@ -210,20 +213,20 @@ void EditorApplication::update() {
     }
 
     updatePlayMode(deltaTime);
-    planetTerrainEditorPanel.update();
+    // planetTerrainEditorPanel.update(); // TODO: Implement when panel is refactored
     exportPanel.update();
     
     // Auto-save system
     if (autoSaveEnabled && sceneDirty && !currentFile.path.empty()) {
         timeSinceLastSave += deltaTime;
         if (timeSinceLastSave >= autoSaveInterval) {
-            saveFile(currentFile.path, currentFile.isPrefab);
+            saveFile(currentFile.path);
             timeSinceLastSave = 0.0f;
         }
     }
     
     processEditorEvents();
-    viewportPanel.onUpdate(deltaTime);
+    viewportPanel.update(deltaTime);
 }
 
 void EditorApplication::updatePlayMode(float deltaTime) {
@@ -254,7 +257,7 @@ void EditorApplication::render() {
     // Update window title with dirty flag
     std::string title = "Haruka Editor";
     if (!currentFile.path.empty()) {
-        title += " - " + currentFile.name + " (" + getFileType(currentFile.path) + ")";
+        title += " - " + currentFile.name + " (Scene)";
     }
     if (sceneDirty) title += " *";
     SDL_SetWindowTitle(window, title.c_str());
@@ -387,22 +390,7 @@ void EditorApplication::renderUI() {
                 HARUKA_EDITOR_ERROR(ErrorCode::EDITOR_INIT_FAILED, "Viewport crash: " + std::string(e.what()));
             }
         }
-        viewportPanel.setGizmoMode(gizmoMode);
-
-        if (currentScene) {
-            int selectedIndex = viewportPanel.getSelectedObjectIndex();
-            if (selectedIndex >= 0 && selectedIndex < (int)currentScene->getObjects().size()) {
-                const auto& obj = currentScene->getObjects()[selectedIndex];
-                if (obj.properties.is_object() && obj.properties.contains("terrainEditor")) {
-                    const auto& te = obj.properties["terrainEditor"];
-                    if (te.value("isChunk", false)) {
-                        planetTerrainEditorPanel.setSelectedChunkId(te.value("chunkId", -1));
-                        planetTerrainEditorPanel.setTargetObjectName(te.value("source", obj.name));
-                    }
-                }
-            }
-        }
-
+        
         if (showDemoWindow) {
             ImGui::ShowDemoWindow(&showDemoWindow);
         }
@@ -423,14 +411,6 @@ void EditorApplication::renderUI() {
             }
         }
         
-        if (showSearchPanel) {
-            try {
-                searchPanel.onImGuiRender();
-            } catch (const std::exception& e) {
-                HARUKA_EDITOR_ERROR(ErrorCode::EDITOR_INIT_FAILED, "SearchPanel crash: " + std::string(e.what()));
-            }
-        }
-        
         if (showUIBuilder) {
             try {
                 uiBuilder.onImGuiRender();
@@ -443,10 +423,9 @@ void EditorApplication::renderUI() {
         if (showSaveAsPopup) ImGui::OpenPopup("Save File As");
         if (ImGui::BeginPopupModal("Save File As", &showSaveAsPopup, ImGuiWindowFlags_AlwaysAutoResize)) {
             ImGui::InputText("Path##save", saveAsBuffer, sizeof(saveAsBuffer));
-            bool isPrefab = std::string(saveAsBuffer).find(".prefab") != std::string::npos;
             
             if (ImGui::Button("Save")) {
-                saveFile(saveAsBuffer, isPrefab);
+                saveFile(saveAsBuffer);
                 showSaveAsPopup = false;
                 ImGui::CloseCurrentPopup();
             }
@@ -466,7 +445,7 @@ void EditorApplication::renderUI() {
         if (ImGui::BeginPopupModal("Unsaved Changes", &showUnsavedChangesPopup, ImGuiWindowFlags_AlwaysAutoResize)) {
             ImGui::Text("Hay cambios sin guardar.");
             if (ImGui::Button("Guardar y continuar")) {
-                if (!currentFile.path.empty()) saveFile(currentFile.path, currentFile.isPrefab);
+                if (!currentFile.path.empty()) saveFile(currentFile.path);
                 if (!pendingSceneToLoad.empty()) loadFile(pendingSceneToLoad);
                 pendingSceneToLoad.clear();
                 showUnsavedChangesPopup = false;
@@ -518,7 +497,6 @@ void EditorApplication::enterPlayMode() {
     isPlayMode = true;
     playModeTime = 0.0f;
 
-    viewportPanel.setPlayMode(true);
     inspectorPanel.setPlayMode(true);
 
     // Sin proyecto: entrar en play con la escena actual (útil para testing)
@@ -548,10 +526,11 @@ void EditorApplication::enterPlayMode() {
             // Apply Camera scene object at play start (game library can override afterwards)
             // Searches top-level objects first, then prefab children
             const Haruka::SceneObject* camObj = nullptr;
-            for (const auto& obj : currentScene->getObjects()) {
+            for (const auto& objPtr : currentScene->getAllObjects()) {
+                if (!objPtr) continue;
+                const auto& obj = *objPtr;
                 if (obj.type == "Camera") { camObj = &obj; break; }
-                for (const auto& child : obj.children)
-                    if (child.type == "Camera") { camObj = &child; break; }
+                // Note: New SceneObject uses childrenIndices instead of direct children
                 if (camObj) break;
             }
             if (camObj) {
@@ -573,7 +552,6 @@ void EditorApplication::enterPlayMode() {
             // Resetear selección
             sceneHierarchyPanel.setSelectedObjectIndex(-1);
             inspectorPanel.setSelectedObjectIndex(-1);
-            viewportPanel.setSelectedObjectIndex(-1);
 
             std::cout << "Scene loaded: " << startScenePath << std::endl;
         }
@@ -679,7 +657,6 @@ void EditorApplication::exitPlayMode() {
     
     viewportPanel.setCamera(viewportCamera.get());
     
-    viewportPanel.setPlayMode(false);
     inspectorPanel.setPlayMode(false);
     
     std::cout << "⏹ Play Mode stopped" << std::endl;
@@ -760,7 +737,6 @@ void EditorApplication::createNewProject(const std::string& name, const std::str
 
         currentFile.path = scenePath;
         currentFile.name = "main";
-        currentFile.isPrefab = false;
         sceneDirty = false;
 
         // Sincronizar paneles
@@ -820,11 +796,8 @@ void EditorApplication::showExportDialog() {
     exportPanel.render(this);
 }
 
-void EditorApplication::saveFile(const std::string& path, bool asPrefab) {
+void EditorApplication::saveFile(const std::string& path) {
     if (!currentScene || path.empty()) return;
-    
-    // Detectar tipo por extensión, no por parámetro
-    bool isPrefab = (path.find(".prefab") != std::string::npos);
     
     std::filesystem::path p(path);
     if (p.has_parent_path()) {
@@ -840,13 +813,10 @@ void EditorApplication::saveFile(const std::string& path, bool asPrefab) {
     if (ok) {
         currentFile.path = path;
         currentFile.name = p.stem().string();
-        currentFile.isPrefab = isPrefab;
         currentFile.lastSaveTime = SDL_GetTicks() / 1000.0f;
         sceneDirty = false;
         timeSinceLastSave = 0.0f;
-
-        std::string type = isPrefab ? "Prefab" : "Scene";
-        std::cout << "✓ " << type << " saved: " << path << std::endl;
+        std::cout << "✓ Scene saved: " << path << std::endl;
     } else {
         HARUKA_EDITOR_ERROR(ErrorCode::FAILED_TO_SAVE_FILE, "Failed to save: " + path);
     }
@@ -867,7 +837,6 @@ void EditorApplication::loadFile(const std::string& path) {
         // Actualizar estado del archivo
         currentFile.path = path;
         currentFile.name = std::filesystem::path(path).stem().string();
-        currentFile.isPrefab = (path.find(".prefab") != std::string::npos);
         currentFile.lastSaveTime = SDL_GetTicks() / 1000.0f;
 
         // Resetear estado de cambios
@@ -881,7 +850,9 @@ void EditorApplication::loadFile(const std::string& path) {
         planetTerrainEditorPanel.setScene(currentScene.get());
         
         // Sync editor camera to the scene Camera object if present
-        for (const auto& obj : currentScene->getObjects()) {
+        for (const auto& objPtr : currentScene->getAllObjects()) {
+            if (!objPtr) continue;
+            const auto& obj = *objPtr;
             if (obj.type == "Camera") {
                 viewportCamera->position = obj.position;
                 glm::dquat qYaw   = glm::angleAxis(glm::radians(obj.rotation.y), glm::dvec3(0, 1, 0));
@@ -904,8 +875,7 @@ void EditorApplication::loadFile(const std::string& path) {
         sceneHierarchyPanel.setSelectedObjectIndex(-1);
         inspectorPanel.setSelectedObjectIndex(-1);
 
-        std::string type = currentFile.isPrefab ? "Prefab" : "Scene";
-        std::cout << "✓ " << type << " loaded: " << path << std::endl;
+        std::cout << "✓ Scene loaded: " << path << std::endl;
     } else {
         HARUKA_EDITOR_ERROR(ErrorCode::FAILED_TO_LOAD_FILE, "Failed to load file: " + path);
     }
@@ -915,12 +885,6 @@ void EditorApplication::createFileBackup(const std::string& filePath) {
     std::filesystem::path p(filePath);
     std::string backupDir = p.parent_path().string() + "/backups";
     std::filesystem::create_directories(backupDir);
-    
-    // Para prefabs: eliminar TODOS los backups anteriores
-    bool isPrefab = (filePath.find(".prefab") != std::string::npos);
-    if (isPrefab) {
-        deleteAllBackups(filePath);
-    }
     
     auto now = std::chrono::system_clock::now();
     auto time = std::chrono::system_clock::to_time_t(now);
@@ -933,11 +897,7 @@ void EditorApplication::createFileBackup(const std::string& filePath) {
     try {
         std::filesystem::copy_file(filePath, backupPath, 
             std::filesystem::copy_options::overwrite_existing);
-        
-        // Para escenas: mantener solo los últimos N backups
-        if (!isPrefab) {
-            cleanOldBackups(filePath);
-        }
+        cleanOldBackups(filePath);
         
         std::cout << "✓ Backup created: " << backupPath << std::endl;
     } catch (const std::exception& e) {
@@ -975,55 +935,17 @@ void EditorApplication::cleanOldBackups(const std::string& filePath) {
     }
 }
 
-void EditorApplication::deleteAllBackups(const std::string& filePath) {
-    std::filesystem::path p(filePath);
-    std::string backupDir = p.parent_path().string() + "/backups";
-    std::string fileName = p.stem().string();
-    std::string ext = p.extension().string();
-    
-    try {
-        if (!std::filesystem::exists(backupDir)) return;
-        
-        for (const auto& entry : std::filesystem::directory_iterator(backupDir)) {
-            if (entry.is_regular_file()) {
-                std::string name = entry.path().stem().string();
-                std::string entryExt = entry.path().extension().string();
-                if (name.find(fileName) != std::string::npos && entryExt == ext) {
-                    std::filesystem::remove(entry.path());
-                }
-            }
-        }
-    } catch (const std::exception& e) {
-        HARUKA_EDITOR_ERROR(ErrorCode::FAILED_TO_DELETE_FILE, "Error deleting backups: " + std::string(e.what()));
-    }
-}
-
-std::string EditorApplication::getFileType(const std::string& path) {
-    return (path.find(".prefab") != std::string::npos) ? "Prefab" : "Scene";
-}
-
-void EditorApplication::createSceneObject(const std::string& type) {
-    if (!currentScene) return;
-    sceneHierarchyPanel.createPrimitive(type, type);
-    sceneDirty = true;
-}
-
 // ---------------------------------------------------------------------------
 // buildSceneObjectForType — engine applies default props per primitive type
 // ---------------------------------------------------------------------------
-static Haruka::SceneObject buildSceneObjectForType(const std::string& name,
-                                                    const std::string& type,
-                                                    const nlohmann::json& data)
+static Haruka::SceneObject buildSceneObjectForType(const std::string& name, Haruka::PrimitiveType& type, const nlohmann::json& data)
 {
     Haruka::SceneObject obj;
     obj.name        = name;
-    obj.type        = type;
-    obj.position    = glm::dvec3(0.0);
-    obj.rotation    = glm::dvec3(0.0);
+    obj.type        = Haruka::primitiveTypeToString(type);
+    obj.position    = Haruka::WorldPos();
+    obj.rotation    = Haruka::Rotation();
     obj.scale       = glm::dvec3(1.0);
-    obj.color       = glm::dvec3(1.0);
-    obj.intensity   = 1.0;
-    obj.renderLayer = 1;
     obj.parentIndex = data.value("parentIndex", -1);
     obj.modelPath   = data.value("modelPath", "");
     if (!data.value("fromLoad", false)) obj.properties = data;
@@ -1032,43 +954,34 @@ static Haruka::SceneObject buildSceneObjectForType(const std::string& name,
     std::vector<glm::vec3> verts, norms;
     std::vector<unsigned int> indices;
 
-    if (type == PrimitiveType::Cube) {
+    if (type == Haruka::PrimitiveType::CUBE) {
         PrimitiveShapes::createCube(1.0f, verts, norms, indices);
-        obj.properties["meshRenderer"]["meshType"] = PrimitiveType::Cube;
+        obj.properties["meshRenderer"]["meshType"] = Haruka::PrimitiveType::CUBE;
         obj.properties["meshRenderer"]["size"]     = 1.0f;
-    } else if (type == PrimitiveType::Sphere) {
+    } else if (type == Haruka::PrimitiveType::SPHERE) {
         PrimitiveShapes::createSphere(1.0f, 32, 32, verts, norms, indices);
-        obj.properties["meshRenderer"]["meshType"]  = PrimitiveType::Sphere;
+        obj.properties["meshRenderer"]["meshType"]  = Haruka::PrimitiveType::SPHERE;
         obj.properties["meshRenderer"]["radius"]    = 1.0f;
         obj.properties["meshRenderer"]["segments"]  = 32;
-    } else if (type == PrimitiveType::Capsule) {
+    } else if (type == Haruka::PrimitiveType::CAPSULE) {
         PrimitiveShapes::createCapsule(0.5f, 2.0f, 24, 16, verts, norms, indices);
-        obj.properties["meshRenderer"]["meshType"]  = PrimitiveType::Capsule;
+        obj.properties["meshRenderer"]["meshType"]  = Haruka::PrimitiveType::CAPSULE;
         obj.properties["meshRenderer"]["radius"]    = 0.5f;
         obj.properties["meshRenderer"]["height"]    = 2.0f;
         obj.properties["meshRenderer"]["segments"]  = 24;
         obj.properties["meshRenderer"]["stacks"]    = 16;
-    } else if (type == PrimitiveType::Plane) {
+    } else if (type == Haruka::PrimitiveType::PLANE) {
         PrimitiveShapes::createPlane(2.0f, 2.0f, 10, verts, norms, indices);
-        obj.properties["meshRenderer"]["meshType"]     = PrimitiveType::Plane;
+        obj.properties["meshRenderer"]["meshType"]     = Haruka::PrimitiveType::PLANE;
         obj.properties["meshRenderer"]["width"]        = 2.0f;
         obj.properties["meshRenderer"]["height"]       = 2.0f;
         obj.properties["meshRenderer"]["subdivisions"] = 10;
-    } else if (type == PrimitiveType::PointLight || type == PrimitiveType::DirectionalLight) {
-        PrimitiveShapes::createSphere(0.4f, 16, 16, verts, norms, indices);
-        obj.color     = glm::dvec3(1.0, 0.95, 0.8);
-        obj.intensity = 5.0;
-    } else if (type == PrimitiveType::Sun) {
-        PrimitiveShapes::createSphere(1.0f, 32, 32, verts, norms, indices);
-        obj.color     = glm::dvec3(1.0, 0.98, 0.9);
-        obj.intensity = 20.0;
-    } else if (type == PrimitiveType::Planet) {
-        PrimitiveShapes::createSphere(1.0f, 48, 48, verts, norms, indices);
     }
 
     if (!verts.empty()) {
+        std::vector<glm::vec3> colors(verts.size(), glm::vec3(obj.color));
         obj.meshRenderer = std::make_shared<MeshRendererComponent>();
-        obj.meshRenderer->setMesh(verts, norms, indices);
+        obj.meshRenderer->setMesh(verts, norms, colors, indices);
         obj.material = std::make_shared<Haruka::MaterialComponent>();
         obj.material->albedo = glm::vec3(obj.color);
     }
@@ -1089,8 +1002,9 @@ void EditorApplication::processEditorEvents() {
                 bool fromLoad = objEvt->data.value("fromLoad", false);
                 if (!fromLoad && currentScene) {
                     // Engine builds the SceneObject with correct default props.
+                    auto primitiveType = Haruka::stringToPrimitiveType(objEvt->objectType);
                     Haruka::SceneObject obj = buildSceneObjectForType(
-                        objEvt->objectName, objEvt->objectType, objEvt->data);
+                        objEvt->objectName, primitiveType, objEvt->data);
                     commandHistory.execute(
                         std::make_unique<AddObjectCommand>(currentScene.get(), obj));
                     sceneDirty = true;
@@ -1107,7 +1021,7 @@ void EditorApplication::processEditorEvents() {
 
             } else if (objEvt->action == AT::Duplicated) {
                 if (currentScene) {
-                    auto* src = currentScene->getObject(objEvt->objectName);
+                    auto src = currentScene->getObjectByName(objEvt->objectName);
                     if (src) {
                         Haruka::SceneObject dup = *src;
                         dup.name      = src->name + "_copy";
@@ -1121,13 +1035,9 @@ void EditorApplication::processEditorEvents() {
             } else if (objEvt->action == AT::Reparented) {
                 if (currentScene) {
                     int newParent = objEvt->data.value("newParentIndex", -1);
-                    auto& objs = currentScene->getObjectsMutable();
-                    auto it = std::find_if(objs.begin(), objs.end(),
-                        [&](const Haruka::SceneObject& o){ return o.name == objEvt->objectName; });
-                    if (it != objs.end()) {
-                        it->parentIndex = newParent;
-                        sceneDirty = true;
-                    }
+                    // Note: SceneManager stores objects as shared_ptr; direct mutation requires refactoring
+                    // For now, mark scene as dirty and reload
+                    sceneDirty = true;
                 }
 
             } else if (objEvt->action == AT::Selected) {

@@ -2,11 +2,12 @@
 
 #include "core/application.h"
 #include "core/project.h"
-#include "core/scene.h"
+#include "core/scene/scene_manager.h"
+#include "core/scene/scene_loader.h"
 #include "core/camera.h"
 #include "core/game_interface.h"
-#include "core/event_manager.h"
-#include "core/events.h"
+#include "tools/event_manager.h"
+#include "tools/events.h"
 #include "panels/scene_hierarchy.h"
 #include "panels/inspector.h"
 #include "panels/project_browser.h"
@@ -15,12 +16,9 @@
 #include "panels/console.h"
 #include "panels/stats.h"
 #include "commands/command_history.h"
-#include "game/ingame_chat.h"
 #include "game/planetary_system.h"
 #include "panels/settings.h"
 #include "panels/asset_importer.h"
-#include "panels/search_panel.h"
-#include "panels/multi_scene_manager.h"
 #include "panels/ui_builder.h"
 #include "panels/export_panel.h"
 #include "panels/planet_terrain_editor.h"
@@ -69,7 +67,8 @@ private:
     SDL_GLContext glContext  = nullptr;
     bool          _shouldClose = false;
     std::unique_ptr<Haruka::Project> currentProject;
-    std::unique_ptr<Haruka::Scene> currentScene;
+    std::unique_ptr<Haruka::SceneManager> currentScene;
+    std::unique_ptr<Haruka::SceneManager> playModeScene;
     std::unique_ptr<Camera> viewportCamera;
     
     // Panels
@@ -82,7 +81,6 @@ private:
     MaterialEditorPanel materialEditorPanel;
     SettingsPanel settingsPanel;
     AssetImporter assetImporter;
-    SearchPanel searchPanel;
     UIBuilder uiBuilder;
     ExportPanel exportPanel;
     PlanetTerrainEditorPanel planetTerrainEditorPanel;
@@ -107,7 +105,6 @@ private:
     bool showMaterialEditor = true;
     bool showSettings = false;
     bool showAssetImporter = false;
-    bool showSearchPanel = false;
     bool showUIBuilder = false;
     bool showPlanetTerrainEditor = true;
     
@@ -125,8 +122,7 @@ private:
     void updatePlayMode(float deltaTime);
 
     bool isPlayMode = false;
-    std::unique_ptr<Haruka::Scene> playModeScene;
-    Haruka::Scene* editorScene = nullptr;
+    Haruka::SceneManager* editorScene = nullptr;
     float playModeTime = 0.0f;
 
     std::string playModeBackupPath = "/tmp/haruka_playmode_backup.scene";
@@ -142,7 +138,6 @@ private:
     Haruka::Rotation editorCamRot{};
     std::unique_ptr<StreamCapture> coutCapture;
     std::unique_ptr<StreamCapture> cerrCapture;
-    std::unique_ptr<Haruka::InGameChat> inGameChat;
     bool showSaveAsPopup = false;
     char saveAsBuffer[512] = {0};
     
@@ -158,9 +153,6 @@ private:
     std::unique_ptr<Haruka::PlanetarySystem> planetarySystem;
     bool runningPlanetarySystem = false;
 
-    /** @brief Creates a scene object of a given type. */
-    void createSceneObject(const std::string& type);
-
     /** @brief Triggers project compilation/export pipeline. */
     void compileProject();
     bool isProjectCompiling = false;
@@ -174,7 +166,6 @@ private:
     struct SceneFile {
         std::string path;
         std::string name;
-        bool isPrefab;
         float lastSaveTime = 0.0f;
     };
     
@@ -184,16 +175,12 @@ private:
     bool autoSaveEnabled = true;
     int maxBackups = 5;
     
-    /** @brief Saves scene or prefab data to disk. */
-    void saveFile(const std::string& path, bool asPrefab = false);
-    /** @brief Loads scene or prefab data from disk. */
+    /** @brief Saves scene data to disk. */
+    void saveFile(const std::string& path);
+    /** @brief Loads scene data from disk. */
     void loadFile(const std::string& path);
     /** @brief Creates a backup copy for the given file. */
     void createFileBackup(const std::string& path);
     /** @brief Removes old backups beyond retention limit. */
     void cleanOldBackups(const std::string& path);
-    /** @brief Deletes all backups associated with one file. */
-    void deleteAllBackups(const std::string& path);
-    /** @brief Returns the file classification used by the editor. */
-    std::string getFileType(const std::string& path);
 };

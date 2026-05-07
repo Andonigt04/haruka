@@ -1,7 +1,6 @@
 #define GLM_ENABLE_EXPERIMENTAL
 #include "scene_hierarchy.h"
-#include "core/events.h"
-#include "core/primitive_types.h"
+#include "tools/events.h"
 
 #include "renderer/primitive_shapes.h"
 #include "core/object_types.h"
@@ -21,7 +20,7 @@
 // ---------------------------------------------------------------------------
 
 void SceneHierarchyPanel::createPrimitive(const std::string& name,
-                                          const std::string& type,
+                                          const Haruka::PrimitiveType& type,
                                           int parentIndex)
 {
     if (!eventManager) {
@@ -35,9 +34,9 @@ void SceneHierarchyPanel::createPrimitive(const std::string& name,
     std::string objName = name + "_" + std::to_string(rand() & 0xFFFF);
 
     eventManager->post(std::make_shared<Haruka::ObjectEvent>(
-        objName, type, Haruka::ObjectEvent::ActionType::Created, data));
+        objName, Haruka::primitiveTypeToString(type), Haruka::ObjectEvent::ActionType::Created, data));
     eventManager->post(std::make_shared<Haruka::LogEvent>(
-        Haruka::LogEvent::Level::Info, "Create requested: " + objName + " [" + type + "]"));
+        Haruka::LogEvent::Level::Info, "Create requested: " + objName + " [" + Haruka::primitiveTypeToString(type) + "]"));
 }
 
 // ---------------------------------------------------------------------------
@@ -53,7 +52,7 @@ void SceneHierarchyPanel::onImGuiRender() {
     }
     ImGui::SameLine();
     if (ImGui::Button("Cube", ImVec2(-1, 0)))
-        createPrimitive("Cube", PrimitiveType::Cube);
+        createPrimitive("Cube", Haruka::PrimitiveType::CUBE);
 
     if (showObjectBrowser) ImGui::OpenPopup("Object Browser##Modal");
 
@@ -72,7 +71,7 @@ void SceneHierarchyPanel::onImGuiRender() {
             std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
             if (query.empty() || lower.find(query) != std::string::npos) {
                 if (ImGui::Selectable(displayName.c_str())) {
-                    createPrimitive(displayName, typeStr);
+                    createPrimitive(displayName, Haruka::stringToPrimitiveType(typeStr));
                     showObjectBrowser = false;
                     ImGui::CloseCurrentPopup();
                 }
@@ -91,18 +90,18 @@ void SceneHierarchyPanel::onImGuiRender() {
     ImGui::Separator();
 
     if (currentScene) {
-        const auto& objects = currentScene->getObjects();
+        const auto& objects = currentScene->getAllObjects();
 
         // Rebuild children map each frame from parentIndex.
         m_childrenMap.assign(objects.size(), {});
         for (int i = 0; i < (int)objects.size(); ++i) {
-            int p = objects[i].parentIndex;
+            int p = objects[i]->parentIndex;
             if (p >= 0 && p < (int)objects.size())
                 m_childrenMap[p].push_back(i);
         }
 
         for (int i = 0; i < (int)objects.size(); ++i) {
-            if (objects[i].parentIndex == -1)
+            if (objects[i]->parentIndex == -1)
                 renderObjectNode(i);
         }
     }
@@ -241,9 +240,9 @@ void SceneHierarchyPanel::createPrimitive(const std::string& name, const std::st
 
 void SceneHierarchyPanel::renderObjectNode(int index) {
     if (!currentScene || index < 0 ||
-        index >= (int)currentScene->getObjects().size()) return;
+        index >= (int)currentScene->getAllObjects().size()) return;
 
-    const auto& obj = currentScene->getObjects()[index];
+    const Haruka::SceneObject& obj = *currentScene->getAllObjects()[index];
 
     ImGuiTreeNodeFlags flags =
         ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth;
@@ -275,9 +274,9 @@ void SceneHierarchyPanel::renderObjectNode(int index) {
             if (dragged != index && eventManager) {
                 nlohmann::json d;
                 d["newParentIndex"] = index;
-                const auto& draggedObj = currentScene->getObjects()[dragged];
+                const auto& draggedObj = currentScene->getAllObjects()[dragged];
                 eventManager->post(std::make_shared<Haruka::ObjectEvent>(
-                    draggedObj.name, draggedObj.type,
+                    draggedObj->name, draggedObj->type,
                     Haruka::ObjectEvent::ActionType::Reparented, d));
             }
         }
@@ -415,12 +414,12 @@ void SceneHierarchyPanel::duplicateObject(int index) {
 void SceneHierarchyPanel::showContextMenu(int index) {
     if (!ImGui::BeginPopupContextItem()) return;
 
-    const auto& obj = currentScene->getObjects()[index];
+    const Haruka::SceneObject& obj = *currentScene->getAllObjects()[index];
 
     if (ImGui::BeginMenu("Create Child")) {
         for (const auto& [displayName, typeStr] : objectTypes) {
             if (ImGui::MenuItem(displayName.c_str()))
-                createPrimitive(displayName, typeStr, index);
+                createPrimitive(displayName, Haruka::stringToPrimitiveType(typeStr), index);
         }
         ImGui::EndMenu();
     }
@@ -429,7 +428,6 @@ void SceneHierarchyPanel::showContextMenu(int index) {
         if (eventManager) {
             nlohmann::json d;
             d["parentIndex"] = obj.parentIndex;
-            if (!obj.modelPath.empty()) d["modelPath"] = obj.modelPath;
             eventManager->post(std::make_shared<Haruka::ObjectEvent>(
                 obj.name, obj.type, Haruka::ObjectEvent::ActionType::Duplicated, d));
         }

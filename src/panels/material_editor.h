@@ -1,6 +1,7 @@
 #pragma once
+
 #include "core/components/material_component.h"
-#include "core/scene.h"
+#include "core/scene/scene_manager.h"
 #include <imgui.h>
 
 /**

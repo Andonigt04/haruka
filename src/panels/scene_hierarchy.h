@@ -1,35 +1,36 @@
 #pragma once
 
-#include "core/scene.h"
-#include "core/event_manager.h"
-#include "core/events.h"
-#include "core/primitive_types.h"
+#include "core/scene/scene_manager.h"
+#include "tools/event_manager.h"
+#include "tools/events.h"
+#include "tools/object_types.h"
 #include "commands/command_history.h"
+
+#include <memory>
 #include <imgui.h>
 #include <functional>
 #include <string>
 #include <vector>
 #include <utility>
 
-// Display-name / primitive-type pairs listed in the object browser.
 inline const std::vector<std::pair<std::string, std::string>> objectTypes = {
-    {"Cube",              PrimitiveType::Cube},
-    {"Sphere",            PrimitiveType::Sphere},
-    {"Capsule",           PrimitiveType::Capsule},
-    {"Plane",             PrimitiveType::Plane},
-    {"Point Light",       PrimitiveType::PointLight},
-    {"Directional Light", PrimitiveType::DirectionalLight},
-    {"Sun",               PrimitiveType::Sun},
-    {"Planet",            PrimitiveType::Planet},
-    {"Empty",             PrimitiveType::Empty},
-    {"Camera",            PrimitiveType::Camera},
+    {"Cube", "Cube"},
+    {"Sphere", "Sphere"},
+    {"Capsule", "Capsule"},
+    {"Plane", "Plane"},
+    {"Point Light", "PointLight"},
+    {"Directional Light", "DirectionalLight"},
+    {"Sun", "Sun"},
+    {"Planet", "Planet"},
+    {"Empty", "Empty"},
+    {"Camera", "Camera"},
 };
 
 class SceneHierarchyPanel {
 public:
     SceneHierarchyPanel() = default;
 
-    void setScene(Haruka::Scene* scene)           { currentScene   = scene; }
+    void setScene(Haruka::SceneManager* scene)           { currentScene   = scene; }
     void setSelectedObjectIndex(int index)        { selectedObjectIndex = index; }
     void setCommandHistory(CommandHistory* h)     { commandHistory = h; }
     void setEventManager(Haruka::EventManager* m) { eventManager   = m; }
@@ -50,10 +51,10 @@ public:
      * @brief Posts ObjectEvent::Created for a primitive.
      * parentIndex = -1 means root.  No direct scene mutation.
      */
-    void createPrimitive(const std::string& name, const std::string& type, int parentIndex = -1);
+    void createPrimitive(const std::string& name, const Haruka::PrimitiveType& type, int parentIndex = -1);
 
 private:
-    Haruka::Scene*        currentScene   = nullptr;
+    Haruka::SceneManager* currentScene   = nullptr;
     CommandHistory*       commandHistory = nullptr;
     Haruka::EventManager* eventManager   = nullptr;
     int                   selectedObjectIndex = -1;

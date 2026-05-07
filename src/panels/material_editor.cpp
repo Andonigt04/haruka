@@ -1,5 +1,5 @@
 #include "material_editor.h"
-#include "core/error_reporter.h"
+#include "tools/error_reporter.h"
 #include <iostream>
 #include <stdexcept>
 

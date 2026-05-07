@@ -19,7 +19,7 @@ void ProjectBrowserPanel::setProject(Haruka::Project* project) {
     needsRefresh = true;
 }
 
-void ProjectBrowserPanel::setScene(Haruka::Scene* scene) {
+void ProjectBrowserPanel::setScene(Haruka::SceneManager* scene) {
     currentScene = scene;
 }
 

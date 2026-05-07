@@ -1,142 +1,96 @@
 #pragma once
 
-#include "core/camera.h"
-#include "core/scene.h"
-#include "core/world_system.h"
-#include "core/terrain_streaming_system.h"
-#include "core/event_manager.h"
-#include "core/events.h"
-#include "game/planetary_system.h"
-#include "renderer/shader.h"
-#include "renderer/render_target.h"
-#include "renderer/motor_instance.h"
-#include "renderer/simple_mesh.h"
-#include "renderer/primitive_shapes.h"
-#include "commands/command_history.h"
 #include <imgui.h>
-#include <memory>
-#include <SDL3/SDL.h>
-#include "renderer/model.h"
-#include "panels/stats.h"
-#include <map>
-#include <unordered_map>
-#include <glm/gtc/type_ptr.hpp>
-#include <glm/gtc/matrix_transform.hpp>
 #include <ImGuizmo.h>
+#include <glm/glm.hpp>
+#include <memory>
+#include <string>
+#include <vector>
 
-class Application;
+// Forward declarations para optimizar tiempos de compilación
+class Camera;
+namespace Haruka { class SceneManager; class EventManager; }
+class CommandHistory;
+class StatsPanel;
+class RenderTarget;
+class Shader;
+class Model;
+struct SDL_Window;
 
 /**
- * @brief Editor viewport panel responsible for scene rendering and gizmo interaction.
+ * @brief Panel del Viewport encargado del renderizado de la escena 3D 
+ * e interacción mediante Gizmos (ImGuizmo).
  */
 class ViewportPanel {
 public:
-    /** @brief Constructs viewport resources with default state. */
     ViewportPanel();
-    /** @brief Releases viewport resources. */
     ~ViewportPanel();
 
-    /** @brief Sets the scene rendered in the viewport. */
-    void setScene(Haruka::Scene* scene);
-    /** @brief Sets the active camera used by the viewport. */
-    void setCamera(Camera* cam);
-    /** @brief Injects the SDL window used for input handling. */
-    void setSDLWindow(SDL_Window* window) { sdlWindow = window; }
-    /** @brief Sets the command history for viewport-driven edits. */
-    void setCommandHistory(CommandHistory* history) { commandHistory = history; }
-    /** @brief Draws the viewport UI. */
+    /** @name Ciclo de Vida */
+    ///@{
     void onImGuiRender();
-    /** @brief Updates viewport-side logic and camera controls. */
-    void onUpdate(float deltaTime);
-    /** @brief Renders the scene into the viewport framebuffer. */
-    void renderScene();
-    /** @brief Renders the active ImGuizmo manipulator. */
-    void renderGizmoImGuizmo();
-    /** @brief Recreates the offscreen render target. */
-    void recreateRenderTarget();
-    /** @brief Applies keyboard/mouse input to the viewport camera. */
-    void updateCameraFromInput(float deltaTime);
+    void update(float deltaTime);
+    ///@}
 
-    /** @brief Draws axis guides for selection gizmo. */
-    void renderGizmoAxes(const glm::mat4& view, const glm::mat4& proj);
-    /** @brief Draws editor grid overlay. */
-    void renderGrid(const glm::mat4& view, const glm::mat4& proj);
-    /** @brief Processes gizmo input state. */
-    void handleGizmoInput();
-    /** @brief Handles asset drop events in the viewport. */
-    void handleAssetDrop();
-    /** @brief Builds a world-space ray from the current mouse position. */
-    glm::vec3 getRayFromMouse(const glm::mat4& proj, const glm::mat4& view);
-    /** @brief Returns the index of the hovered object, if any. */
-    int getHoveredObjectIndex(const glm::vec3& rayOrigin, const glm::vec3& rayDir, const glm::mat4& proj, const glm::mat4& view);
-    /** @brief Tests ray/axis intersection for gizmo picking. */
-    bool rayIntersectsAxis(const glm::vec3& rayOrigin, const glm::vec3& rayDir, const glm::vec3& axisOrigin, const glm::vec3& axisDir, float& tOut);
-    /** @brief Loads a model from cache or disk. */
+    /** @name Configuración de Sistemas (Inyección de dependencias) */
+    ///@{
+    void setScene(Haruka::SceneManager* scene)       { m_currentScene = scene; }
+    void setCamera(Camera* cam)                      { m_camera = cam; }
+    void setCommandHistory(CommandHistory* ch)       { m_commandHistory = ch; }
+    void setStatsPanel(StatsPanel* sp)               { m_statsPanel = sp; }
+    void setEventManager(Haruka::EventManager* em)   { m_eventManager = em; }
+    void setSDLWindow(SDL_Window* window)            { m_sdlWindow = window; }
+    
+    /** @brief Define qué objeto de la escena estamos manipulando */
+    void setSelectedObject(int index)                { m_selectedObjectIndex = index; }
+    ///@}
+
+    /** @name Getters de Estado */
+    ///@{
+    bool isFocused() const { return m_isFocused; }
+    bool isHovered() const { return m_isHovered; }
+    const ImVec2& getSize() const { return m_viewportSize; }
+    ///@}
+
+    /** @brief Acceso al sistema de caché de modelos */
     Model* getOrLoadModel(const std::string& path);
 
-    void setEventManager(Haruka::EventManager* mgr) { eventManager = mgr; }
-    void setStatsPanel(StatsPanel* panel) { statsPanel = panel; }
-    void setPlayMode(bool play) {
-        playMode = play;
-        MotorInstance::getInstance().setPlayMode(play);
-    }
-    void setGizmoMode(int mode) { gizmoMode = mode; }
-    void setSelectedObjectIndex(int index) { selectedObjectIndex = index; }
-    int getSelectedObjectIndex() const { return selectedObjectIndex; }
+private:
+    /** @brief Dibuja los Gizmos de ImGuizmo sobre la textura renderizada */
+    void handleGizmos();
+
+    /** @brief Gestiona el redimensionamiento del RenderTarget para evitar estiramientos */
+    void manageResize();
+
+    /** @brief Lógica interna de renderizado OpenGL */
+    void renderScene();
 
 private:
-    // Motor app instance owned by the viewport when running in editor mode
-    std::unique_ptr<Application> ownedApplication;
+    // --- Punteros a Sistemas Externos ---
+    Haruka::SceneManager* m_currentScene      = nullptr;
+    Camera* m_camera            = nullptr;
+    CommandHistory* m_commandHistory    = nullptr;
+    StatsPanel* m_statsPanel        = nullptr;
+    Haruka::EventManager* m_eventManager      = nullptr;
+    SDL_Window* m_sdlWindow         = nullptr;
 
-    Haruka::Scene* currentScene = nullptr;
-    Camera* camera = nullptr;
+    // --- Recursos de GPU (OpenGL) ---
+    std::unique_ptr<RenderTarget> m_renderTarget;
+    std::unique_ptr<Shader>       m_sceneShader;
 
-    int width = 1280, height = 720;
-    ImVec2 viewportMin, viewportMax;
-    bool isViewportHovered = false;
-    bool isViewportFocused = false;
-    bool playMode = false;
-    bool showGrid = false;
+    // --- Estado del Panel ---
+    ImVec2 m_viewportSize{ 0.f, 0.f };
+    bool   m_isFocused = false;
+    bool   m_isHovered = false;
 
-    int selectedObjectIndex = -1;
-    int currentGizmoOperation = ImGuizmo::TRANSLATE;
+    // --- Configuración de Gizmos (ImGuizmo) ---
+    ImGuizmo::OPERATION m_gizmoOperation      = ImGuizmo::TRANSLATE;
+    ImGuizmo::MODE      m_gizmoMode           = ImGuizmo::LOCAL;
+    int                 m_selectedObjectIndex = -1;
 
-    // Camera controls
-    float camYaw = 0.0f, camPitch = 0.0f;
-    float moveSpeed = 5.0f, mouseSensitivity = 0.1f;
-
-    // Gizmo
-    enum class GizmoAxis { None, X, Y, Z };
-    GizmoAxis activeAxis = GizmoAxis::None;
-    bool isDragging = false;
-    glm::vec3 dragStartPos, dragStartRot, dragStartScale;
-    int gizmoMode = 0; // 0=move, 1=rotate, 2=scale
-    float axisPickRadius = 0.15f;
-
-    // OpenGL/ImGui resources
-    std::unique_ptr<RenderTarget> renderTarget;
-
-    // Shader para render local/editor (SPIR-V, used for scene objects)
-    std::unique_ptr<Shader> sceneShader;
-
-    // Terrain streaming for editor viewport (runs outside play mode)
-    std::unique_ptr<Haruka::WorldSystem> editorWorldSystem;
-    std::unique_ptr<Haruka::TerrainStreamingSystem> editorTerrainStreaming;
-    std::unique_ptr<Haruka::PlanetarySystem> editorPlanetarySystem;
-
-    // Stats panel
-    StatsPanel* statsPanel = nullptr;
-    int renderVertex_count = 0, renderDraw_calls = 0;
-
-    // Command history
-    CommandHistory* commandHistory = nullptr;
-
-    // SDL window
-    SDL_Window* sdlWindow = nullptr;
-
-    // Event manager for asset-drop and other viewport-driven creation requests.
-    Haruka::EventManager* eventManager = nullptr;
-
-    // Model cache lookup for the viewport's local editor render path.
-    Model* getOrLoadModelCached(const std::string& path);
+    // --- Controles de Cámara (Caché local de ángulos) ---
+    float m_camYaw            = 0.0f;
+    float m_camPitch          = 0.0f;
+    float m_moveSpeed         = 5.0f;
+    float m_mouseSensitivity  = 0.1f;
 };

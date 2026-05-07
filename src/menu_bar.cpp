@@ -55,7 +55,7 @@ void MenuBar::renderFileMenu() {
 
     if (ImGui::MenuItem("Save", "Ctrl+S")) {
         if (!editorApp->currentFile.path.empty()) {
-            editorApp->saveFile(editorApp->currentFile.path, editorApp->currentFile.isPrefab);
+            editorApp->saveFile(editorApp->currentFile.path);
         } else {
             std::snprintf(editorApp->saveAsBuffer, sizeof(editorApp->saveAsBuffer), "scenes/Untitled.scene");
             editorApp->showSaveAsPopup = true;
@@ -71,7 +71,7 @@ void MenuBar::renderFileMenu() {
 
     if (ImGui::MenuItem("Open File", "Ctrl+O")) {
         nfdchar_t* outPath = nullptr;
-        nfdresult_t result = NFD_OpenDialog("scene,prefab", nullptr, &outPath);
+        nfdresult_t result = NFD_OpenDialog("scene", nullptr, &outPath);
         
         if (result == NFD_OKAY) {
             editorApp->loadFile(outPath);
@@ -126,7 +126,6 @@ void MenuBar::renderViewMenu() {
     
     ImGui::MenuItem("Settings", nullptr, &editorApp->showSettings);
     ImGui::MenuItem("Asset Importer", nullptr, &editorApp->showAssetImporter);
-    ImGui::MenuItem("Search Panel", nullptr, &editorApp->showSearchPanel);
     ImGui::MenuItem("UI Builder", nullptr, &editorApp->showUIBuilder);
     
     ImGui::Separator();

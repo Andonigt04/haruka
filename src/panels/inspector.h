@@ -1,6 +1,6 @@
 #pragma once
 
-#include "core/scene.h"
+#include "core/scene/scene_manager.h"
 #include "commands/command_history.h"
 #include <imgui.h>
 #include <glm/glm.hpp>
@@ -12,7 +12,7 @@ public:
     InspectorPanel() = default;
     
     /** @brief Sets the scene whose selected object is inspected. */
-    void setScene(Haruka::Scene* scene);
+    void setScene(Haruka::SceneManager* scene);
     /** @brief Sets the object index currently inspected. */
     void setSelectedObjectIndex(int index);
     /** @brief Sets the command history used for undoable edits. */
@@ -25,7 +25,13 @@ public:
     void setOnSceneChanged(std::function<void()> cb) { onSceneChanged = std::move(cb); }
 
 private:
-    Haruka::Scene* currentScene = nullptr;
+    void drawNoSelectionState() const;
+    bool drawObjectHeader(Haruka::SceneObject& obj);
+    bool drawTransformSection(Haruka::SceneObject& obj);
+    bool drawVisualSection(Haruka::SceneObject& obj);
+    bool drawMetadataSection(Haruka::SceneObject& obj);
+
+    Haruka::SceneManager* currentScene = nullptr;
     int selectedObjectIndex = -1;
     CommandHistory* commandHistory = nullptr;
     bool playMode = false;
