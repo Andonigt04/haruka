@@ -90,20 +90,25 @@ void SceneHierarchyPanel::onImGuiRender() {
     ImGui::Separator();
 
     if (currentScene) {
-        const auto& objects = currentScene->getAllObjects();
+        m_frameObjects = currentScene->getAllObjectsSnapshot();
+        const size_t objectCount = m_frameObjects.size();
 
         // Rebuild children map each frame from parentIndex.
-        m_childrenMap.assign(objects.size(), {});
-        for (int i = 0; i < (int)objects.size(); ++i) {
-            int p = objects[i]->parentIndex;
-            if (p >= 0 && p < (int)objects.size())
+        m_childrenMap.assign(objectCount, {});
+        for (int i = 0; i < (int)objectCount; ++i) {
+            if (!m_frameObjects[i]) continue;
+            int p = m_frameObjects[i]->parentIndex;
+            if (p >= 0 && p < (int)objectCount)
                 m_childrenMap[p].push_back(i);
         }
 
-        for (int i = 0; i < (int)objects.size(); ++i) {
-            if (objects[i]->parentIndex == -1)
+        for (int i = 0; i < (int)objectCount; ++i) {
+            if (m_frameObjects[i] && m_frameObjects[i]->parentIndex == -1)
                 renderObjectNode(i);
         }
+    } else {
+        m_frameObjects.clear();
+        m_childrenMap.clear();
     }
 
     ImGui::End();
@@ -239,10 +244,11 @@ void SceneHierarchyPanel::createPrimitive(const std::string& name, const std::st
 }
 
 void SceneHierarchyPanel::renderObjectNode(int index) {
-    if (!currentScene || index < 0 ||
-        index >= (int)currentScene->getAllObjects().size()) return;
+    if (index < 0 || index >= (int)m_frameObjects.size()) return;
+    if (index >= (int)m_childrenMap.size()) return;
+    if (!m_frameObjects[index]) return;
 
-    const Haruka::SceneObject& obj = *currentScene->getAllObjects()[index];
+    const Haruka::SceneObject& obj = *m_frameObjects[index];
 
     ImGuiTreeNodeFlags flags =
         ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth;
@@ -271,10 +277,10 @@ void SceneHierarchyPanel::renderObjectNode(int index) {
     if (ImGui::BeginDragDropTarget()) {
         if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("SCENE_OBJ_IDX")) {
             int dragged = *(const int*)p->Data;
-            if (dragged != index && eventManager) {
+            if (dragged != index && eventManager && dragged >= 0 && dragged < (int)m_frameObjects.size() && m_frameObjects[dragged]) {
                 nlohmann::json d;
                 d["newParentIndex"] = index;
-                const auto& draggedObj = currentScene->getAllObjects()[dragged];
+                const auto& draggedObj = m_frameObjects[dragged];
                 eventManager->post(std::make_shared<Haruka::ObjectEvent>(
                     draggedObj->name, draggedObj->type,
                     Haruka::ObjectEvent::ActionType::Reparented, d));
@@ -413,8 +419,12 @@ void SceneHierarchyPanel::duplicateObject(int index) {
 
 void SceneHierarchyPanel::showContextMenu(int index) {
     if (!ImGui::BeginPopupContextItem()) return;
+    if (index < 0 || index >= (int)m_frameObjects.size() || !m_frameObjects[index]) {
+        ImGui::EndPopup();
+        return;
+    }
 
-    const Haruka::SceneObject& obj = *currentScene->getAllObjects()[index];
+    const Haruka::SceneObject& obj = *m_frameObjects[index];
 
     if (ImGui::BeginMenu("Create Child")) {
         for (const auto& [displayName, typeStr] : objectTypes) {

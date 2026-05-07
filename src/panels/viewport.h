@@ -23,6 +23,12 @@ struct SDL_Window;
  */
 class ViewportPanel {
 public:
+    enum class VisualizationMode {
+        Simple,
+        Complete,
+        Final
+    };
+
     ViewportPanel();
     ~ViewportPanel();
 
@@ -88,9 +94,17 @@ private:
     ImGuizmo::MODE      m_gizmoMode           = ImGuizmo::LOCAL;
     int                 m_selectedObjectIndex = -1;
 
+    // --- Visualización del viewport ---
+    VisualizationMode   m_visualizationMode   = VisualizationMode::Simple;
+    VisualizationMode   m_loadedShaderMode    = VisualizationMode::Simple;
+    bool                m_shaderModeLoaded    = false;
+
     // --- Controles de Cámara (Caché local de ángulos) ---
     float m_camYaw            = 0.0f;
     float m_camPitch          = 0.0f;
     float m_moveSpeed         = 5.0f;
     float m_mouseSensitivity  = 0.1f;
+    
+    // --- Floating origin / origin-shift support (editor-side) ---
+    // Floating origin support removed from editor viewport
 };

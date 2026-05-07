@@ -63,6 +63,7 @@ private:
 
     // Built once per frame: index → child indices.
     std::vector<std::vector<int>> m_childrenMap;
+    std::vector<std::shared_ptr<Haruka::SceneObject>> m_frameObjects;
 
     void renderObjectNode(int index);
     void showContextMenu(int index);

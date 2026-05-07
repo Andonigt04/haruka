@@ -159,7 +159,6 @@ void EditorApplication::init() {
     // Inicializar MenuBar
     menuBar = std::make_unique<MenuBar>(this);
     
-    std::cout << "✓ Haruka Editor initialized" << std::endl;
 }
 
 void EditorApplication::shutdown() {
@@ -199,8 +198,6 @@ void EditorApplication::update() {
     deltaTime = currentFrame - lastFrame;
     lastFrame = currentFrame;
 
-    statsPanel.update(deltaTime);
-
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
         ImGui_ImplSDL3_ProcessEvent(&event);
@@ -227,6 +224,8 @@ void EditorApplication::update() {
     
     processEditorEvents();
     viewportPanel.update(deltaTime);
+
+    statsPanel.update(deltaTime);
 }
 
 void EditorApplication::updatePlayMode(float deltaTime) {
@@ -833,7 +832,9 @@ void EditorApplication::loadFile(const std::string& path) {
     currentScene = std::make_unique<Haruka::Scene>();
     currentScene->setEventManager(&eventManager); // notify engine of loaded objects
 
-    if (currentScene->load(path)) {
+    if (loadedScene->load(path)) {
+        currentScene = std::move(loadedScene);
+
         // Actualizar estado del archivo
         currentFile.path = path;
         currentFile.name = std::filesystem::path(path).stem().string();
@@ -855,10 +856,7 @@ void EditorApplication::loadFile(const std::string& path) {
             const auto& obj = *objPtr;
             if (obj.type == "Camera") {
                 viewportCamera->position = obj.position;
-                glm::dquat qYaw   = glm::angleAxis(glm::radians(obj.rotation.y), glm::dvec3(0, 1, 0));
-                glm::dquat qPitch = glm::angleAxis(glm::radians(obj.rotation.x), glm::dvec3(1, 0, 0));
-                glm::dquat qRoll  = glm::angleAxis(glm::radians(obj.rotation.z), glm::dvec3(0, 0, 1));
-                viewportCamera->orientation = qYaw * qPitch * qRoll;
+                viewportCamera->orientation = obj.rotation;
                 if (obj.properties.is_object()) {
                     if (obj.properties.contains("speed"))
                         viewportCamera->speed = obj.properties["speed"].get<float>();
