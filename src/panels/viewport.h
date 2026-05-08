@@ -3,13 +3,16 @@
 #include <imgui.h>
 #include <ImGuizmo.h>
 #include <glm/glm.hpp>
+#include <glad/glad.h>
 #include <memory>
 #include <string>
 #include <vector>
+#include <array>
+#include <unordered_map>
 
 // Forward declarations para optimizar tiempos de compilación
 class Camera;
-namespace Haruka { class SceneManager; class EventManager; }
+namespace Haruka { class SceneManager; class EventManager; struct SceneObject; }
 class CommandHistory;
 class StatsPanel;
 class RenderTarget;
@@ -56,6 +59,7 @@ public:
     bool isFocused() const { return m_isFocused; }
     bool isHovered() const { return m_isHovered; }
     const ImVec2& getSize() const { return m_viewportSize; }
+    RenderTarget* getRenderTarget() const { return m_renderTarget.get(); }
     ///@}
 
     /** @brief Acceso al sistema de caché de modelos */
@@ -71,6 +75,9 @@ private:
     /** @brief Lógica interna de renderizado OpenGL */
     void renderScene();
 
+    /** @brief Genera (y cachea) la malla de terrain preview para un planeta. */
+    void generatePlanetPreview(const Haruka::SceneObject& obj);
+
 private:
     // --- Punteros a Sistemas Externos ---
     Haruka::SceneManager* m_currentScene      = nullptr;
@@ -83,6 +90,16 @@ private:
     // --- Recursos de GPU (OpenGL) ---
     std::unique_ptr<RenderTarget> m_renderTarget;
     std::unique_ptr<Shader>       m_sceneShader;
+    GLuint m_uboPerFrame  = 0;
+    GLuint m_uboPerObject = 0;
+
+    // --- Planet terrain preview cache ---
+    struct PlanetFaceGPU {
+        GLuint vao = 0, vbo = 0, nbo = 0, ebo = 0;
+        GLsizei indexCount = 0;
+        bool valid() const { return vao != 0; }
+    };
+    std::unordered_map<std::string, std::array<PlanetFaceGPU, 6>> m_planetPreviewCache;
 
     // --- Estado del Panel ---
     ImVec2 m_viewportSize{ 0.f, 0.f };

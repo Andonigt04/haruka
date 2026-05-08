@@ -150,6 +150,10 @@ private:
     /** @brief Drains EventManager queue and applies each event to the scene + CommandHistory. */
     void processEditorEvents();
 
+    // Runtime Application instance — drives terrain streaming + full render pipeline in editor
+    std::unique_ptr<Application> m_runtimeApp;
+    bool m_runtimeAppReady = false;
+
     std::unique_ptr<Haruka::PlanetarySystem> planetarySystem;
     bool runningPlanetarySystem = false;
 

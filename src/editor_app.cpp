@@ -121,6 +121,13 @@ void EditorApplication::init() {
     viewportPanel.setSDLWindow(window);
     viewportPanel.setStatsPanel(&statsPanel);
 
+    // ===== Runtime Application (terrain streaming + full pipeline in editor) =====
+    m_runtimeApp = std::make_unique<Application>();
+    m_runtimeApp->init(*currentScene);
+    m_runtimeApp->onCameraChanged(viewportCamera.get());
+    m_runtimeApp->initPlanetarySystem();
+    m_runtimeAppReady = true;
+
     editorCamPos = viewportCamera->position;
     editorCamRot = viewportCamera->orientation;
 
@@ -225,7 +232,34 @@ void EditorApplication::update() {
     processEditorEvents();
     viewportPanel.update(deltaTime);
 
+    // Sync runtime Application with current editor state
+    if (m_runtimeAppReady && m_runtimeApp && !isPlayMode) {
+        m_runtimeApp->onCameraChanged(viewportCamera.get());
+        const ImVec2& vpSize = viewportPanel.getSize();
+        if (vpSize.x > 0 && vpSize.y > 0) {
+            m_runtimeApp->setEditorViewportSize((int)vpSize.x, (int)vpSize.y);
+        }
+        m_runtimeApp->setEditorTarget(viewportPanel.getRenderTarget());
+        m_runtimeApp->buildRenderQueue();
+    }
+
     statsPanel.update(deltaTime);
+
+    if (m_runtimeAppReady && m_runtimeApp) {
+        statsPanel.setVertexCount(m_runtimeApp->getRenderedVertices());
+        statsPanel.setTriangleCount(m_runtimeApp->getRenderedTriangles());
+        statsPanel.setDrawCalls(m_runtimeApp->getRenderedDrawCalls());
+        statsPanel.setTotalVertexCount(m_runtimeApp->getTotalVertices());
+        statsPanel.setTotalTriangleCount(m_runtimeApp->getTotalTriangles());
+        statsPanel.setTotalDrawCalls(m_runtimeApp->getTotalDrawCalls());
+        statsPanel.setVisibleChunkCount(m_runtimeApp->getVisibleChunks());
+        statsPanel.setResidentChunkCount(m_runtimeApp->getResidentChunks());
+        statsPanel.setPendingChunkLoads(m_runtimeApp->getPendingChunkLoads());
+        statsPanel.setPendingChunkEvictions(m_runtimeApp->getPendingChunkEvictions());
+        statsPanel.setTrackedChunkCount(m_runtimeApp->getTrackedChunks());
+        statsPanel.setResidentMemoryMB(m_runtimeApp->getResidentMemoryMB());
+        statsPanel.setMaxMemoryMB(m_runtimeApp->getMaxMemoryMB());
+    }
 }
 
 void EditorApplication::updatePlayMode(float deltaTime) {
@@ -260,6 +294,16 @@ void EditorApplication::render() {
     }
     if (sceneDirty) title += " *";
     SDL_SetWindowTitle(window, title.c_str());
+
+    // Render scene into viewport FBO BEFORE ImGui reads the texture
+    if (m_runtimeAppReady && m_runtimeApp && !isPlayMode) {
+        if (viewportPanel.getRenderTarget()) {
+            glEnable(GL_DEPTH_TEST);
+            glDepthFunc(GL_LESS);
+            m_runtimeApp->renderFrameContent();
+            glDisable(GL_DEPTH_TEST);
+        }
+    }
 
     // ImGui frame setup
     ImGui_ImplOpenGL3_NewFrame();
@@ -872,6 +916,12 @@ void EditorApplication::loadFile(const std::string& path) {
         // Resetear selección a ningún objeto
         sceneHierarchyPanel.setSelectedObjectIndex(-1);
         inspectorPanel.setSelectedObjectIndex(-1);
+
+        // Reinitialize terrain streaming for new scene
+        if (m_runtimeAppReady && m_runtimeApp) {
+            m_runtimeApp->onSceneChanged(currentScene.get());
+            m_runtimeApp->initPlanetarySystem();
+        }
 
         std::cout << "✓ Scene loaded: " << path << std::endl;
     } else {

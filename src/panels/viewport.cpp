@@ -19,6 +19,7 @@
 #include "core/scene/scene_manager.h"
 #include "core/scene/scene_render_policy.h"
 #include "core/components/mesh_renderer_component.h"
+#include "core/terrain/terrain_generator.h"
 #include "renderer/render_target.h"
 #include "renderer/shader.h"
 #include "renderer/model.h"
@@ -60,7 +61,7 @@ namespace {
                     std::vector<glm::vec3> vertices;
                     std::vector<glm::vec3> normals;
                     std::vector<unsigned int> indices;
-                    PrimitiveShapes::createSphereLOD(1.0f, 24, 16, vertices, normals, indices);
+                    PrimitiveShapes::createSphereLOD(1.0f, 64, 32, vertices, normals, indices);
                     g_sphereMesh = std::make_unique<SimpleMesh>(vertices, normals, indices);
                 }
                 return g_sphereMesh.get();
@@ -85,6 +86,16 @@ namespace {
             default:
                 return nullptr;
         }
+    }
+
+    bool isPlanetLike(const Haruka::SceneObject& obj) {
+        if (obj.terrainSettings || obj.lodSettings || obj.flags.hasChunks) return true;
+        std::string lo = obj.type;
+        std::transform(lo.begin(), lo.end(), lo.begin(), ::tolower);
+        return lo.find("planet")       != std::string::npos
+            || lo.find("celestialbody")!= std::string::npos
+            || lo.find("star")         != std::string::npos
+            || lo.find("satellite")    != std::string::npos;
     }
 
     void applyVisualizationPreset(ViewportPanel::VisualizationMode mode) {
@@ -130,7 +141,16 @@ ViewportPanel::ViewportPanel() {
 }
 
 ViewportPanel::~ViewportPanel() {
-    // La limpieza de std::unique_ptr es automática
+    if (m_uboPerFrame  != 0) glDeleteBuffers(1, &m_uboPerFrame);
+    if (m_uboPerObject != 0) glDeleteBuffers(1, &m_uboPerObject);
+    for (auto& [name, faces] : m_planetPreviewCache) {
+        for (auto& face : faces) {
+            if (face.vao) glDeleteVertexArrays(1, &face.vao);
+            if (face.vbo) glDeleteBuffers(1, &face.vbo);
+            if (face.nbo) glDeleteBuffers(1, &face.nbo);
+            if (face.ebo) glDeleteBuffers(1, &face.ebo);
+        }
+    }
 }
 
 void ViewportPanel::onImGuiRender() {
@@ -153,6 +173,7 @@ void ViewportPanel::onImGuiRender() {
     ImGui::SameLine();
     if (ImGui::Button("Final")) {
         m_visualizationMode = VisualizationMode::Final;
+
         applyVisualizationPreset(m_visualizationMode);
     }
 
@@ -181,8 +202,8 @@ void ViewportPanel::onImGuiRender() {
     // 1. Sincronizar tamaño del RenderTarget con el panel de ImGui
     manageResize();
 
-    // 2. Renderizar la escena 3D en el Framebuffer
-    renderScene();
+    // 2. La escena ya fue renderizada por Application::renderFrameContent() en EditorApplication::render().
+    //    Solo mostramos la textura resultante.
 
     // 3. Mostrar la textura resultante
     // Invertimos las V (0,1 a 1,0) porque OpenGL y ImGui tienen el origen Y opuesto
@@ -239,10 +260,50 @@ void ViewportPanel::manageResize() {
     }
 }
 
+// std140-compatible structs mirroring the UBO declarations in the shaders.
+// Any change to the GLSL UBO layout must be reflected here.
+namespace {
+struct alignas(16) PerFrameUBOData {
+    glm::mat4 view;
+    glm::mat4 projection;
+    glm::vec3 cameraPos;      float _pad0;
+    glm::vec3 sunDirection;   float _pad1;
+    glm::vec3 sunLightColor;  float ambientStrength;
+    int enableHDR;
+    int enableBloom;
+    int enableSSAO;
+    int enableIBL;
+    int enableShadows;
+    int _pad3[3];
+};
+static_assert(sizeof(PerFrameUBOData) == 208, "PerFrameUBOData std140 size mismatch");
+
+struct alignas(16) PerObjectUBOData {
+    glm::mat4 model;
+    glm::vec4 baseColorAndPlanetRadius; // rgb=color, a=planetRadius
+    glm::vec4 planetCenterAndFlag;      // xyz=planetCenter, w=useProceduralTerrain
+};
+static_assert(sizeof(PerObjectUBOData) == 96, "PerObjectUBOData std140 size mismatch");
+} // namespace
+
 void ViewportPanel::renderScene() {
     if (!m_currentScene || !m_camera) return;
 
-    // Ensure GL resources exist (lazy init after GL context available)
+    // Lazy-create UBOs once a GL context is available
+    if (m_uboPerFrame == 0) {
+        glGenBuffers(1, &m_uboPerFrame);
+        glBindBuffer(GL_UNIFORM_BUFFER, m_uboPerFrame);
+        glBufferData(GL_UNIFORM_BUFFER, sizeof(PerFrameUBOData), nullptr, GL_DYNAMIC_DRAW);
+        glBindBuffer(GL_UNIFORM_BUFFER, 0);
+    }
+    if (m_uboPerObject == 0) {
+        glGenBuffers(1, &m_uboPerObject);
+        glBindBuffer(GL_UNIFORM_BUFFER, m_uboPerObject);
+        glBufferData(GL_UNIFORM_BUFFER, sizeof(PerObjectUBOData), nullptr, GL_DYNAMIC_DRAW);
+        glBindBuffer(GL_UNIFORM_BUFFER, 0);
+    }
+
+    // Reload shader when visualization mode changes
     if (!m_sceneShader || !m_shaderModeLoaded || m_loadedShaderMode != m_visualizationMode) {
         switch (m_visualizationMode) {
             case VisualizationMode::Simple:
@@ -260,77 +321,91 @@ void ViewportPanel::renderScene() {
     }
 
     if (!m_renderTarget) {
-        // fallback to stored viewport size or a sensible default
         uint32_t w = (m_viewportSize.x > 0) ? (uint32_t)m_viewportSize.x : 1280u;
         uint32_t h = (m_viewportSize.y > 0) ? (uint32_t)m_viewportSize.y : 720u;
         m_renderTarget = std::make_unique<RenderTarget>(w, h);
     }
 
     m_renderTarget->bindForWriting();
-    
-    // Limpieza de buffer
+
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LESS);
     glViewport(0, 0, (GLsizei)m_viewportSize.x, (GLsizei)m_viewportSize.y);
     glClearColor(0.01f, 0.01f, 0.015f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     m_sceneShader->use();
 
+    // Bind UBOs to the fixed binding points used by all shaders
+    glBindBufferBase(GL_UNIFORM_BUFFER, 0, m_uboPerFrame);
+    glBindBufferBase(GL_UNIFORM_BUFFER, 1, m_uboPerObject);
+
+    // --- Upload per-frame data ---
+    float aspect = 1.0f;
+    if (m_viewportSize.y > 0.0f)
+        aspect = m_viewportSize.x / m_viewportSize.y;
+    else if (m_camera)
+        aspect = m_camera->aspectRatio;
+    if (aspect <= 0.0f) aspect = 1.0f;
+
+    const glm::vec3 cameraOrigin       = glm::vec3(m_camera->position);
+    const glm::vec3 kSunDir            = glm::normalize(glm::vec3(0.35f, 0.75f, 0.25f));
+    const bool isComplete = (m_visualizationMode == VisualizationMode::Complete);
+    const bool isFinal    = (m_visualizationMode == VisualizationMode::Final);
+
+    PerFrameUBOData frameData{};
+    // Floating-origin: objects are pre-shifted by -cameraOrigin in their model
+    // matrix, so the view matrix must be rotation-only (no translation).
+    frameData.view            = glm::mat4(glm::mat3(m_camera->getViewMatrix()));
+    frameData.projection      = m_camera->getProjectionMatrix(aspect);
+    frameData.cameraPos       = cameraOrigin;
+    frameData.sunDirection    = kSunDir;
+    frameData.sunLightColor   = glm::vec3(1.0f, 0.98f, 0.95f);
+    frameData.ambientStrength = isComplete ? 0.16f : 0.0f;
+    frameData.enableHDR       = isFinal ? (int)Application::getRenderFeatureHDR()    : 0;
+    frameData.enableBloom     = isFinal ? (int)Application::getRenderFeatureBloom()  : 0;
+    frameData.enableSSAO      = isFinal ? (int)Application::getRenderFeatureSSAO()   : 0;
+    frameData.enableIBL       = isFinal ? (int)Application::getRenderFeatureIBL()    : 0;
+    frameData.enableShadows   = isFinal ? (int)Application::getRenderFeatureShadows(): 0;
+
+    glBindBuffer(GL_UNIFORM_BUFFER, m_uboPerFrame);
+    glBufferSubData(GL_UNIFORM_BUFFER, 0, sizeof(PerFrameUBOData), &frameData);
+    glBindBuffer(GL_UNIFORM_BUFFER, 0);
+
+    // --- Draw objects ---
     const auto renderCommands = Haruka::buildSceneRenderQueue(*m_currentScene);
 
-    // Matrices Globales
-    float aspect = 1.0f;
-    if (m_viewportSize.y > 0.0f) {
-        aspect = m_viewportSize.x / m_viewportSize.y;
-    } else if (m_camera) {
-        aspect = m_camera->aspectRatio;
-    }
-    if (aspect <= 0.0f) aspect = 1.0f;
-    const glm::vec3 cameraOrigin = glm::vec3(m_camera->position);
-    const glm::mat4 viewNoTranslation = glm::mat4(glm::mat3(m_camera->getViewMatrix()));
-    m_sceneShader->setMat4("view", viewNoTranslation);
-    m_sceneShader->setMat4("projection", m_camera->getProjectionMatrix(aspect));
-
-    if (m_visualizationMode == VisualizationMode::Complete) {
-        m_sceneShader->setVec3("sunDirection", glm::normalize(glm::vec3(0.35f, 0.75f, 0.25f)));
-        m_sceneShader->setVec3("sunLightColor", glm::vec3(1.0f, 0.98f, 0.95f));
-        m_sceneShader->setFloat("ambientStrength", 0.16f);
-        m_sceneShader->setBool("useProceduralTerrain", false);
-        m_sceneShader->setVec3("planetCenter", glm::vec3(0.0f));
-        m_sceneShader->setFloat("planetRadius", 1.0f);
-    }
-
-    if (m_visualizationMode == VisualizationMode::Final) {
-        m_sceneShader->setVec3("cameraPos", cameraOrigin);
-        m_sceneShader->setVec3("sunDirection", glm::normalize(glm::vec3(0.35f, 0.75f, 0.25f)));
-        m_sceneShader->setBool("enableHDR", Application::getRenderFeatureHDR());
-        m_sceneShader->setBool("enableBloom", Application::getRenderFeatureBloom());
-        m_sceneShader->setBool("enableSSAO", Application::getRenderFeatureSSAO());
-        m_sceneShader->setBool("enableIBL", Application::getRenderFeatureIBL());
-        m_sceneShader->setBool("enableShadows", Application::getRenderFeatureShadows());
-    }
-
-    // Dibujado de objetos
     int frameDrawCalls = 0;
-    int frameVertices = 0;
+    int frameVertices  = 0;
     int frameTriangles = 0;
 
     for (const auto& command : renderCommands) {
         const auto* obj = command.object;
         if (!obj) continue;
 
-        glm::mat4 modelMat = GetTransformMatrix(*obj);
-        modelMat = glm::translate(glm::mat4(1.0f), -cameraOrigin) * modelMat;
-        m_sceneShader->setMat4("model", modelMat);
-
         const glm::vec3 objectColor = (glm::length(glm::vec3(obj->color)) > 0.001f)
             ? glm::vec3(obj->color)
             : glm::vec3(0.76f, 0.78f, 0.82f);
 
-        if (m_visualizationMode == VisualizationMode::Complete) {
-            m_sceneShader->setVec3("lightColor", objectColor);
-        } else if (m_visualizationMode == VisualizationMode::Final) {
-            m_sceneShader->setVec3("baseColor", objectColor);
+        glm::mat4 modelMat = GetTransformMatrix(*obj);
+        modelMat = glm::translate(glm::mat4(1.0f), -cameraOrigin) * modelMat;
+
+        PerObjectUBOData objData{};
+        objData.model                    = modelMat;
+        objData.baseColorAndPlanetRadius = glm::vec4(objectColor, 1.0f);
+        objData.planetCenterAndFlag      = glm::vec4(0.0f);
+
+        // Activate procedural terrain albedo for planet-like objects (light_cube.frag, Complete mode)
+        if (isComplete && isPlanetLike(*obj)) {
+            float radius = (float)std::max({obj->scale.x, obj->scale.y, obj->scale.z});
+            glm::vec3 center = glm::vec3(obj->position) - cameraOrigin;
+            objData.baseColorAndPlanetRadius.a = radius;
+            objData.planetCenterAndFlag = glm::vec4(center, 1.0f);
         }
+
+        glBindBuffer(GL_UNIFORM_BUFFER, m_uboPerObject);
+        glBufferSubData(GL_UNIFORM_BUFFER, 0, sizeof(PerObjectUBOData), &objData);
+        glBindBuffer(GL_UNIFORM_BUFFER, 0);
 
         switch (command.kind) {
             case Haruka::RenderKind::Model: {
@@ -338,7 +413,7 @@ void ViewportPanel::renderScene() {
                 if (!model) break;
                 model->Draw(*m_sceneShader);
                 ++frameDrawCalls;
-                frameVertices += model->getVertexCount();
+                frameVertices  += model->getVertexCount();
                 frameTriangles += model->getTriangleCount();
                 break;
             }
@@ -346,7 +421,7 @@ void ViewportPanel::renderScene() {
                 if (!obj->meshRenderer || !obj->meshRenderer->isResident()) break;
                 obj->meshRenderer->render(*m_sceneShader);
                 ++frameDrawCalls;
-                frameVertices += obj->meshRenderer->getResidentVertexCount();
+                frameVertices  += obj->meshRenderer->getResidentVertexCount();
                 frameTriangles += obj->meshRenderer->getResidentTriangleCount();
                 break;
             }
@@ -355,7 +430,7 @@ void ViewportPanel::renderScene() {
                 if (!mesh) break;
                 mesh->draw();
                 ++frameDrawCalls;
-                frameVertices += mesh->getVertexCount();
+                frameVertices  += mesh->getVertexCount();
                 frameTriangles += mesh->getTriangleCount();
                 break;
             }
@@ -364,6 +439,7 @@ void ViewportPanel::renderScene() {
         }
     }
 
+    glDisable(GL_DEPTH_TEST);
     m_renderTarget->unbind();
 
     // --- Basic frame statistics (editor-side approximation) ---
@@ -447,6 +523,20 @@ void ViewportPanel::update(float deltaTime) {
     // Movimiento de cámara en el viewport: WASD, Space y Ctrl
     if (m_isHovered && m_camera && !ImGuizmo::IsUsing()) {
         m_camera->processInput(m_sdlWindow, deltaTime);
+
+        // Right-click drag to rotate camera
+        if (ImGui::IsMouseDown(ImGuiMouseButton_Right)) {
+            ImGuiIO& io = ImGui::GetIO();
+            if (io.MouseDelta.x != 0.0f || io.MouseDelta.y != 0.0f) {
+                m_camera->rotate(io.MouseDelta.x, io.MouseDelta.y);
+            }
+        }
+
+        // Scroll wheel adjusts camera speed (x1.15 per tick)
+        float wheel = ImGui::GetIO().MouseWheel;
+        if (wheel != 0.0f) {
+            m_camera->speed = std::max(0.1f, m_camera->speed * std::pow(1.15f, wheel));
+        }
     }
 }
 
