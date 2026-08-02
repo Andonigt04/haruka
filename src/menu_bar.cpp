@@ -2,7 +2,7 @@
 #include "editor_app.h"
 #include <imgui.h>
 #include <nfd.h>
-#include <GLFW/glfw3.h>
+#include <SDL3/SDL.h>
 #include <iostream>
 #include <cstdio>
 
@@ -12,6 +12,7 @@ void MenuBar::render() {
     renderFileMenu();
     renderEditMenu();
     renderObjectsMenu();
+    renderMaterialMenu();
     renderViewMenu();
     renderPlayControls();
     renderHelpMenu();
@@ -37,6 +38,9 @@ void MenuBar::renderFileMenu() {
             editorApp->currentProject->load(selectedPath);
             editorApp->projectBrowserPanel.setProject(editorApp->currentProject.get());
             editorApp->projectBrowserPanel.setScene(editorApp->currentScene.get());
+            editorApp->nodeGraphEditorPanel.setProjectPath(editorApp->currentProject->getPath());
+            editorApp->inspectorPanel.setProjectPath(editorApp->currentProject->getPath());
+            editorApp->materialEditorPanel.setProjectPath(editorApp->currentProject->getPath());
             std::cout << "Project loaded: " << selectedPath << std::endl;
             free(outPath);
         } else if (result == NFD_CANCEL) {
@@ -79,7 +83,9 @@ void MenuBar::renderFileMenu() {
     }
 
     if (ImGui::MenuItem("Exit", "Alt+F4")) {
-        glfwSetWindowShouldClose(editorApp->window, true);
+        SDL_Event quitEvent;
+        quitEvent.type = SDL_EVENT_QUIT;
+        SDL_PushEvent(&quitEvent);
     }
 
     ImGui::EndMenu();
@@ -130,6 +136,22 @@ void MenuBar::renderObjectsMenu() {
 
     ImGui::Separator();
 
+    // Entidades dinámicas (capas del panel de objetos)
+    if (ImGui::MenuItem("Prop")) {
+        editorApp->objectsPanel.createProp();
+    }
+    if (ImGui::MenuItem("Monster")) {
+        editorApp->objectsPanel.createMonster();
+    }
+    if (ImGui::MenuItem("Spawn Point")) {
+        editorApp->objectsPanel.createSpawnPoint();
+    }
+    if (ImGui::MenuItem("Character")) {
+        editorApp->objectsPanel.createCharacter();
+    }
+
+    ImGui::Separator();
+
     if (ImGui::MenuItem("Light")) {
         if (editorApp->currentScene) {
             editorApp->createSceneObject("Light");
@@ -148,15 +170,23 @@ void MenuBar::renderObjectsMenu() {
 
     ImGui::Separator();
 
-    if (ImGui::MenuItem("Sun (Sistema de unidades)")) {
+    if (ImGui::MenuItem("Sun")) {
         if (editorApp->currentScene) {
             editorApp->createSceneObject("SUN");
         }
     }
-    if (ImGui::MenuItem("Planet (Sistema de unidades)")) {
-        if (editorApp->currentScene) {
-            editorApp->createSceneObject("PLANET");
-        }
+
+    ImGui::EndMenu();
+}
+
+void MenuBar::renderMaterialMenu() {
+    if (!ImGui::BeginMenu("Material")) return;
+
+    if (ImGui::MenuItem("Node Graph Editor", nullptr, &editorApp->showNodeGraphEditor)) {}
+    if (ImGui::MenuItem("Material Editor", nullptr, &editorApp->showMaterialEditor)) {}
+    ImGui::Separator();
+    if (ImGui::MenuItem("Bake Textures for Selected")) {
+        editorApp->nodeGraphEditorPanel.bakeSelectedTextures();
     }
 
     ImGui::EndMenu();
@@ -166,12 +196,14 @@ void MenuBar::renderViewMenu() {
     if (!ImGui::BeginMenu("View")) return;
     
     ImGui::MenuItem("Scene Hierarchy", nullptr, &editorApp->showSceneHierarchy);
+    ImGui::MenuItem("Objects", nullptr, &editorApp->showObjectsPanel);
     ImGui::MenuItem("Inspector", nullptr, &editorApp->showInspector);
     ImGui::MenuItem("Project Browser", nullptr, &editorApp->showProjectBrowser);
     ImGui::MenuItem("Viewport", nullptr, &editorApp->showViewport);
     ImGui::MenuItem("Console", nullptr, &editorApp->showConsole);
     ImGui::MenuItem("Performance Stats", nullptr, &editorApp->showStats);
     ImGui::MenuItem("Material Editor", nullptr, &editorApp->showMaterialEditor);
+    ImGui::MenuItem("Node Graph Editor", nullptr, &editorApp->showNodeGraphEditor);
     
     ImGui::Separator();
     

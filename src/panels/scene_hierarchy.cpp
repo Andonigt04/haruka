@@ -1,7 +1,8 @@
 #define GLM_ENABLE_EXPERIMENTAL
 #include "scene_hierarchy.h"
-#include "core/error_reporter.h"
-#include "core/math_types.h"
+#include "tools/error_reporter.h"
+#include "tools/math_types.h"
+#include "editor_util.h"
 
 #include "renderer/primitive_shapes.h"
 #include "core/components/material_component.h"
@@ -17,15 +18,6 @@
 #include <glm/gtx/quaternion.hpp>
 
 namespace {
-glm::mat4 composeLocalTransform(const glm::dvec3& position, const glm::dvec3& rotation, const glm::dvec3& scale) {
-    glm::mat4 transform(1.0f);
-    transform = glm::translate(transform, glm::vec3(position));
-    transform = glm::rotate(transform, glm::radians((float)rotation.x), glm::vec3(1, 0, 0));
-    transform = glm::rotate(transform, glm::radians((float)rotation.y), glm::vec3(0, 1, 0));
-    transform = glm::rotate(transform, glm::radians((float)rotation.z), glm::vec3(0, 0, 1));
-    transform = glm::scale(transform, glm::vec3(scale));
-    return transform;
-}
 
 void decomposeTransform(const glm::mat4& transform, glm::dvec3& position, glm::dvec3& rotation, glm::dvec3& scale) {
     glm::vec3 skew;
@@ -39,9 +31,22 @@ void decomposeTransform(const glm::mat4& transform, glm::dvec3& position, glm::d
     scale = glm::dvec3(localScale);
     rotation = glm::dvec3(glm::degrees(glm::eulerAngles(orientation)));
 }
+
+glm::mat4 computeWorldTransform(const Haruka::SceneObject& obj, const std::vector<std::shared_ptr<Haruka::SceneObject>>& allObjs) {
+    glm::mat4 wt = EditorUtil::composeLocalTransform(obj.position, EditorUtil::rotationToEuler(obj.rotation), obj.scale);
+    int p = obj.parentIndex;
+    while (p >= 0 && p < (int)allObjs.size()) {
+        auto& parent = allObjs[p];
+        if (!parent) break;
+        wt = EditorUtil::composeLocalTransform(parent->position, EditorUtil::rotationToEuler(parent->rotation), parent->scale) * wt;
+        p = parent->parentIndex;
+    }
+    return wt;
 }
 
-void SceneHierarchyPanel::setScene(Haruka::Scene* scene) {
+}
+
+void SceneHierarchyPanel::setScene(Haruka::SceneManager* scene) {
     currentScene = scene;
 }
 
@@ -56,7 +61,6 @@ void SceneHierarchyPanel::setCommandHistory(CommandHistory* history) {
 void SceneHierarchyPanel::onImGuiRender() {
     ImGui::Begin("Scene Hierarchy");
     
-    // Botón + para abrir navegador de objetos
     if (ImGui::Button("+##AddObject", ImVec2(40, 0))) {
         showObjectBrowser = true;
         objectSearchBuffer[0] = '\0';
@@ -67,7 +71,6 @@ void SceneHierarchyPanel::onImGuiRender() {
         createPrimitive("Cube", "cube");
     }
     
-    // Modal de búsqueda y selección de objetos
     if (showObjectBrowser) {
         ImGui::OpenPopup("Object Browser##Modal");
     }
@@ -80,7 +83,6 @@ void SceneHierarchyPanel::onImGuiRender() {
         std::string searchStr = objectSearchBuffer;
         std::transform(searchStr.begin(), searchStr.end(), searchStr.begin(), ::tolower);
         
-        // Lista de tipos disponibles
         std::vector<std::pair<std::string, std::string>> objectTypes = {
             {"Cube", "cube"},
             {"Sphere", "sphere"},
@@ -89,8 +91,7 @@ void SceneHierarchyPanel::onImGuiRender() {
             {"Light", "light"},
             {"Point Light", "pointlight"},
             {"Directional Light", "directionallight"},
-            {"Sun (Sistema de unidades)", "sun"},
-            {"Planet (Sistema de unidades)", "planet"},
+            {"Sun", "sun"},
             {"Cylinder", "cylinder"},
             {"Torus", "torus"},
             {"Model Loader", "model"},
@@ -141,111 +142,94 @@ void SceneHierarchyPanel::onImGuiRender() {
 void SceneHierarchyPanel::createPrimitive(const std::string& name, const std::string& type) {
     if (!currentScene) return;
     
-    Haruka::SceneObject obj;
-    obj.name = name + "_" + std::to_string(currentScene->getObjects().size());
-    obj.type = type == "light" ? "Light" :
+    auto obj = std::make_shared<Haruka::SceneObject>();
+    obj->name = name + "_" + std::to_string(currentScene->getObjects().size());
+    obj->type = type == "light" ? "Light" :
                type == "pointlight" ? "PointLight" :
                type == "directionallight" ? "DirectionalLight" :
                type == "cube" ? "Cube" :
                type == "sphere" ? "Sphere" :
                type == "capsule" ? "Capsule" :
                type == "plane" ? "Plane" :
-               type == "sun" ? "Light" :
-               type == "planet" ? "Mesh" : "Mesh";
-    obj.position = glm::dvec3(0, 0, 0);
-    obj.rotation = glm::dvec3(0, 0, 0);
-    obj.scale = glm::dvec3(1, 1, 1);
+               type == "sun" ? "Light" : "Mesh";
+    obj->position = glm::dvec3(0, 0, 0);
+    obj->rotation = EditorUtil::eulerToRotation(glm::dvec3(0, 0, 0));
+    obj->scale = glm::dvec3(1, 1, 1);
     
-    // Crear mesh
-    obj.meshRenderer = std::make_shared<MeshRendererComponent>();
+    obj->meshRenderer = std::make_shared<MeshRendererComponent>();
     std::vector<glm::vec3> verts, norms;
     std::vector<unsigned int> indices;
     
     if (type == "cube") {
         PrimitiveShapes::createCube(1.0f, verts, norms, indices);
-        obj.properties["meshRenderer"]["meshType"] = "cube";
-        obj.material = std::make_shared<Haruka::MaterialComponent>();
-        obj.material->albedo = glm::vec3(0.8f, 0.8f, 0.8f);
+        obj->properties["meshRenderer"]["meshType"] = "cube";
+        obj->material = std::make_shared<Haruka::MaterialComponent>();
+        obj->material->albedo = glm::vec3(0.8f, 0.8f, 0.8f);
     } else if (type == "sphere") {
         PrimitiveShapes::createSphere(1.0f, 32, 32, verts, norms, indices);
-        obj.properties["meshRenderer"]["meshType"] = "sphere";
-        obj.properties["meshRenderer"]["radius"] = 1.0f;
-        obj.properties["meshRenderer"]["segments"] = 32;
-        obj.material = std::make_shared<Haruka::MaterialComponent>();
-        obj.material->albedo = glm::vec3(0.5f, 0.7f, 0.5f);
+        obj->properties["meshRenderer"]["meshType"] = "sphere";
+        obj->properties["meshRenderer"]["radius"] = 1.0f;
+        obj->properties["meshRenderer"]["segments"] = 32;
+        obj->material = std::make_shared<Haruka::MaterialComponent>();
+        obj->material->albedo = glm::vec3(0.5f, 0.7f, 0.5f);
     } else if (type == "capsule") {
         PrimitiveShapes::createCapsule(0.5f, 2.0f, 24, 16, verts, norms, indices);
-        obj.properties["meshRenderer"]["meshType"] = "capsule";
-        obj.properties["meshRenderer"]["radius"] = 0.5f;
-        obj.properties["meshRenderer"]["height"] = 2.0f;
-        obj.properties["meshRenderer"]["segments"] = 24;
-        obj.properties["meshRenderer"]["stacks"] = 16;
-        obj.material = std::make_shared<Haruka::MaterialComponent>();
-        obj.material->albedo = glm::vec3(0.65f, 0.65f, 0.68f);
-        obj.color = glm::vec3(0.65f, 0.65f, 0.68f);
-        obj.scale = glm::dvec3(0.00095f);
+        obj->properties["meshRenderer"]["meshType"] = "capsule";
+        obj->properties["meshRenderer"]["radius"] = 0.5f;
+        obj->properties["meshRenderer"]["height"] = 2.0f;
+        obj->properties["meshRenderer"]["segments"] = 24;
+        obj->properties["meshRenderer"]["stacks"] = 16;
+        obj->material = std::make_shared<Haruka::MaterialComponent>();
+        obj->material->albedo = glm::vec3(0.65f, 0.65f, 0.68f);
+        obj->color = glm::dvec3(0.65f, 0.65f, 0.68f);
+        obj->scale = glm::dvec3(0.00095f);
     } else if (type == "plane") {
         PrimitiveShapes::createPlane(2.0f, 2.0f, 10, verts, norms, indices);
-        obj.properties["meshRenderer"]["meshType"] = "plane";
-        obj.properties["meshRenderer"]["width"] = 2.0f;
-        obj.properties["meshRenderer"]["height"] = 2.0f;
-        obj.properties["meshRenderer"]["subdivisions"] = 10;
-        obj.material = std::make_shared<Haruka::MaterialComponent>();
-        obj.material->albedo = glm::vec3(0.7f, 0.7f, 0.7f);
+        obj->properties["meshRenderer"]["meshType"] = "plane";
+        obj->properties["meshRenderer"]["width"] = 2.0f;
+        obj->properties["meshRenderer"]["height"] = 2.0f;
+        obj->properties["meshRenderer"]["subdivisions"] = 10;
+        obj->material = std::make_shared<Haruka::MaterialComponent>();
+        obj->material->albedo = glm::vec3(0.7f, 0.7f, 0.7f);
     } else if (type == "light" || type == "pointlight") {
         PrimitiveShapes::createSphere(0.5f, 16, 16, verts, norms, indices);
-        obj.properties["meshRenderer"]["meshType"] = "sphere";
-        obj.properties["meshRenderer"]["radius"] = 0.5f;
-        obj.properties["meshRenderer"]["segments"] = 16;
-        obj.material = std::make_shared<Haruka::MaterialComponent>();
-        obj.material->albedo = glm::vec3(1.0f, 1.0f, 0.0f);
-        obj.color = glm::vec3(1.0f, 1.0f, 0.8f);
-        obj.intensity = 2.0f;
+        obj->properties["meshRenderer"]["meshType"] = "sphere";
+        obj->properties["meshRenderer"]["radius"] = 0.5f;
+        obj->properties["meshRenderer"]["segments"] = 16;
+        obj->material = std::make_shared<Haruka::MaterialComponent>();
+        obj->material->albedo = glm::vec3(1.0f, 1.0f, 0.0f);
+        obj->color = glm::dvec3(1.0f, 1.0f, 0.8f);
+        obj->intensity = 2.0f;
     } else if (type == "directionallight") {
         PrimitiveShapes::createCube(0.2f, verts, norms, indices);
-        obj.properties["meshRenderer"]["meshType"] = "cube";
-        obj.properties["meshRenderer"]["size"] = 0.2f;
-        obj.material = std::make_shared<Haruka::MaterialComponent>();
-        obj.material->albedo = glm::vec3(1.0f, 0.95f, 0.8f);
-        obj.color = glm::vec3(1.0f, 0.95f, 0.8f);
-        obj.intensity = 1.0f;
+        obj->properties["meshRenderer"]["meshType"] = "cube";
+        obj->properties["meshRenderer"]["size"] = 0.2f;
+        obj->material = std::make_shared<Haruka::MaterialComponent>();
+        obj->material->albedo = glm::vec3(1.0f, 0.95f, 0.8f);
+        obj->color = glm::dvec3(1.0f, 0.95f, 0.8f);
+        obj->intensity = 1.0f;
     } else if (type == "sun") {
-        using namespace Haruka::Units;
-        const double sunRadiusKm = STAR_RADIUS_MEDIUM;
-        const double baseMeshRadius = 1.0;
-        const double sunScale = kmToRender(sunRadiusKm) / baseMeshRadius;
-        
         PrimitiveShapes::createSphere(1.0f, 32, 32, verts, norms, indices);
-        obj.properties["meshRenderer"]["meshType"] = "sphere";
-        obj.properties["meshRenderer"]["radius"] = 1.0f;
-        obj.properties["meshRenderer"]["segments"] = 32;
-        obj.material = std::make_shared<Haruka::MaterialComponent>();
-        obj.material->albedo = glm::vec3(1.0f, 0.95f, 0.75f);
-        obj.color = glm::vec3(1.0f, 0.95f, 0.75f);
-        obj.intensity = 20.0f;
-        obj.scale = glm::dvec3(sunScale);
-        obj.type = "Light";
-    } else if (type == "planet") {
-        using namespace Haruka::Units;
-        const double planetRadiusKm = PLANETARY_RADIUS_MEDIUM;
-        const double baseMeshRadius = 1.0;
-        const double planetScale = kmToRender(planetRadiusKm) / baseMeshRadius;
-        
-        PrimitiveShapes::createSphere(1.0f, 48, 48, verts, norms, indices);
-        obj.properties["meshRenderer"]["meshType"] = "sphere";
-        obj.properties["meshRenderer"]["radius"] = 1.0f;
-        obj.properties["meshRenderer"]["segments"] = 48;
-        obj.material = std::make_shared<Haruka::MaterialComponent>();
-        obj.material->albedo = glm::vec3(0.25f, 0.45f, 1.0f);
-        obj.color = glm::vec3(0.25f, 0.45f, 1.0f);
-        obj.scale = glm::dvec3(planetScale);
-        obj.type = "Mesh";
+        obj->properties["meshRenderer"]["meshType"] = "sphere";
+        obj->properties["meshRenderer"]["radius"] = 1.0f;
+        obj->properties["meshRenderer"]["segments"] = 32;
+        obj->material = std::make_shared<Haruka::MaterialComponent>();
+        obj->material->albedo = glm::vec3(1.0f, 0.95f, 0.75f);
+        obj->color = glm::dvec3(1.0f, 0.95f, 0.75f);
+        obj->intensity = 20.0f;
+        obj->scale = glm::dvec3(50.0);
+        obj->type = "Light";
     }
     
-    obj.meshRenderer->setMesh(verts, norms, indices);
-    currentScene->addObject(obj);
+    obj->meshRenderer->setMesh(verts, norms, std::vector<glm::vec3>(), indices);
 
-	std::cout << "✓ Created " << obj.name << std::endl;
+    if (commandHistory) {
+        commandHistory->execute(std::make_unique<AddObjectCommand>(currentScene, *obj));
+    } else {
+        currentScene->addLoadedObject(obj);
+    }
+
+    std::cout << "✓ Created " << obj->name << std::endl;
 }
 
 void SceneHierarchyPanel::renderObjectNode(int index) {
@@ -253,12 +237,11 @@ void SceneHierarchyPanel::renderObjectNode(int index) {
         return;
     }
     
-    // Acceder al objeto sin mantener referencia (puede invalidarse)
     const auto& objects = currentScene->getObjects();
-    if (index >= (int)objects.size()) return;  // Double check
+    if (index >= (int)objects.size()) return;
     
     std::string objName = objects[index].name;
-    bool hasChildren = !objects[index].childrenIndices.empty() || !objects[index].children.empty();
+    bool hasChildren = !objects[index].childrenIndices.empty();
     
     ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth;
     if (index == selectedObjectIndex) flags |= ImGuiTreeNodeFlags_Selected;
@@ -271,7 +254,12 @@ void SceneHierarchyPanel::renderObjectNode(int index) {
         if (onObjectSelectedByIndex) onObjectSelectedByIndex(index);
         if (onObjectSelectedByName) onObjectSelectedByName(objName);
     }
-    
+    // DOBLE clic = encuadrar. Separado de la selección a propósito: seleccionar un objeto para
+    // editarle una propiedad no debe mover la cámara.
+    if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+        if (onObjectFocused) onObjectFocused(index);
+    }
+
     if (ImGui::BeginDragDropSource()) {
         ImGui::SetDragDropPayload("SCENE_OBJECT", &index, sizeof(int));
         ImGui::Text("Move: %s", objName.c_str());
@@ -289,7 +277,6 @@ void SceneHierarchyPanel::renderObjectNode(int index) {
     showContextMenu(index);
     
     if (nodeOpen) {
-        // Re-validar índice antes de acceder
         if (index >= 0 && index < (int)currentScene->getObjects().size()) {
             const auto& obj = currentScene->getObjects()[index];
             
@@ -298,22 +285,15 @@ void SceneHierarchyPanel::renderObjectNode(int index) {
                     renderObjectNode(childIndex);
                 }
             }
-            
-            // Renderizar children vector (hijos del prefab, etc)
-            for (size_t i = 0; i < obj.children.size(); ++i) {
-                renderChildObject(obj.children[i], i);
-            }
         }
         
         ImGui::TreePop();
     }
 }
 
-// Nueva función para renderizar objetos hijos del vector children
 void SceneHierarchyPanel::renderChildObject(const Haruka::SceneObject& child, size_t index) {
     ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_Leaf;
     
-    // Usar un ID único basado en el nombre, no en el puntero (que puede ser inválido si el vector se realoca)
     std::string childId = child.name + "##child_" + std::to_string(index);
     bool nodeOpen = ImGui::TreeNodeEx(childId.c_str(), flags, "%s (%s)", child.name.c_str(), child.type.c_str());
     
@@ -327,7 +307,6 @@ void SceneHierarchyPanel::renderChildObject(const Haruka::SceneObject& child, si
 void SceneHierarchyPanel::showContextMenuChild(const Haruka::SceneObject& child) {
     if (ImGui::BeginPopupContextItem()) {
         if (ImGui::MenuItem("Delete")) {
-            // TODO: Implementar borrar hijo
         }
         ImGui::EndPopup();
     }
@@ -336,99 +315,109 @@ void SceneHierarchyPanel::showContextMenuChild(const Haruka::SceneObject& child)
 void SceneHierarchyPanel::reparentObject(int childIndex, int newParentIndex) {
     if (!currentScene || childIndex == newParentIndex) return;
     
-    auto& objects = currentScene->getObjects();
+    auto& objects = currentScene->getObjectsMutable();
     if (childIndex < 0 || childIndex >= (int)objects.size()) return;
 
     auto& child = objects[childIndex];
-    glm::mat4 childWorld = composeLocalTransform(child.position, child.rotation, child.scale);
-    if (child.parentIndex >= 0 && child.parentIndex < (int)objects.size()) {
-        childWorld = objects[child.parentIndex].getWorldTransform(currentScene) * childWorld;
+    if (!child) return;
+
+    glm::mat4 childWorld = EditorUtil::composeLocalTransform(child->position, EditorUtil::rotationToEuler(child->rotation), child->scale);
+    if (child->parentIndex >= 0 && child->parentIndex < (int)objects.size()) {
+        childWorld = computeWorldTransform(*objects[child->parentIndex], objects) * childWorld;
     }
 
     glm::mat4 parentWorld(1.0f);
     if (newParentIndex >= 0 && newParentIndex < (int)objects.size()) {
-        parentWorld = objects[newParentIndex].getWorldTransform(currentScene);
+        parentWorld = computeWorldTransform(*objects[newParentIndex], objects);
     }
     
-    if (child.parentIndex >= 0) {
-        auto& oldParent = objects[child.parentIndex];
-        oldParent.childrenIndices.erase(
-            std::remove(oldParent.childrenIndices.begin(), oldParent.childrenIndices.end(), childIndex),
-            oldParent.childrenIndices.end()
-        );
+    if (child->parentIndex >= 0) {
+        auto& oldParent = objects[child->parentIndex];
+        if (oldParent) {
+            oldParent->childrenIndices.erase(
+                std::remove(oldParent->childrenIndices.begin(), oldParent->childrenIndices.end(), childIndex),
+                oldParent->childrenIndices.end()
+            );
+        }
     }
     
-    child.parentIndex = newParentIndex;
+    child->parentIndex = newParentIndex;
     if (newParentIndex >= 0 && newParentIndex < (int)objects.size()) {
-        objects[newParentIndex].childrenIndices.push_back(childIndex);
+        objects[newParentIndex]->childrenIndices.push_back(childIndex);
     }
 
     glm::mat4 local = glm::inverse(parentWorld) * childWorld;
-    decomposeTransform(local, child.position, child.rotation, child.scale);
+    glm::dvec3 eulerRot;
+    decomposeTransform(local, child->position, eulerRot, child->scale);
+    child->rotation = EditorUtil::eulerToRotation(eulerRot);
 }
 
 void SceneHierarchyPanel::createChildObject(int parentIndex, const std::string& primitiveType) {
     if (!currentScene) return;
-    auto& objects = currentScene->getObjects();
+    auto& objects = currentScene->getObjectsMutable();
     if (parentIndex < 0 || parentIndex >= (int)objects.size()) return;
 
-    Haruka::SceneObject child;
-    child.name = primitiveType + "_child_" + std::to_string(objects.size());
-    child.type = primitiveType == "Light" ? "Light" : "Mesh";
-    child.position = glm::dvec3(0.0, 2.0, 0.0); // local offset respecto al padre
-    child.rotation = glm::dvec3(0.0);
-    child.scale = glm::dvec3(1.0);
-    child.color = primitiveType == "Light" ? glm::dvec3(1.0, 0.95, 0.8) : glm::dvec3(0.7);
-    child.intensity = primitiveType == "Light" ? 2.0 : 1.0;
+    auto child = std::make_shared<Haruka::SceneObject>();
+    child->name = primitiveType + "_child_" + std::to_string(objects.size());
+    child->type = primitiveType == "Light" ? "Light" : "Mesh";
+    child->position = glm::dvec3(0.0, 2.0, 0.0);
+    child->rotation = EditorUtil::eulerToRotation(glm::dvec3(0.0));
+    child->scale = glm::dvec3(1.0);
+    child->color = primitiveType == "Light" ? glm::dvec3(1.0, 0.95, 0.8) : glm::dvec3(0.7);
+    child->intensity = primitiveType == "Light" ? 2.0 : 1.0;
 
-    child.meshRenderer = std::make_shared<MeshRendererComponent>();
+    child->meshRenderer = std::make_shared<MeshRendererComponent>();
     std::vector<glm::vec3> verts, norms;
     std::vector<unsigned int> indices;
     if (primitiveType == "Sphere") {
         PrimitiveShapes::createSphere(1.0f, 24, 24, verts, norms, indices);
-        child.properties["meshRenderer"]["meshType"] = "sphere";
-        child.properties["meshRenderer"]["radius"] = 1.0f;
-        child.properties["meshRenderer"]["segments"] = 24;
+        child->properties["meshRenderer"]["meshType"] = "sphere";
+        child->properties["meshRenderer"]["radius"] = 1.0f;
+        child->properties["meshRenderer"]["segments"] = 24;
     } else if (primitiveType == "Light") {
         PrimitiveShapes::createSphere(0.4f, 16, 16, verts, norms, indices);
-        child.properties["meshRenderer"]["meshType"] = "sphere";
-        child.properties["meshRenderer"]["radius"] = 0.4f;
-        child.properties["meshRenderer"]["segments"] = 16;
+        child->properties["meshRenderer"]["meshType"] = "sphere";
+        child->properties["meshRenderer"]["radius"] = 0.4f;
+        child->properties["meshRenderer"]["segments"] = 16;
     } else {
         PrimitiveShapes::createCube(1.0f, verts, norms, indices);
-        child.properties["meshRenderer"]["meshType"] = "cube";
-        child.properties["meshRenderer"]["size"] = 1.0f;
+        child->properties["meshRenderer"]["meshType"] = "cube";
+        child->properties["meshRenderer"]["size"] = 1.0f;
     }
-    child.meshRenderer->setMesh(verts, norms, indices);
-    child.material = std::make_shared<Haruka::MaterialComponent>();
-    child.material->albedo = glm::vec3(child.color);
+    child->meshRenderer->setMesh(verts, norms, std::vector<glm::vec3>(), indices);
+    child->material = std::make_shared<Haruka::MaterialComponent>();
+    child->material->albedo = glm::vec3(child->color);
 
-    child.parentIndex = parentIndex;
-    currentScene->addObject(child);
-    int childIndex = (int)currentScene->getObjects().size() - 1;
-    currentScene->getObjects()[parentIndex].childrenIndices.push_back(childIndex);
+    child->parentIndex = parentIndex;
+    currentScene->addLoadedObject(child);
+    int childIndex = (int)objects.size() - 1;
+    objects[parentIndex]->childrenIndices.push_back(childIndex);
 }
 
 void SceneHierarchyPanel::duplicateObject(int index) {
     if (!currentScene || index < 0 || index >= (int)currentScene->getObjects().size()) return;
     
     const auto& original = currentScene->getObjects()[index];
-    Haruka::SceneObject duplicate = original;
-    duplicate.name = original.name + "_copy";
-    duplicate.position += glm::vec3(1.0f, 0.0f, 0.0f);
+    auto duplicate = std::make_shared<Haruka::SceneObject>(original);
+    duplicate->name = original.name + "_copy";
+    duplicate->position += glm::dvec3(1.0f, 0.0f, 0.0f);
     
     if (commandHistory) {
-        commandHistory->execute(std::make_unique<AddObjectCommand>(currentScene, duplicate));
+        commandHistory->execute(std::make_unique<AddObjectCommand>(currentScene, *duplicate));
     } else {
-        currentScene->addObject(duplicate);
+        currentScene->addLoadedObject(duplicate);
     }
 }
 
 void SceneHierarchyPanel::showContextMenu(int index) {
     if (ImGui::BeginPopupContextItem()) {
-        auto& obj = currentScene->getObjects()[index];
+        const auto& objects = currentScene->getObjects();
+        if (index < 0 || index >= (int)objects.size()) {
+            ImGui::EndPopup();
+            return;
+        }
+        const auto& obj = objects[index];
         
-        // Abrir escena si el tipo es "Scene"
         if (obj.type == "Scene") {
             if (ImGui::MenuItem("Enter Scene")) {
                 std::string scenePath = currentProjectPath + "/scenes/" + obj.name + ".scene";
@@ -436,7 +425,6 @@ void SceneHierarchyPanel::showContextMenu(int index) {
             }
         }
         
-        // Abrir prefab si el tipo es "Prefab"
         if (obj.type == "Prefab") {
             if (ImGui::MenuItem("Enter Prefab")) {
                 std::string prefabPath = currentProjectPath + "/assets/prefabs/" + obj.name + ".prefab";
@@ -456,7 +444,6 @@ void SceneHierarchyPanel::showContextMenu(int index) {
         }
         
         if (ImGui::MenuItem("Delete")) {
-            const auto& obj = currentScene->getObjects()[index];
             if (commandHistory) {
                 commandHistory->execute(std::make_unique<DeleteObjectCommand>(currentScene, obj.name));
             } else {

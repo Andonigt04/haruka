@@ -2,29 +2,28 @@
 
 #include "core/application.h"
 #include "core/project.h"
-#include "core/scene.h"
+#include "core/scene/scene_manager.h"
 #include "core/camera.h"
 #include "core/game_interface.h"
 #include "panels/scene_hierarchy.h"
 #include "panels/inspector.h"
+#include "panels/objects_panel.h"
 #include "panels/project_browser.h"
 #include "panels/material_editor.h"
+#include "panels/node_graph_editor.h"
 #include "panels/viewport.h"
 #include "panels/console.h"
 #include "panels/stats.h"
 #include "commands/command_history.h"
-#include "game/ingame_chat.h"
-#include "game/planetary_system.h"
 #include "panels/settings.h"
 #include "panels/asset_importer.h"
 #include "panels/search_panel.h"
-#include "panels/multi_scene_manager.h"
 #include "panels/ui_builder.h"
 #include "panels/export_panel.h"
-#include "panels/planet_terrain_editor.h"
 #include "menu_bar.h"
 #include <imgui.h>
 #include <memory>
+#include <SDL3/SDL.h>
 
 class MenuBar;
 
@@ -63,25 +62,26 @@ private:
     std::unique_ptr<MenuBar> menuBar;
 
     // UI state
-    GLFWwindow* window;
+    SDL_Window* window;
     std::unique_ptr<Haruka::Project> currentProject;
-    std::unique_ptr<Haruka::Scene> currentScene;
-    std::unique_ptr<Camera> viewportCamera;
+    std::unique_ptr<Haruka::SceneManager> currentScene;
+    std::unique_ptr<Haruka::Core::Camera> viewportCamera;
     
     // Panels
     SceneHierarchyPanel sceneHierarchyPanel;
     InspectorPanel inspectorPanel;
+    ObjectsPanel objectsPanel;
     ProjectBrowserPanel projectBrowserPanel;
     ViewportPanel viewportPanel;
     ConsolePanel consolePanel;
     StatsPanel statsPanel;
     MaterialEditorPanel materialEditorPanel;
+    NodeGraphEditorPanel nodeGraphEditorPanel;
     SettingsPanel settingsPanel;
     AssetImporter assetImporter;
     SearchPanel searchPanel;
     UIBuilder uiBuilder;
     ExportPanel exportPanel;
-    PlanetTerrainEditorPanel planetTerrainEditorPanel;
     
     // Gizmos
     int gizmoMode = 0;
@@ -96,16 +96,17 @@ private:
     // Panel visibility
     bool showSceneHierarchy = true;
     bool showInspector = true;
+    bool showObjectsPanel = true;
     bool showProjectBrowser = true;
     bool showViewport = true;
     bool showConsole = true;
     bool showStats = true;
     bool showMaterialEditor = true;
+    bool showNodeGraphEditor = false;
     bool showSettings = false;
     bool showAssetImporter = false;
     bool showSearchPanel = false;
     bool showUIBuilder = false;
-    bool showPlanetTerrainEditor = true;
     
     int width = 1600;
     int height = 900;
@@ -121,8 +122,8 @@ private:
     void updatePlayMode(float deltaTime);
 
     bool isPlayMode = false;
-    std::unique_ptr<Haruka::Scene> playModeScene;
-    Haruka::Scene* editorScene = nullptr;
+    std::unique_ptr<Haruka::SceneManager> playModeScene;
+    Haruka::SceneManager* editorScene = nullptr;
     float playModeTime = 0.0f;
 
     std::string playModeBackupPath = "/tmp/haruka_playmode_backup.scene";
@@ -137,7 +138,6 @@ private:
     Haruka::Rotation editorCamRot{};
     std::unique_ptr<StreamCapture> coutCapture;
     std::unique_ptr<StreamCapture> cerrCapture;
-    std::unique_ptr<Haruka::InGameChat> inGameChat;
     bool showSaveAsPopup = false;
     char saveAsBuffer[512] = {0};
     
@@ -147,9 +147,6 @@ private:
 
     /** @brief Creates a new project at the given base path. */
     void createNewProject(const std::string& name, const std::string& basePath);
-
-    std::unique_ptr<Haruka::PlanetarySystem> planetarySystem;
-    bool runningPlanetarySystem = false;
 
     /** @brief Creates a scene object of a given type. */
     void createSceneObject(const std::string& type);
@@ -181,6 +178,17 @@ private:
     void saveFile(const std::string& path, bool asPrefab = false);
     /** @brief Loads scene or prefab data from disk. */
     void loadFile(const std::string& path);
+
+    /**
+     * @brief Apunta TODOS los paneles a `currentScene` y borra las selecciones.
+     *
+     * Obligatorio en cada sitio que sustituya la escena. Antes cada uno repuntaba su propia lista
+     * —init() los seis, loadFile() tres, createNewProject() cinco— y los que se quedaban fuera
+     * conservaban punteros a la `SceneManager` DESTRUIDA: cargar una escena y abrir el Node Graph
+     * Editor era un SIGSEGV dentro de `getObjectByName` (use-after-free sobre el unordered_map).
+     * Los paneles guardan además `SceneObject*` crudos, así que las selecciones se limpian aquí.
+     */
+    void bindPanelsToScene();
     /** @brief Creates a backup copy for the given file. */
     void createFileBackup(const std::string& path);
     /** @brief Removes old backups beyond retention limit. */

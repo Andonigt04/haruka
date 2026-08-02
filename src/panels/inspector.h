@@ -1,36 +1,42 @@
 #pragma once
 
-#include "core/scene.h"
+#include "core/scene/scene_manager.h"
 #include "commands/command_history.h"
 #include <imgui.h>
 #include <glm/glm.hpp>
 #include <functional>
+#include <memory>
+
+namespace Haruka { namespace Renderer { class RenderTarget; } }
 
 class InspectorPanel {
 public:
-    /** @brief Constructs an empty inspector panel. */
-    InspectorPanel() = default;
-    
-    /** @brief Sets the scene whose selected object is inspected. */
-    void setScene(Haruka::Scene* scene);
-    /** @brief Sets the object index currently inspected. */
+    InspectorPanel();
+    ~InspectorPanel();
+
+    void setScene(Haruka::SceneManager* scene);
     void setSelectedObjectIndex(int index);
-    /** @brief Sets the command history used for undoable edits. */
     void setCommandHistory(CommandHistory* history);
-    /** @brief Enables or disables play mode behavior. */
     void setPlayMode(bool mode) { playMode = mode; }
-    /** @brief Draws the inspector UI. */
+    void setProjectPath(const std::string& path) { projectPath = path; }
     void onImGuiRender();
-    /** @brief Callback invoked after scene-editing changes. */
     void setOnSceneChanged(std::function<void()> cb) { onSceneChanged = std::move(cb); }
 
 private:
-    Haruka::Scene* currentScene = nullptr;
+    Haruka::SceneManager* currentScene = nullptr;
     int selectedObjectIndex = -1;
     CommandHistory* commandHistory = nullptr;
     bool playMode = false;
+    std::string projectPath;
     
     bool editingPosition = false, editingRotation = false, editingScale = false;
     glm::dvec3 editStartPosition, editStartRotation, editStartScale;
     std::function<void()> onSceneChanged;
+
+    /** @brief Dibuja la esfera de preview + las miniaturas de cada slot de textura. */
+    void renderMaterialPreview(Haruka::SceneObject& obj);
+
+    // Target de la preview de material. Perezoso y REUTILIZADO entre objetos: la preview se
+    // redibuja cada frame (una esfera de 128² no se nota), pero crear el FBO por frame sí.
+    std::unique_ptr<Haruka::Renderer::RenderTarget> matPreviewTarget;
 };

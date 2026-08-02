@@ -1,7 +1,7 @@
 #pragma once
 
 #include "core/camera.h"
-#include "core/scene.h"
+#include "core/scene/scene_manager.h"
 #include "renderer/shader.h"
 #include "renderer/render_target.h"
 #include "renderer/motor_instance.h"
@@ -10,16 +10,15 @@
 #include "commands/command_history.h"
 #include <imgui.h>
 #include <memory>
-#include <GLFW/glfw3.h>
+#include <SDL3/SDL.h>
 #include "renderer/model.h"
 #include "panels/stats.h"
 #include <map>
 #include <unordered_map>
+#include <algorithm>
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <ImGuizmo.h>
-
-class Application;
 
 /**
  * @brief Editor viewport panel responsible for scene rendering and gizmo interaction.
@@ -32,11 +31,11 @@ public:
     ~ViewportPanel();
 
     /** @brief Sets the scene rendered in the viewport. */
-    void setScene(Haruka::Scene* scene);
+    void setScene(Haruka::SceneManager* scene);
     /** @brief Sets the active camera used by the viewport. */
     void setCamera(Camera* cam);
-    /** @brief Injects the GLFW window used for input handling. */
-    void setGLFWWindow(GLFWwindow* window) { glfwWindow = window; }
+    /** @brief Injects the SDL window used for input handling. */
+    void setSDLWindow(SDL_Window* window) { sdlWindow = window; }
     /** @brief Sets the command history for viewport-driven edits. */
     void setCommandHistory(CommandHistory* history) { commandHistory = history; }
     /** @brief Draws the viewport UI. */
@@ -45,6 +44,12 @@ public:
     void onUpdate(float deltaTime);
     /** @brief Renders the scene into the viewport framebuffer. */
     void renderScene();
+    /** @brief Copies motor render stats into the stats panel. */
+    void setStatsPanelFromApp(class Application* app);
+    /** @brief Registers the viewport target with the motor application. */
+    void registerEditorTargetWithApp();
+    /** @brief Releases motor/GL resources before the GL context is destroyed. */
+    void shutdownGLResources();
     /** @brief Renders the active ImGuizmo manipulator. */
     void renderGizmoImGuizmo();
     /** @brief Recreates the offscreen render target. */
@@ -75,11 +80,50 @@ public:
     void setSelectedObjectIndex(int index) { selectedObjectIndex = index; }
     int getSelectedObjectIndex() const { return selectedObjectIndex; }
 
+    /**
+     * @brief Lleva la cámara al objeto y lo deja CENTRADO y encuadrado, mida lo que mida.
+     *
+     * Mantiene la dirección de vista actual y solo mueve la posición: el objeto acaba en el centro
+     * del viewport ocupando la MISMA fracción de pantalla tanto si es un prop de 40 cm como si es un
+     * planeta de 6371 km. El tamaño se lo pregunta al motor
+     * (`Application::getObjectBoundingRadius`), que es quien sabe qué hay detrás de un `SceneObject`:
+     * el IDE no distingue un planeta de una caja.
+     */
+    void focusOnObject(int objectIndex);
+
+    // --- Colocación de props y herramientas de malla ----------------------------------------
+    /** @brief Activa el modo de colocación: el cursor proyecta sobre el planeta un indicador
+     *  translúcido (círculo/cuadrado) del radio de afectación y un click coloca el prop o edita el
+     *  terreno según `action`. `layer` = capa del objeto colocado ("Trees", "Props"…). */
+    void beginPlacement(const std::string& modelPath, const std::string& label,
+                        float radius, bool circle, int action, const std::string& layer);
+    /** @brief Sale del modo de colocación (también con Esc o clic derecho en el viewport). */
+    void cancelPlacement() { placementEnabled = false; }
+    bool isPlacementActive() const { return placementEnabled; }
+    /** @brief Radio del indicador (lo cambian los paneles mientras el modo está activo). */
+    void setPlacementRadius(float r) { placementRadius = std::max(0.1f, r); }
+    float getPlacementRadius() const { return placementRadius; }
+
+private:
+    // Estado de colocación
+    bool placementEnabled = false;
+    bool placementCircle = true;          // círculo (true) o cuadrado
+    int placementAction = 0;              // 0=colocar prop, 1=levantar, 2=excavar, 3=allanar
+    float placementRadius = 50.0f;
+    std::string placementModel;           // ruta del modelo .glb/.obj (vacía = herramienta de malla)
+    std::string placementLabel;
+    std::string placementLayer;           // capa del objeto colocado ("Trees", "Props"…)
+    glm::dvec3 placementGround{0.0};      // punto anclado al terreno (coords de mundo)
+    bool placementHasGround = false;
+    void handlePlacement();
+    void drawPlacementIndicator();
+    void executePlacement();
+
 private:
     // Motor app instance owned by the viewport when running in editor mode
     std::unique_ptr<Application> ownedApplication;
 
-    Haruka::Scene* currentScene = nullptr;
+    Haruka::SceneManager* currentScene = nullptr;
     Camera* camera = nullptr;
 
     int width = 1280, height = 720;
@@ -91,6 +135,10 @@ private:
 
     int selectedObjectIndex = -1;
     int currentGizmoOperation = ImGuizmo::TRANSLATE;
+
+    /** @brief Vista de depuración del planeta (0=normal, 1=elev, 2=zonas, 3=bioma, 4=temp, 5=hum).
+     *  Se empuja al motor con `Application::setPlanetDebugView`. */
+    int debugView = 0;
 
     // Camera controls
     float camYaw = 0.0f, camPitch = 0.0f;
@@ -117,7 +165,7 @@ private:
     // Command history
     CommandHistory* commandHistory = nullptr;
 
-    // GLFW window
-    GLFWwindow* glfwWindow = nullptr;
+    // SDL window
+    SDL_Window* sdlWindow = nullptr;
 
 };

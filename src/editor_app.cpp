@@ -2,21 +2,24 @@
 
 #include "editor_app.h"
 #include "core/camera.h"
-#include "core/error_reporter.h"
+#include "tools/error_reporter.h"
 #include "core/components/mesh_renderer_component.h"
 #include "renderer/primitive_shapes.h"
+#include "renderer/shader.h"   // Shader::setBaseDir → raíz de assets del motor
 
 #include <glad/glad.h>
-#include <GLFW/glfw3.h>
+#include <SDL3/SDL.h>
 #include <glm/glm.hpp>
 #include <imgui.h>
-#include <imgui_impl_glfw.h>
+#include <imgui_impl_sdl3.h>
 #include <imgui_impl_opengl3.h>
 #include <nfd.h>
 #include <dlfcn.h>
 
 #include <iostream>
+#include <algorithm>
 #include <cstdlib>
+#include <cstdio>
 #include <filesystem>
 #include <chrono>
 #include <iomanip>
@@ -27,6 +30,30 @@
 #include <cerrno>
 #include <vector>
 
+// Paralelismo de compilación ACOTADO POR RAM, igual que el build.sh del juego: cada g++ de
+// este proyecto pide ~0.4-0.5 GB de pico, así que `-j$(nproc)` lanza todos los trabajos a la
+// vez y el build tira de swap. Se calcula desde MemAvailable (lo que el kernel puede reclamar
+// de verdad), dejando 1.5 GB al sistema. Override con el mismo criterio en build.sh: JOBS=N.
+static int ramBoundedJobs() {
+    long availMb = 0;
+    if (FILE* f = std::fopen("/proc/meminfo", "r")) {
+        char line[256];
+        while (std::fgets(line, (int)sizeof line, f)) {
+            long v = 0;
+            if (std::sscanf(line, "MemAvailable: %ld kB", &v) == 1) { availMb = v / 1024; break; }
+        }
+        std::fclose(f);
+    }
+    const long cores = std::max<long>(::sysconf(_SC_NPROCESSORS_ONLN), 1);
+    if (availMb <= 0) return (int)cores;
+    long usable = availMb - 1536;               // reserva para el sistema
+    if (usable < 600) usable = 600;
+    int jobs = (int)(usable / 600);             // ~0.6 GB por trabajo (margen sobre los 0.5 medidos)
+    jobs = std::max(jobs, 1);
+    if (jobs > (int)cores) jobs = (int)cores;
+    return jobs;
+}
+
 EditorApplication::EditorApplication() : window(nullptr) {}
 
 EditorApplication::~EditorApplication() {
@@ -34,26 +61,42 @@ EditorApplication::~EditorApplication() {
 }
 
 void EditorApplication::init() {
-    // ===== GLFW & GLAD Setup =====
-    if (!glfwInit()) {
-        HARUKA_EDITOR_ERROR(ErrorCode::EDITOR_INIT_FAILED, "Failed to initialize GLFW in Editor");
-        throw std::runtime_error("Failed to initialize GLFW");
+    // ===== SDL3 & GLAD Setup =====
+    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS)) {
+        HARUKA_EDITOR_ERROR(ErrorCode::EDITOR_INIT_FAILED, "Failed to initialize SDL3 in Editor");
+        throw std::runtime_error("Failed to initialize SDL3");
     }
 
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);
-    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 6);
 
-    window = glfwCreateWindow(width, height, "Haruka Editor", nullptr, nullptr);
+    window = SDL_CreateWindow("Haruka Editor", width, height, SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE);
     if (!window) {
-        throw std::runtime_error("Failed to create GLFW window");
+        throw std::runtime_error("Failed to create SDL window");
     }
 
-    glfwMakeContextCurrent(window);
-    glfwSwapInterval(1);
+    SDL_GLContext glCtx = SDL_GL_CreateContext(window);
+    if (!glCtx) {
+        throw std::runtime_error("Failed to create OpenGL context");
+    }
+    SDL_GL_SetSwapInterval(1);
 
-    if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) {
+    if (!gladLoadGLLoader((GLADloadproc)SDL_GL_GetProcAddress)) {
         throw std::runtime_error("Failed to initialize GLAD");
+    }
+
+    // RAÍZ DE ASSETS DEL MOTOR. Sin esto `Shader::baseDir()` queda vacía y el motor pide
+    // "shaders/simple.vert" RELATIVO al cwd, mientras los ficheros viven en "assets/shaders/" junto
+    // al ejecutable: no compila NI UN pipeline (cielo, escena, terreno…) y el viewport sale negro sin
+    // más pista que un HARUKA_LOGW por shader. Va aquí, tras el contexto GL y ANTES de crear la
+    // Application, porque los pipelines se hornean en el primer frame.
+    // Se deriva de SDL_GetBasePath (el directorio del EJECUTABLE, no el cwd): el editor se lanza
+    // tanto desde su carpeta como desde el IDE o un script, y el cwd cambia con quien lo arranca.
+    if (const char* exeDir = SDL_GetBasePath()) {
+        const std::string assetsRoot = std::string(exeDir) + "assets/";
+        Shader::setBaseDir(assetsRoot.c_str());   // fija también Haruka::AssetPaths
+        std::cout << "[Editor] assets root: " << assetsRoot << std::endl;
     }
 
     // ===== ImGui Setup =====
@@ -71,11 +114,12 @@ void EditorApplication::init() {
         style.Colors[ImGuiCol_WindowBg].w = 1.0f;
     }
 
-    ImGui_ImplGlfw_InitForOpenGL(window, true);
+    ImGui_ImplSDL3_InitForOpenGL(window, glCtx);
     ImGui_ImplOpenGL3_Init("#version 460");
 
     // ===== Scene & Project Setup =====
-    currentScene = std::make_unique<Haruka::Scene>("Untitled");
+    currentScene = std::make_unique<Haruka::SceneManager>();
+    currentScene->setName("Untitled");
     currentProject = std::make_unique<Haruka::Project>();
     currentFile.path = "scenes/Untitled.scene";
     currentFile.name = "Untitled";
@@ -87,22 +131,32 @@ void EditorApplication::init() {
     inspectorPanel.setScene(currentScene.get());
     inspectorPanel.setCommandHistory(&commandHistory);
     inspectorPanel.setOnSceneChanged([this]() { sceneDirty = true; });
+    inspectorPanel.setProjectPath(currentProject->getPath());
+    objectsPanel.setScene(currentScene.get());
+    objectsPanel.setCommandHistory(&commandHistory);
+    objectsPanel.setOnSceneChanged([this]() { sceneDirty = true; });
+    // Colocación de props/herramientas de malla: el panel pide, el viewport ejecuta.
+    objectsPanel.setOnBeginPlacement([this](const std::string& model, const std::string& label,
+                                            float radius, bool circle, int action,
+                                            const std::string& layer) {
+        viewportPanel.beginPlacement(model, label, radius, circle, action, layer);
+    });
+    materialEditorPanel.setProjectPath(currentProject->getPath());
+    materialEditorPanel.setOnSceneChanged([this]() { sceneDirty = true; });
+    nodeGraphEditorPanel.setScene(currentScene.get());
+    nodeGraphEditorPanel.setProjectPath(currentProject->getPath());
+    nodeGraphEditorPanel.setOnSceneChanged([this]() { sceneDirty = true; });
     projectBrowserPanel.setProject(currentProject.get());
     projectBrowserPanel.setScene(currentScene.get());
-    planetTerrainEditorPanel.setScene(currentScene.get());
-    // Inyectar instancia de PlanetarySystem desde Application
-    if (MotorInstance::getInstance().getApplication()) {
-        planetTerrainEditorPanel.setPlanetarySystem(MotorInstance::getInstance().getApplication()->getPlanetarySystem());
-    }
     
     // ===== Camera Setup =====
-    viewportCamera = std::make_unique<Camera>(Haruka::WorldPos(0.0f, 5.0f, 15.0f));
+    viewportCamera = std::make_unique<Haruka::Core::Camera>(Haruka::WorldPos(0.0f, 5.0f, 15.0f));
     glm::quat initialOrientation = glm::angleAxis(glm::radians(0.0f), glm::vec3(0, 1, 0));
     viewportCamera->orientation = initialOrientation;
 
     viewportPanel.setScene(currentScene.get());
     viewportPanel.setCamera(viewportCamera.get());
-    viewportPanel.setGLFWWindow(window);
+    viewportPanel.setSDLWindow(window);
     viewportPanel.setStatsPanel(&statsPanel);
 
     editorCamPos = viewportCamera->position;
@@ -123,6 +177,8 @@ void EditorApplication::init() {
         if (currentScene && index >= 0 && index < (int)currentScene->getObjects().size()) {
             inspectorPanel.setSelectedObjectIndex(index);
             viewportPanel.setSelectedObjectIndex(index);
+            const auto& all = currentScene->getAllObjects();
+            if (index < (int)all.size()) nodeGraphEditorPanel.setSelectedObject(all[index].get());
         }
     });
 
@@ -130,8 +186,41 @@ void EditorApplication::init() {
         if (!name.empty() && currentScene) {
             auto obj = currentScene->getObject(name);
             if (obj) {
-                materialEditorPanel.setSelectedObject(obj);
+                materialEditorPanel.setSelectedObject(obj.get());
+                nodeGraphEditorPanel.setSelectedObject(obj.get());
             }
+        }
+    });
+
+    objectsPanel.setOnObjectSelectedByIndex([this](int index) {
+        if (currentScene && index >= 0 && index < (int)currentScene->getObjects().size()) {
+            sceneHierarchyPanel.setSelectedObjectIndex(index);
+            inspectorPanel.setSelectedObjectIndex(index);
+            viewportPanel.setSelectedObjectIndex(index);
+            const auto& all = currentScene->getAllObjects();
+            if (index < (int)all.size()) nodeGraphEditorPanel.setSelectedObject(all[index].get());
+        }
+    });
+
+    objectsPanel.setOnObjectSelectedByName([this](const std::string& name) {
+        if (!name.empty() && currentScene) {
+            auto obj = currentScene->getObject(name);
+            if (obj) {
+                materialEditorPanel.setSelectedObject(obj.get());
+                nodeGraphEditorPanel.setSelectedObject(obj.get());
+            }
+        }
+    });
+
+    // DOBLE clic en jerarquía u Objects = llevar la cámara al objeto y encuadrarlo.
+    sceneHierarchyPanel.setOnObjectFocused([this](int index) { viewportPanel.focusOnObject(index); });
+    objectsPanel.setOnObjectFocused([this](int index) { viewportPanel.focusOnObject(index); });
+
+    objectsPanel.setOnOpenNodeGraph([this](const std::string& name) {
+        showNodeGraphEditor = true;
+        if (currentScene) {
+            auto obj = currentScene->getObject(name);
+            if (obj) nodeGraphEditorPanel.setSelectedObject(obj.get());
         }
     });
 
@@ -163,31 +252,38 @@ void EditorApplication::shutdown() {
         gameLibHandle = nullptr;
     }
 
+    // Liberar recursos GL del motor ANTES de destruir el contexto (RenderTargets, Application).
+    viewportPanel.shutdownGLResources();
+
     ImGui_ImplOpenGL3_Shutdown();
-    ImGui_ImplGlfw_Shutdown();
+    ImGui_ImplSDL3_Shutdown();
     ImGui::DestroyContext();
 
-    if (window) glfwDestroyWindow(window);
-    glfwTerminate();
+    if (window) { SDL_GL_DestroyContext(SDL_GL_GetCurrentContext()); SDL_DestroyWindow(window); }
+    SDL_Quit();
 }
 
 void EditorApplication::run() {
     init();
-    while (!glfwWindowShouldClose(window)) {
+    bool running = true;
+    while (running) {
+        SDL_Event event;
+        while (SDL_PollEvent(&event)) {
+            ImGui_ImplSDL3_ProcessEvent(&event);
+            if (event.type == SDL_EVENT_QUIT) running = false;
+        }
         update();
         render();
     }
 }
 
 void EditorApplication::update() {
-    float currentFrame = static_cast<float>(glfwGetTime());
+    float currentFrame = static_cast<float>(SDL_GetTicks() / 1000.0f);
     deltaTime = currentFrame - lastFrame;
     lastFrame = currentFrame;
 
     statsPanel.update(deltaTime);
-    glfwPollEvents();
     updatePlayMode(deltaTime);
-    planetTerrainEditorPanel.update();
     exportPanel.update();
     
     // Auto-save system
@@ -207,14 +303,13 @@ void EditorApplication::updatePlayMode(float deltaTime) {
     
     playModeTime += deltaTime;
 
-    // Ejecutar gameplay update
-    if (gameInterface && gameInterface->onUpdate) {
-        gameInterface->onUpdate(window, deltaTime);
-    }
+    // El onUpdate del juego NO se ejecuta aquí: el HUD/consola del juego dibujan con
+    // ImGui::Begin, y update() corre ANTES de ImGui::NewFrame() -> assertion WithinFrameScope.
+    // Se invoca en render(), justo después de NewFrame, igual que el bucle standalone del motor.
 
     // Sincronizar cámara de juego al viewport SIN compartir ownership/puntero
     if (gameInterface && gameInterface->getCamera && viewportCamera) {
-        Camera* gameCam = gameInterface->getCamera();
+        Haruka::Core::Camera* gameCam = gameInterface->getCamera();
         if (gameCam) {
             viewportCamera->position = gameCam->position;
             viewportCamera->orientation = gameCam->orientation;
@@ -233,19 +328,34 @@ void EditorApplication::render() {
         title += " - " + currentFile.name + " (" + getFileType(currentFile.path) + ")";
     }
     if (sceneDirty) title += " *";
-    glfwSetWindowTitle(window, title.c_str());
+    SDL_SetWindowTitle(window, title.c_str());
 
     // ImGui frame setup
     ImGui_ImplOpenGL3_NewFrame();
-    ImGui_ImplGlfw_NewFrame();
+    ImGui_ImplSDL3_NewFrame();
     ImGui::NewFrame();
+
+    // Play Mode: el onUpdate del juego (gameplay + HUD/consola con ImGui::Begin) DEBE correr
+    // dentro del scope de frame, como en el bucle standalone (application.cpp: NewFrame ->
+    // onUpdate -> Render). Si se llamara en update() antes de NewFrame, ImGui abortaría con
+    // "WithinFrameScope".
+    if (isPlayMode && gameInterface && gameInterface->onUpdate) {
+        gameInterface->onUpdate(window, deltaTime);
+    }
 
     renderUI();
 
     // Render
     ImGui::Render();
     int display_w, display_h;
-    glfwGetFramebufferSize(window, &display_w, &display_h);
+    SDL_GetWindowSizeInPixels(window, &display_w, &display_h);
+    // La PANTALLA, explícitamente. renderUI() ha llamado al motor para pintar el viewport, y el
+    // motor dibuja sobre el FBO de ese RenderTarget; en GL el fin de un pase no desata nada, así
+    // que sin este bind la UI entera se pintaría DENTRO del viewport y el backbuffer se quedaría
+    // sin escribir (la ventana alterna entre dos buffers viejos = parpadea entera). El motor
+    // también lo restaura por su lado, pero el editor no debe depender del estado GL que le deje
+    // otro: quien dibuja a la pantalla, la ata.
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glViewport(0, 0, display_w, display_h);
     glClear(GL_COLOR_BUFFER_BIT);
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
@@ -253,13 +363,13 @@ void EditorApplication::render() {
     // Handle multi-viewport
     ImGuiIO& io = ImGui::GetIO();
     if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
-        GLFWwindow* backup_current_context = glfwGetCurrentContext();
+        SDL_Window* backup_current_context = SDL_GL_GetCurrentWindow();
         ImGui::UpdatePlatformWindows();
         ImGui::RenderPlatformWindowsDefault();
-        glfwMakeContextCurrent(backup_current_context);
+        SDL_GL_MakeCurrent(backup_current_context, SDL_GL_GetCurrentContext());
     }
 
-    glfwSwapBuffers(window);
+    SDL_GL_SwapWindow(window);
 }
 
 void EditorApplication::renderUI() {
@@ -308,6 +418,15 @@ void EditorApplication::renderUI() {
             }
         }
         
+        // Objects (por capas)
+        if (showObjectsPanel) {
+            try {
+                objectsPanel.onImGuiRender();
+            } catch (const std::exception& e) {
+                HARUKA_EDITOR_ERROR(ErrorCode::EDITOR_INIT_FAILED, "ObjectsPanel crash: " + std::string(e.what()));
+            }
+        }
+        
         // Inspector
         if (showInspector) {
             try {
@@ -344,11 +463,12 @@ void EditorApplication::renderUI() {
             }
         }
 
-        if (showPlanetTerrainEditor) {
+        // Node Graph Editor (texturas/materiales procedurales)
+        if (showNodeGraphEditor) {
             try {
-                planetTerrainEditorPanel.onImGuiRender();
+                nodeGraphEditorPanel.onImGuiRender();
             } catch (const std::exception& e) {
-                HARUKA_EDITOR_ERROR(ErrorCode::EDITOR_INIT_FAILED, "PlanetTerrainEditor crash: " + std::string(e.what()));
+                HARUKA_EDITOR_ERROR(ErrorCode::EDITOR_INIT_FAILED, "NodeGraphEditor crash: " + std::string(e.what()));
             }
         }
 
@@ -363,20 +483,6 @@ void EditorApplication::renderUI() {
             }
         }
         viewportPanel.setGizmoMode(gizmoMode);
-
-        if (currentScene) {
-            int selectedIndex = viewportPanel.getSelectedObjectIndex();
-            if (selectedIndex >= 0 && selectedIndex < (int)currentScene->getObjects().size()) {
-                const auto& obj = currentScene->getObjects()[selectedIndex];
-                if (obj.properties.is_object() && obj.properties.contains("terrainEditor")) {
-                    const auto& te = obj.properties["terrainEditor"];
-                    if (te.value("isChunk", false)) {
-                        planetTerrainEditorPanel.setSelectedChunkId(te.value("chunkId", -1));
-                        planetTerrainEditorPanel.setTargetObjectName(te.value("source", obj.name));
-                    }
-                }
-            }
-        }
 
         if (showDemoWindow) {
             ImGui::ShowDemoWindow(&showDemoWindow);
@@ -499,6 +605,10 @@ void EditorApplication::enterPlayMode() {
     // Cargar escena de inicio
     std::string projectPath = currentProject->getPath();
     std::string projectConfigPath = projectPath + "/project.hrk";
+
+    // Asegurar la raíz de assets del proyecto también en el camino de play (el motor la usa
+    // para resolver texturas de escena y biomas de SimplePlanet).
+    Haruka::AssetPaths::setProjectRoot(projectPath + "/");
     
     std::ifstream configFile(projectConfigPath);
     if (configFile.is_open()) {
@@ -515,7 +625,6 @@ void EditorApplication::enterPlayMode() {
             }
             
             currentScene->load(fullScenePath);
-            planetTerrainEditorPanel.setScene(currentScene.get());
             
             // Resetear selección
             sceneHierarchyPanel.setSelectedObjectIndex(-1);
@@ -532,6 +641,7 @@ void EditorApplication::enterPlayMode() {
     std::vector<std::filesystem::path> candidates;
     candidates.push_back(pProject / logicLib);            // proyecto raíz
     candidates.push_back(pProject / "build" / logicLib); // build del proyecto
+    candidates.push_back(pProject / "build" / "bin" / logicLib); // layout moderno (template FetchContent)
 
     // Ruta de salida configurable por proyecto
     if (!currentProject->getConfig().outputPath.empty()) {
@@ -588,7 +698,7 @@ void EditorApplication::enterPlayMode() {
                 
                 // Establecer cámara
                 if (gameInterface->getCamera) {
-                    Camera* gameCamera = gameInterface->getCamera();
+                    Haruka::Core::Camera* gameCamera = gameInterface->getCamera();
                     if (gameCamera) {
                         viewportCamera->position = gameCamera->position;
                         viewportCamera->orientation = gameCamera->orientation;
@@ -621,7 +731,6 @@ void EditorApplication::exitPlayMode() {
 
     if (std::filesystem::exists(playModeBackupPath)) {
         currentScene->load(playModeBackupPath);
-        planetTerrainEditorPanel.setScene(currentScene.get());
     }
     
     viewportPanel.setCamera(viewportCamera.get());
@@ -639,11 +748,17 @@ void EditorApplication::createNewProject(const std::string& name, const std::str
     }
 
     try {
-        // Usar template como base
+        // Usar el template del MOTOR como base (fuente única de verdad). El editor se construye
+        // con FetchContent y sabe la ruta del motor en HARUKA_ENGINE_ROOT.
         std::string projectPath = basePath + name;
-        // Construir ruta al template de forma relativa
+        std::string templatePath;
+#ifdef HARUKA_ENGINE_ROOT
+        templatePath = std::string(HARUKA_ENGINE_ROOT) + "/template";
+#else
+        // Fallback legacy: template junto al ejecutable
         std::filesystem::path editorPath = std::filesystem::current_path();
-        std::string templatePath = editorPath.parent_path().string() + "/template";
+        templatePath = editorPath.parent_path().string() + "/template";
+#endif
 
         // Copiar template recursivamente si existe
         if (std::filesystem::exists(templatePath)) {
@@ -655,7 +770,7 @@ void EditorApplication::createNewProject(const std::string& name, const std::str
             std::filesystem::create_directories(projectPath + "/assets");
         }
 
-        // Actualizar CMakeLists.txt con el nombre del proyecto
+        // Actualizar CMakeLists.txt con el nombre y el motor del proyecto
         std::string cmakeFilePath = projectPath + "/CMakeLists.txt";
         if (std::filesystem::exists(cmakeFilePath)) {
             std::ifstream cmakeIn(cmakeFilePath);
@@ -664,10 +779,25 @@ void EditorApplication::createNewProject(const std::string& name, const std::str
             cmakeIn.close();
 
             // Reemplazar placeholder PROJECT_NAME_PLACEHOLDER con el nombre real
+            const std::string namePlaceholder = "PROJECT_NAME_PLACEHOLDER";
             size_t pos = 0;
-            while ((pos = cmakeContent.find("PROJECT_NAME_PLACEHOLDER", pos)) != std::string::npos) {
-                cmakeContent.replace(pos, 24, name); // 24 = length("PROJECT_NAME_PLACEHOLDER")
+            while ((pos = cmakeContent.find(namePlaceholder, pos)) != std::string::npos) {
+                cmakeContent.replace(pos, namePlaceholder.length(), name);
                 pos += name.length();
+            }
+
+            // Reemplazar HARUKA_ENGINE_LOCAL_PLACEHOLDER con la ruta del motor del editor
+            const std::string enginePlaceholder = "HARUKA_ENGINE_LOCAL_PLACEHOLDER";
+            const std::string engineRoot =
+#ifdef HARUKA_ENGINE_ROOT
+                std::string(HARUKA_ENGINE_ROOT);
+#else
+                std::string();
+#endif
+            pos = 0;
+            while ((pos = cmakeContent.find(enginePlaceholder, pos)) != std::string::npos) {
+                cmakeContent.replace(pos, enginePlaceholder.length(), engineRoot);
+                pos += engineRoot.length();
             }
 
             std::ofstream cmakeOut(cmakeFilePath);
@@ -704,6 +834,7 @@ void EditorApplication::createNewProject(const std::string& name, const std::str
             currentProject = std::make_unique<Haruka::Project>();
         }
         currentProject->load(projectPath);
+        Haruka::AssetPaths::setProjectRoot(projectPath + "/");
 
         currentFile.path = scenePath;
         currentFile.name = "main";
@@ -712,11 +843,10 @@ void EditorApplication::createNewProject(const std::string& name, const std::str
 
         // Sincronizar paneles
         projectBrowserPanel.setProject(currentProject.get());
-        projectBrowserPanel.setScene(currentScene.get());
-        sceneHierarchyPanel.setScene(currentScene.get());
-        inspectorPanel.setScene(currentScene.get());
-        viewportPanel.setScene(currentScene.get());
-        planetTerrainEditorPanel.setScene(currentScene.get());
+        inspectorPanel.setProjectPath(currentProject->getPath());
+        materialEditorPanel.setProjectPath(currentProject->getPath());
+        nodeGraphEditorPanel.setProjectPath(currentProject->getPath());
+        bindPanelsToScene();
 
         std::cout << "✓ Project created from template: " << projectPath << std::endl;
     } catch (const std::exception& e) {
@@ -739,8 +869,32 @@ void EditorApplication::compileProject() {
     
     std::cout << "Compiling project: " << projectPath << std::endl;
     
-    // Compilar el proyecto
-    std::string compileCmd = "cd " + projectPath + " && mkdir -p build && cd build && cmake .. && make -j$(nproc)";
+    // Compilar el proyecto. Se pasa el nombre (lib<Nombre>.so) y la ruta del motor del editor
+    // para que el template compile contra el MISMO motor sin redescargarlo.
+    std::string projectName = currentProject->getConfig().name;
+#ifdef HARUKA_ENGINE_ROOT
+    std::string engineLocal = std::string(HARUKA_ENGINE_ROOT);
+#else
+    std::string engineLocal;
+#endif
+    std::string cmakeArgs;
+    if (!projectName.empty()) {
+        cmakeArgs += " -DPROJECT_NAME=" + projectName;
+    }
+    if (!engineLocal.empty()) {
+        cmakeArgs += " -DHARUKA_ENGINE_LOCAL=\"" + engineLocal + "\"";
+    }
+
+    std::string compileCmd;
+    if (std::filesystem::exists(std::filesystem::path(projectPath) / "build.sh")) {
+        // Template moderno: el build.sh configura y compila el layout del juego.
+        compileCmd = "cd \"" + projectPath + "\" && ./build.sh" + cmakeArgs;
+    } else {
+        // Fallback legacy (proyecto sin build.sh): build inline, pero con el paralelismo
+        // ACOTADO POR RAM igual que el build.sh moderno — `-j$(nproc)` tiraba de swap.
+        compileCmd = "cd \"" + projectPath + "\" && mkdir -p build && cd build && cmake .." +
+                     cmakeArgs + " && make -j" + std::to_string(ramBoundedJobs());
+    }
     int result = system(compileCmd.c_str());
     
     if (result == 0) {
@@ -788,7 +942,7 @@ void EditorApplication::saveFile(const std::string& path, bool asPrefab) {
         currentFile.path = path;
         currentFile.name = p.stem().string();
         currentFile.isPrefab = isPrefab;
-        currentFile.lastSaveTime = glfwGetTime();
+        currentFile.lastSaveTime = SDL_GetTicks() / 1000.0f;
         sceneDirty = false;
         timeSinceLastSave = 0.0f;
         
@@ -799,31 +953,62 @@ void EditorApplication::saveFile(const std::string& path, bool asPrefab) {
     }
 }
 
-void EditorApplication::loadFile(const std::string& path) {
-    // Crear una nueva escena para cargar el archivo
-    currentScene = std::make_unique<Haruka::Scene>();
+void EditorApplication::bindPanelsToScene() {
+    Haruka::SceneManager* scene = currentScene.get();
 
-    if (currentScene->load(path)) {
-        // Actualizar estado del archivo
+    // Primero las SELECCIONES, y antes de repuntar: los paneles guardan `SceneObject*` crudos y un
+    // índice, y ambos apuntan a la escena vieja. Limpiarlos después dejaría una ventana en la que
+    // el panel ya tiene la escena nueva pero sigue con un puntero al objeto muerto.
+    sceneHierarchyPanel.setSelectedObjectIndex(-1);
+    inspectorPanel.setSelectedObjectIndex(-1);
+    objectsPanel.setSelectedObjectIndex(-1);
+    viewportPanel.setSelectedObjectIndex(-1);
+    nodeGraphEditorPanel.setSelectedObject(nullptr);
+    materialEditorPanel.setSelectedObject(nullptr);
+
+    sceneHierarchyPanel.setScene(scene);
+    inspectorPanel.setScene(scene);
+    objectsPanel.setScene(scene);
+    nodeGraphEditorPanel.setScene(scene);
+    projectBrowserPanel.setScene(scene);
+    viewportPanel.setScene(scene);   // el último: reinicia la Application del motor sobre la escena
+}
+
+void EditorApplication::loadFile(const std::string& path) {
+    // RAÍZ DE ASSETS DEL PROYECTO: el path llega como <proyecto>/scenes/x.scene. El motor
+    // resuelve sus assets contra la carpeta del EDITOR (fijada en init()); las texturas de
+    // escena ("assets/textures/...") y las biomas por defecto de SimplePlanet viven en la del
+    // PROYECTO. Se sube hasta hallar project.hrk y se fija esa raíz ANTES de que el viewport
+    // hornee el motor (setScene → Application::init). Sin esto, cada textura del proyecto
+    // falla bajo el editor y las biomas caen al fallback procedural.
+    namespace fs = std::filesystem;
+    fs::path projDir = fs::path(path).parent_path();
+    while (!projDir.empty() && !fs::exists(projDir / "project.hrk")) {
+        projDir = projDir.parent_path();
+    }
+    if (!projDir.empty())
+        Haruka::AssetPaths::setProjectRoot(projDir.string() + "/");
+
+    // La escena NUEVA se construye antes de soltar la vieja, y los paneles se repuntan enseguida
+    // (bindPanelsToScene): en cuanto este unique_ptr suelta la anterior, cualquier panel que siga
+    // apuntándola trabaja sobre memoria liberada.
+    currentScene = std::make_unique<Haruka::SceneManager>();
+    const bool loaded = currentScene->load(path);
+
+    // INCONDICIONAL, y antes de decidir si fue bien: la escena anterior ya está destruida en la
+    // línea de arriba. Repuntar solo en el camino de éxito dejaba a los paneles apuntando a memoria
+    // liberada cuando el fichero no cargaba — el mismo use-after-free, en la rama que menos se prueba.
+    bindPanelsToScene();
+
+    if (loaded) {
         currentFile.path = path;
         currentFile.name = std::filesystem::path(path).stem().string();
         currentFile.isPrefab = (path.find(".prefab") != std::string::npos);
-        currentFile.lastSaveTime = glfwGetTime();
-        
-        // Resetear estado de cambios
+        currentFile.lastSaveTime = SDL_GetTicks() / 1000.0f;
+
         sceneDirty = false;
         timeSinceLastSave = 0.0f;
-        
-        // Sincronizar panels
-        sceneHierarchyPanel.setScene(currentScene.get());
-        inspectorPanel.setScene(currentScene.get());
-        viewportPanel.setScene(currentScene.get());
-        planetTerrainEditorPanel.setScene(currentScene.get());
-        
-        // Resetear selección a ningún objeto
-        sceneHierarchyPanel.setSelectedObjectIndex(-1);
-        inspectorPanel.setSelectedObjectIndex(-1);
-        
+
         std::string type = currentFile.isPrefab ? "Prefab" : "Scene";
         std::cout << "✓ " << type << " loaded: " << path << std::endl;
     } else {
@@ -836,7 +1021,6 @@ void EditorApplication::createFileBackup(const std::string& filePath) {
     std::string backupDir = p.parent_path().string() + "/backups";
     std::filesystem::create_directories(backupDir);
     
-    // Para prefabs: eliminar TODOS los backups anteriores
     bool isPrefab = (filePath.find(".prefab") != std::string::npos);
     if (isPrefab) {
         deleteAllBackups(filePath);
@@ -854,7 +1038,6 @@ void EditorApplication::createFileBackup(const std::string& filePath) {
         std::filesystem::copy_file(filePath, backupPath, 
             std::filesystem::copy_options::overwrite_existing);
         
-        // Para escenas: mantener solo los últimos N backups
         if (!isPrefab) {
             cleanOldBackups(filePath);
         }
@@ -924,7 +1107,8 @@ std::string EditorApplication::getFileType(const std::string& path) {
 
 void EditorApplication::createSceneObject(const std::string& type) {
     if (!currentScene) return;
-    
-    sceneHierarchyPanel.createPrimitive(type, type);
+    std::string meshType = type;
+    std::transform(meshType.begin(), meshType.end(), meshType.begin(), ::tolower);
+    sceneHierarchyPanel.createPrimitive(type, meshType);
     sceneDirty = true;
 }

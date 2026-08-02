@@ -1,84 +1,32 @@
 #define GLM_ENABLE_EXPERIMENTAL
 #include "viewport.h"
 #include "core/application.h"
+#include "core/asset_paths.h"
+#include "core/components/material_component.h"
+#include "game/planetary_system.h"
+#include "tools/procgraph/tree_textures.h"
+#include "editor_util.h"
+#include <glad/glad.h>
+#include <SDL3/SDL.h>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtx/intersect.hpp>
 #include <algorithm>
+#include <cmath>
+#include <iostream>
+#include <random>
+#include <vector>
+#include <utility>
+#include <string>
 #include "commands/scene_commands.h"
 #include <ImGuizmo.h>
 #include <glm/gtc/type_ptr.hpp>
 
 namespace {
-std::unordered_map<std::string, std::shared_ptr<Model>> g_modelCache;
-
 bool isRenderDisabledByEditor(const Haruka::SceneObject& obj) {
     if (!obj.properties.is_object()) return false;
     if (!obj.properties.contains("terrainEditor")) return false;
     const auto& te = obj.properties["terrainEditor"];
     return te.value("disableRender", false);
-}
-
-void buildPrimitiveMeshFromProperties(Haruka::SceneObject& obj) {
-    if (!obj.meshRenderer) {
-        obj.meshRenderer = std::make_shared<MeshRendererComponent>();
-    }
-    if (!obj.meshRenderer || obj.meshRenderer->isResident()) return;
-    if (!obj.properties.contains("meshRenderer")) return;
-
-    const auto& mr = obj.properties["meshRenderer"];
-    std::string meshType = mr.value("meshType", "");
-    std::vector<glm::vec3> verts, norms;
-    std::vector<unsigned int> indices;
-
-    if (meshType == "cube") {
-        PrimitiveShapes::createCube(mr.value("size", 1.0f), verts, norms, indices);
-    } else if (meshType == "sphere") {
-        float radius = mr.value("radius", 1.0f);
-        int segments = mr.value("segments", 32);
-        PrimitiveShapes::createSphere(radius, segments, segments, verts, norms, indices);
-    } else if (meshType == "capsule") {
-        PrimitiveShapes::createCapsule(
-            mr.value("radius", 0.5f),
-            mr.value("height", 2.0f),
-            mr.value("segments", 24),
-            mr.value("stacks", 16),
-            verts, norms, indices);
-    } else if (meshType == "plane") {
-        PrimitiveShapes::createPlane(
-            mr.value("width", 2.0f),
-            mr.value("height", 2.0f),
-            mr.value("subdivisions", 10),
-            verts, norms, indices);
-    }
-
-    if (!verts.empty()) {
-        obj.meshRenderer->setMesh(verts, norms, indices);
-    }
-}
-
-void maybeReleasePrimitiveMesh(Haruka::SceneObject& obj) {
-    if (obj.meshRenderer && obj.meshRenderer->isResident()) {
-        obj.meshRenderer->releaseMesh();
-    }
-}
-
-std::shared_ptr<Model> getOrLoadModelCached(const std::string& path) {
-    auto it = g_modelCache.find(path);
-    if (it != g_modelCache.end()) {
-        return it->second;
-    }
-
-    try {
-        auto model = std::make_shared<Model>(path);
-        g_modelCache[path] = model;
-        return model;
-    } catch (...) {
-        return nullptr;
-    }
-}
-
-void releaseModelFromCache(const std::string& path) {
-    g_modelCache.erase(path);
 }
 }
 
@@ -86,7 +34,7 @@ ViewportPanel::ViewportPanel() {}
 
 ViewportPanel::~ViewportPanel() = default;
 
-void ViewportPanel::setScene(Haruka::Scene* scene) {
+void ViewportPanel::setScene(Haruka::SceneManager* scene) {
     currentScene = scene;
     
     // Inicializar Application si no existe
@@ -113,6 +61,42 @@ void ViewportPanel::setScene(Haruka::Scene* scene) {
     
     // Registrar en MotorInstance cuando cambia la escena
     MotorInstance::getInstance().setScene(scene);
+    registerEditorTargetWithApp();
+}
+
+void ViewportPanel::setStatsPanelFromApp(class Application* app) {
+    if (!statsPanel || !app) return;
+    statsPanel->setVertexCount(app->getRenderedVertices());
+    statsPanel->setDrawCalls(app->getRenderedDrawCalls());
+    statsPanel->setTriangleCount(app->getRenderedTriangles());
+    statsPanel->setTotalVertexCount(app->getTotalVertices());
+    statsPanel->setTotalDrawCalls(app->getTotalDrawCalls());
+    statsPanel->setTotalTriangleCount(app->getTotalTriangles());
+    statsPanel->setVisibleChunkCount(0);
+    statsPanel->setResidentChunkCount(0);
+    statsPanel->setPendingChunkLoads(0);
+    statsPanel->setPendingChunkEvictions(0);
+    statsPanel->setResidentMemoryMB(0);
+    statsPanel->setTrackedChunkCount(0);
+    statsPanel->setMaxMemoryMB(0);
+}
+
+void ViewportPanel::registerEditorTargetWithApp() {
+    Application* app = MotorInstance::getInstance().getApplication();
+    if (app && renderTarget) {
+        app->setEditorTarget(renderTarget.get());
+        app->setEditorViewportSize(width, height);
+    }
+}
+
+void ViewportPanel::shutdownGLResources() {
+    // Liberar recursos GL del motor MIENTRAS el contexto sigue vivo; si se destruyeran
+    // después (al morir los miembros), los glDelete* correrían sobre un contexto muerto.
+    renderTarget.reset();               // FBO/RHI target del viewport
+    if (ownedApplication) {
+        ownedApplication.reset();       // ~Application → cleanup() libera recursos del motor
+    }
+    MotorInstance::getInstance().clear();
 }
 
 void ViewportPanel::setCamera(Camera* cam) {
@@ -129,6 +113,7 @@ void ViewportPanel::recreateRenderTarget() {
     
     // Registrar en MotorInstance cuando cambia el RenderTarget
     MotorInstance::getInstance().setRenderTarget(renderTarget.get());
+    registerEditorTargetWithApp();
 }
 
 glm::vec3 ViewportPanel::getRayFromMouse(const glm::mat4& proj, const glm::mat4& view) {
@@ -152,14 +137,14 @@ int ViewportPanel::getHoveredObjectIndex(const glm::vec3& rayOrigin, const glm::
     float closestDist = FLT_MAX;
     int closestIdx = -1;
 
-    const auto& objects = currentScene->getObjects();
+    auto& objects = currentScene->getObjectsMutable();
     for (size_t i = 0; i < objects.size(); i++) {
-        const auto& obj = objects[i];
-        if (isRenderDisabledByEditor(obj)) continue;
+        auto& objPtr = objects[i];
+        if (isRenderDisabledByEditor(*objPtr)) continue;
         
         // Bounding sphere (radio 0.5 * escala)
-        glm::vec3 center = glm::vec3(obj.position);
-        float radius = 0.5f * glm::length(glm::vec3(obj.scale));
+        glm::vec3 center = glm::vec3(objPtr->position);
+        float radius = 0.5f * glm::length(glm::vec3(objPtr->scale));
         
         float distance;
         if (glm::intersectRaySphere(rayOrigin, rayDir, center, radius, distance)) {
@@ -175,6 +160,7 @@ int ViewportPanel::getHoveredObjectIndex(const glm::vec3& rayOrigin, const glm::
 
 void ViewportPanel::handleGizmoInput() {
     if (playMode) return;
+    if (placementEnabled) return;   // en modo colocación el clic coloca, no selecciona
 
     ImGuiIO& io = ImGui::GetIO();
 
@@ -188,12 +174,15 @@ void ViewportPanel::handleGizmoInput() {
         selectedObjectIndex = getHoveredObjectIndex(rayOrigin, rayDir, proj, view);
 
         if (selectedObjectIndex >= 0 && currentScene) {
-            auto& obj = currentScene->getObjectsMutable()[selectedObjectIndex];
+            auto& objects = currentScene->getObjectsMutable();
+            if (selectedObjectIndex >= (int)objects.size()) return;
+            auto& objPtr = objects[selectedObjectIndex];
+            if (!objPtr) return;
 
             // Convierte dvec3 a vec3 para ImGuizmo
-            glm::vec3 pos   = glm::vec3(obj.position);
-            glm::vec3 rot   = glm::vec3(obj.rotation);
-            glm::vec3 scale = glm::vec3(obj.scale);
+            glm::vec3 pos   = glm::vec3(objPtr->position);
+            glm::vec3 rot   = glm::vec3(EditorUtil::rotationToEuler(objPtr->rotation));
+            glm::vec3 scale = glm::vec3(objPtr->scale);
 
             // Construye la matriz de transformación en float
             glm::mat4 objTransform = glm::translate(glm::mat4(1.0f), pos)
@@ -217,16 +206,18 @@ void ViewportPanel::handleGizmoInput() {
             if (ImGuizmo::IsUsing()) {
                 glm::vec3 newPos, newRot, newScale;
                 ImGuizmo::DecomposeMatrixToComponents(glm::value_ptr(objTransform), &newPos.x, &newRot.x, &newScale.x);
-                obj.position = glm::dvec3(newPos);
-                obj.rotation = glm::dvec3(newRot);
-                obj.scale    = glm::dvec3(newScale);
+                objPtr->position = glm::dvec3(newPos);
+                objPtr->rotation = EditorUtil::eulerToRotation(glm::dvec3(newRot));
+                objPtr->scale    = glm::dvec3(newScale);
             }
         }
     }
 
     if (isDragging && ImGui::IsMouseDown(ImGuiMouseButton_Left) && activeAxis != GizmoAxis::None) {
         ImGuiIO& io = ImGui::GetIO();
-        auto* obj = currentScene->getObject(currentScene->getObjects()[selectedObjectIndex].name);
+        auto objects = currentScene->getObjects();
+        if (selectedObjectIndex < 0 || selectedObjectIndex >= (int)objects.size()) return;
+        auto obj = currentScene->getObject(objects[selectedObjectIndex].name);
         if (!obj) return;
 
         glm::vec3 axisDir =
@@ -248,10 +239,11 @@ void ViewportPanel::handleGizmoInput() {
         }
         else if (gizmoMode == 1) { // ROTATE
             float rotDelta = io.MouseDelta.x * 0.5f;
-            obj->rotation = dragStartRot;
-            if (activeAxis == GizmoAxis::X) obj->rotation.x += rotDelta;
-            if (activeAxis == GizmoAxis::Y) obj->rotation.y += rotDelta;
-            if (activeAxis == GizmoAxis::Z) obj->rotation.z += rotDelta;
+            glm::dvec3 euler = dragStartRot;
+            if (activeAxis == GizmoAxis::X) euler.x += rotDelta;
+            if (activeAxis == GizmoAxis::Y) euler.y += rotDelta;
+            if (activeAxis == GizmoAxis::Z) euler.z += rotDelta;
+            obj->rotation = EditorUtil::eulerToRotation(euler);
         }
         else if (gizmoMode == 2) { // SCALE
             float scaleDelta = io.MouseDelta.x * 0.01f;
@@ -265,7 +257,9 @@ void ViewportPanel::handleGizmoInput() {
     if (ImGui::IsMouseReleased(ImGuiMouseButton_Left) && isDragging) {
         isDragging = false;
 
-        auto* obj = currentScene->getObject(currentScene->getObjects()[selectedObjectIndex].name);
+        auto objects = currentScene->getObjects();
+        if (selectedObjectIndex < 0 || selectedObjectIndex >= (int)objects.size()) return;
+        auto obj = currentScene->getObject(objects[selectedObjectIndex].name);
         if (obj && commandHistory) {
             if (obj->position != glm::dvec3(dragStartPos))
             {
@@ -290,18 +284,18 @@ void ViewportPanel::handleAssetDrop() {
                            assetPath.find(".fbx") != std::string::npos);
             
             if (currentScene && isModel) {
-                Haruka::SceneObject obj;
-                obj.name = "Model_" + std::to_string(currentScene->getObjects().size());
-                obj.type = "Model";
-                obj.modelPath = assetPath;
-                obj.position = glm::vec3(0, 0, 0);
-                obj.rotation = glm::vec3(0, 0, 0);
-                obj.scale = glm::vec3(1, 1, 1);
+                auto obj = std::make_shared<Haruka::SceneObject>();
+                obj->name = "Model_" + std::to_string(currentScene->getObjects().size());
+                obj->type = "Model";
+                obj->modelPath = assetPath;
+                obj->position = glm::dvec3(0, 0, 0);
+                obj->rotation = EditorUtil::eulerToRotation(glm::dvec3(0, 0, 0));
+                obj->scale = glm::dvec3(1, 1, 1);
                 
                 if (commandHistory) {
-                    commandHistory->execute(std::make_unique<AddObjectCommand>(currentScene, obj));
+                    commandHistory->execute(std::make_unique<AddObjectCommand>(currentScene, *obj));
                 } else {
-                    currentScene->addObject(obj);
+                    currentScene->addLoadedObject(obj);
                 }
                 
                 std::cout << "Model added: " << assetPath << std::endl;
@@ -317,377 +311,29 @@ void ViewportPanel::renderScene() {
     renderVertex_count = 0;
     renderDraw_calls = 0;
 
-    // --- Render del motor vs render local ---
-    // Si quieres forzar render local en el editor, usa esta bandera:
-    #ifdef HARUKA_EDITOR
-    static bool forceLocalRender = false;
-    if (ImGui::IsKeyDown(ImGuiKey_LeftCtrl) && ImGui::IsKeyPressed(ImGuiKey_L)) {
-        forceLocalRender = !forceLocalRender;
-    }
-    #else
-    constexpr bool forceLocalRender = false;
-    #endif
-
+    Application* app = MotorInstance::getInstance().getApplication();
     RenderTarget* motorTarget = MotorInstance::getInstance().getRenderTarget();
-    bool motorActivo = MotorInstance::getInstance().isMotorActive();
-    bool motorTieneApp = (MotorInstance::getInstance().getApplication() != nullptr);
-    bool motorTieneCam = (MotorInstance::getInstance().getCamera() != nullptr);
-    bool motorRenderDirecto = (motorTarget && (motorTarget == renderTarget.get()));
 
-    auto computeSceneStats = [&](int& outVertices, int& outTriangles, int& outDrawCalls) {
-        outVertices = 0;
-        outTriangles = 0;
-        outDrawCalls = 0;
-        Haruka::Scene* sceneForStats = MotorInstance::getInstance().getScene();
-        if (!sceneForStats) sceneForStats = currentScene;
-        if (!sceneForStats) return;
-
-        for (const auto& obj : sceneForStats->getObjects()) {
-            if (isRenderDisabledByEditor(obj)) continue;
-            if (obj.meshRenderer) {
-                outDrawCalls++;
-                outVertices += obj.meshRenderer->getVertexCount();
-                outTriangles += obj.meshRenderer->getTriangleCount();
-                continue;
-            }
-            if (!obj.modelPath.empty()) {
-                try {
-                    auto model = getOrLoadModelCached(obj.modelPath);
-                    if (!model) continue;
-                    outDrawCalls++;
-                    outVertices += model->getVertexCount();
-                    outTriangles += model->getTriangleCount();
-                } catch (...) {}
-            }
-        }
-    };
-
-    bool useMotorOutput = playMode && !forceLocalRender;
-    if (useMotorOutput) {
-        if (motorTarget && motorRenderDirecto) {
-            // El motor ya renderiza directo en este target, no hacer nada más
-            if (statsPanel) {
-                statsPanel->setVertexCount(Application::getLastRenderedVertices());
-                statsPanel->setDrawCalls(Application::getLastRenderedDrawCalls());
-                statsPanel->setTriangleCount(Application::getLastRenderedTriangles());
-                statsPanel->setTotalVertexCount(Application::getLastTotalVertices());
-                statsPanel->setTotalDrawCalls(Application::getLastTotalDrawCalls());
-                statsPanel->setTotalTriangleCount(Application::getLastTotalTriangles());
-                statsPanel->setVisibleChunkCount(Application::getLastVisibleChunks());
-                statsPanel->setResidentChunkCount(Application::getLastResidentChunks());
-                statsPanel->setPendingChunkLoads(Application::getLastPendingChunkLoads());
-                statsPanel->setPendingChunkEvictions(Application::getLastPendingChunkEvictions());
-                statsPanel->setResidentMemoryMB(Application::getLastResidentMemoryMB());
-                statsPanel->setTrackedChunkCount(Application::getLastTrackedChunks());
-                statsPanel->setMaxMemoryMB(Application::getLastMaxMemoryMB());
-            }
-            return;
-        } else if (motorTarget) {
-            // Copiar textura del motor al renderTarget del viewport
-            glBindFramebuffer(GL_READ_FRAMEBUFFER, motorTarget->getFBO());
-            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, renderTarget->getFBO());
-            glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL_COLOR_BUFFER_BIT, GL_LINEAR);
-            glBindFramebuffer(GL_FRAMEBUFFER, 0);
-            if (statsPanel) {
-                statsPanel->setVertexCount(Application::getLastRenderedVertices());
-                statsPanel->setDrawCalls(Application::getLastRenderedDrawCalls());
-                statsPanel->setTriangleCount(Application::getLastRenderedTriangles());
-                statsPanel->setTotalVertexCount(Application::getLastTotalVertices());
-                statsPanel->setTotalDrawCalls(Application::getLastTotalDrawCalls());
-                statsPanel->setTotalTriangleCount(Application::getLastTotalTriangles());
-                statsPanel->setVisibleChunkCount(Application::getLastVisibleChunks());
-                statsPanel->setResidentChunkCount(Application::getLastResidentChunks());
-                statsPanel->setPendingChunkLoads(Application::getLastPendingChunkLoads());
-                statsPanel->setPendingChunkEvictions(Application::getLastPendingChunkEvictions());
-                statsPanel->setResidentMemoryMB(Application::getLastResidentMemoryMB());
-                statsPanel->setTrackedChunkCount(Application::getLastTrackedChunks());
-                statsPanel->setMaxMemoryMB(Application::getLastMaxMemoryMB());
-            }
-            return;
-        } else {
-            // Sin render target del motor: mantener el viewport sin renderizar la ruta local inestable.
-            if (statsPanel) {
-                statsPanel->setVertexCount(0);
-                statsPanel->setDrawCalls(0);
-                statsPanel->setTriangleCount(0);
-                statsPanel->setTotalVertexCount(0);
-                statsPanel->setTotalDrawCalls(0);
-                statsPanel->setTotalTriangleCount(0);
-                statsPanel->setVisibleChunkCount(0);
-                statsPanel->setResidentChunkCount(0);
-                statsPanel->setPendingChunkLoads(0);
-                statsPanel->setPendingChunkEvictions(0);
-                statsPanel->setResidentMemoryMB(0);
-                statsPanel->setTrackedChunkCount(0);
-                statsPanel->setMaxMemoryMB(0);
-            }
-            return;
-        }
+    // El motor renderiza la escena cada frame en este target (setEditorTarget).
+    if (app && motorTarget == renderTarget.get()) {
+        setStatsPanelFromApp(app);
+        return;
     }
 
-    // Render local (editor o fallback)
-    renderTarget->bindForWriting();
+    // Sin motor activo: limpiar el target con un color de fondo estable.
+    glBindFramebuffer(GL_FRAMEBUFFER, renderTarget->getFBO());
     glViewport(0, 0, width, height);
-    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClearColor(0.05f, 0.05f, 0.08f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
-    int localDrawCalls = 0;
-    int localVertices = 0;
-    int localTriangles = 0;
-    int totalVertices = 0;
-    int totalTriangles = 0;
-    int totalDrawCalls = 0;
-    computeSceneStats(totalVertices, totalTriangles, totalDrawCalls);
-    if (currentScene) {
-        glm::dvec3 camPos = camera ? glm::dvec3(camera->position) : glm::dvec3(0.0);
-        bool shaderReady = true;
-        if (!sceneShader) {
-            try {
-                // Shader simple/estable para editor local
-                sceneShader = std::make_unique<Shader>("shaders/simple.vert", "shaders/light_cube.frag");
-            } catch (const std::exception& e) {
-                std::cerr << "[ViewportPanel] Error al crear sceneShader: " << e.what() << std::endl;
-                shaderReady = false;
-            }
-        }
-        if (!sceneShader) {
-            std::cerr << "[ViewportPanel] sceneShader es nullptr, abortando render local" << std::endl;
-            shaderReady = false;
-        }
-        if (shaderReady) {
-            Application* motorApp = MotorInstance::getInstance().getApplication();
-            CascadedShadowMap* cascadedShadow = motorApp ? motorApp->getCascadedShadowMap() : nullptr;
-            Shader* cascadeShadowShader = motorApp ? motorApp->getCascadedShadowShader() : nullptr;
-
-            const bool enableShadows = true;
-
-            glm::vec3 sunPos(5000.0f, 5000.0f, -5000.0f);
-            glm::vec3 sunColor(1.0f, 1.0f, 0.95f);
-            float sunIntensity = 20.0f;
-            for (const auto& obj : currentScene->getObjects()) {
-                if (isRenderDisabledByEditor(obj)) continue;
-                if (obj.type == "Light" || obj.type == "PointLight" || obj.type == "DirectionalLight") {
-                    sunPos = glm::vec3(obj.getWorldPosition(currentScene));
-                    sunColor = glm::vec3(obj.color);
-                    sunIntensity = std::max((float)obj.intensity, 0.0f);
-                    break;
-                }
-            }
-
-            glm::vec3 sunDir = glm::normalize(sunPos);
-            glm::mat4 cameraView = camera ? camera->getViewMatrix() : glm::lookAt(glm::vec3(0.0f, 2.0f, 8.0f), glm::vec3(0.0f), glm::vec3(0, 1, 0));
-            float camDist = camera ? glm::length(glm::vec3(camera->position)) : 1000.0f;
-            float nearPlane = std::clamp(camDist * 0.001f, 0.5f, 20.0f);
-            float farPlane = std::max(200000.0f, camDist * 400.0f);
-            if (currentScene && currentScene->getObject("Sun")) {
-                const auto* sunObj = currentScene->getObject("Sun");
-                glm::vec3 sunPosObj = glm::vec3(sunObj->getWorldPosition(currentScene));
-                float sunDistance = glm::length(sunPosObj - (camera ? glm::vec3(camera->position) : glm::vec3(0.0f)));
-                float sunRadius = std::max(std::abs((float)sunObj->scale.x), std::max(std::abs((float)sunObj->scale.y), std::abs((float)sunObj->scale.z)));
-                farPlane = std::max(farPlane, sunDistance + sunRadius * 3.0f);
-                farPlane = std::min(farPlane, 300000000.0f);
-            }
-
-            if (enableShadows && cascadedShadow) {
-                glm::vec3 camForward = camera ? camera->getFront() : glm::vec3(0.0f, 0.0f, -1.0f);
-                glm::vec3 camUp = camera ? camera->getUp() : glm::vec3(0.0f, 1.0f, 0.0f);
-                cascadedShadow->updateCascades(
-                    -sunDir,
-                    camera ? glm::vec3(camera->position) : glm::vec3(0.0f),
-                    camForward,
-                    camUp,
-                    (float)width / (float)height,
-                    nearPlane,
-                    farPlane,
-                    60.0f);
-            }
-
-            // Shadow depth pass
-            if (enableShadows && cascadedShadow && cascadeShadowShader) {
-                glEnable(GL_CULL_FACE);
-                glCullFace(GL_FRONT);
-                glEnable(GL_POLYGON_OFFSET_FILL);
-                glPolygonOffset(1.5f, 4.0f);
-
-                cascadeShadowShader->use();
-                for (int cascade = 0; cascade < cascadedShadow->getNumCascades(); ++cascade) {
-                    cascadedShadow->bindForWriting(cascade);
-                    glClear(GL_DEPTH_BUFFER_BIT);
-
-                    cascadeShadowShader->setMat4("lightSpaceMatrix", cascadedShadow->getCascadeMatrix(cascade));
-
-                    for (const auto& obj : currentScene->getObjects()) {
-                        if (isRenderDisabledByEditor(obj)) continue;
-                        glm::mat4 modelMatrix = obj.getWorldTransform(currentScene);
-                        cascadeShadowShader->setMat4("model", modelMatrix);
-
-                        if (obj.meshRenderer && obj.meshRenderer->isResident()) {
-                            obj.meshRenderer->render(*cascadeShadowShader);
-                        } else if (!obj.modelPath.empty()) {
-                            try {
-                                auto model = getOrLoadModelCached(obj.modelPath);
-                                if (model) model->Draw(*cascadeShadowShader);
-                            } catch (...) {}
-                        }
-                    }
-                }
-
-                glCullFace(GL_BACK);
-                glDisable(GL_POLYGON_OFFSET_FILL);
-                glBindFramebuffer(GL_FRAMEBUFFER, 0);
-                renderTarget->bindForWriting();
-                glViewport(0, 0, width, height);
-            }
-
-            sceneShader->use();
-            const glm::mat4 projection = glm::perspective(glm::radians(60.0f), (float)width / (float)height, nearPlane, farPlane);
-            sceneShader->setMat4("projection", projection);
-            sceneShader->setMat4("view", cameraView);
-            sceneShader->setMat4("lightSpaceMatrix", glm::mat4(1.0f));
-            if (cascadedShadow) {
-                sceneShader->setInt("numCascades", cascadedShadow->getNumCascades());
-                for (int i = 0; i < cascadedShadow->getNumCascades(); ++i) {
-                    sceneShader->setMat4("cascadeLightSpaceMatrices[" + std::to_string(i) + "]", cascadedShadow->getCascadeMatrix(i));
-                    sceneShader->setFloat("cascadeSplits[" + std::to_string(i) + "]", cascadedShadow->getCascadeInfo(i).zFar);
-                    cascadedShadow->bindForReading(i, 7 + i);
-                    sceneShader->setInt("cascadeShadowMaps[" + std::to_string(i) + "]", 7 + i);
-                }
-            } else {
-                sceneShader->setInt("numCascades", 0);
-            }
-            sceneShader->setVec3("sunDirection", sunDir);
-            float sunEnergy = std::clamp(sunIntensity * 0.01f, 0.2f, 2.0f);
-            sceneShader->setVec3("sunLightColor", sunColor * sunEnergy);
-            sceneShader->setFloat("ambientStrength", 0.12f);
-            sceneShader->setBool("useShadowMap", false);
-
-            glm::vec3 camDir = glm::vec3(0.0f, 0.0f, 1.0f);
-            if (camera) {
-                glm::vec3 cp = camera->position;
-                float cpl = glm::length(cp);
-                if (cpl > 1e-6f) camDir = cp / cpl;
-            }
-
-            auto isChunkFacingCamera = [&](const Haruka::SceneObject& obj) -> bool {
-                if (!obj.properties.is_object()) return true;
-                if (!obj.properties.contains("terrainEditor")) return true;
-                const auto& te = obj.properties["terrainEditor"];
-                if (!te.is_object() || !te.value("isChunk", false)) return true;
-
-                if (!te.contains("chunkX") || !te.contains("chunkY") || !te.contains("chunkTilesX") || !te.contains("chunkTilesY")) return true;
-
-                int chunkX = te.value("chunkX", -1);
-                int chunkY = te.value("chunkY", -1);
-                int tilesX = te.value("chunkTilesX", 0);
-                int tilesY = te.value("chunkTilesY", 0);
-                if (chunkX < 0 || chunkY < 0 || tilesX <= 0 || tilesY <= 0) return true;
-
-                constexpr float kPiLocal = 3.14159265358979323846f;
-                float lat = ((static_cast<float>(chunkY) + 0.5f) / static_cast<float>(tilesY)) * kPiLocal - (kPiLocal * 0.5f);
-                float lon = ((static_cast<float>(chunkX) + 0.5f) / static_cast<float>(tilesX)) * (2.0f * kPiLocal) - kPiLocal;
-                glm::vec3 chunkDir(
-                    std::cos(lat) * std::cos(lon),
-                    std::sin(lat),
-                    std::cos(lat) * std::sin(lon)
-                );
-
-                // Render near/front hemisphere of the planet plus a small margin.
-                return glm::dot(chunkDir, camDir) > -0.15f;
-            };
-
-            for (auto& obj : currentScene->getObjectsMutable()) {
-                if (isRenderDisabledByEditor(obj)) continue;
-                if (!isChunkFacingCamera(obj)) continue;
-                int layer = std::clamp(obj.renderLayer, 1, 5);
-                double unloadDistance = Application::getLayerMaxDistance(layer);
-                if (obj.meshRenderer && layer >= 4) {
-                    glm::dvec3 worldPos = obj.getWorldPosition(currentScene);
-                    double dist = glm::length(worldPos - camPos);
-                    if (dist > unloadDistance * 1.15) {
-                        maybeReleasePrimitiveMesh(obj);
-                    } else if (!obj.meshRenderer->isResident() && dist < unloadDistance * 0.85) {
-                        buildPrimitiveMeshFromProperties(obj);
-                    }
-                }
-
-                glm::mat4 modelMatrix = obj.getWorldTransform(currentScene);
-                sceneShader->setMat4("model", modelMatrix);
-                glm::vec3 baseColor = glm::vec3(obj.color);
-                if (glm::length(baseColor) < 0.001f) baseColor = glm::vec3(0.8f);
-
-                const bool isLightObj = (obj.type == "Light" || obj.type == "PointLight" || obj.type == "DirectionalLight");
-                float emission = isLightObj ? std::max((float)obj.intensity, 0.0f) : 1.0f;
-                glm::vec3 c = isLightObj ? (baseColor * emission) : baseColor;
-                sceneShader->setVec3("lightColor", c);
-                if (obj.meshRenderer && obj.meshRenderer->isResident()) {
-                    obj.meshRenderer->render(*sceneShader);
-                    localDrawCalls++;
-                    localVertices += obj.meshRenderer->getResidentVertexCount();
-                    localTriangles += obj.meshRenderer->getResidentTriangleCount();
-                    continue;
-                }
-                if (!obj.modelPath.empty()) {
-                    try {
-                        auto model = getOrLoadModelCached(obj.modelPath);
-                        if (model) {
-                            model->Draw(*sceneShader);
-                            localDrawCalls++;
-                            localVertices += model->getVertexCount();
-                            localTriangles += model->getTriangleCount();
-                        }
-                    } catch (...) {}
-                }
-            }
-
-            // Outline amarillo del objeto seleccionado
-            if (selectedObjectIndex >= 0 && selectedObjectIndex < (int)currentScene->getObjects().size()) {
-                const auto& selObj = currentScene->getObjects()[selectedObjectIndex];
-                if (!isRenderDisabledByEditor(selObj)) {
-                    glDisable(GL_CULL_FACE);
-                    glEnable(GL_DEPTH_TEST);
-                    glDepthFunc(GL_LEQUAL);
-                    glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-                    glLineWidth(3.0f);
-
-                    sceneShader->use();
-                    sceneShader->setMat4("projection", glm::perspective(glm::radians(60.0f), (float)width / (float)height, nearPlane, farPlane));
-                    sceneShader->setMat4("view", cameraView);
-                    sceneShader->setVec3("sunDirection", sunDir);
-                    sceneShader->setVec3("sunLightColor", glm::vec3(1.0f));
-                    sceneShader->setFloat("ambientStrength", 1.0f);
-                    sceneShader->setBool("useShadowMap", false);
-                    sceneShader->setVec3("lightColor", glm::vec3(1.0f, 1.0f, 0.0f));
-
-                    glm::mat4 outlineModel = selObj.getWorldTransform(currentScene);
-                    outlineModel = outlineModel * glm::scale(glm::mat4(1.0f), glm::vec3(1.003f));
-                    sceneShader->setMat4("model", outlineModel);
-
-                    if (selObj.meshRenderer && selObj.meshRenderer->isResident()) {
-                        selObj.meshRenderer->render(*sceneShader);
-                    } else if (!selObj.modelPath.empty()) {
-                        try {
-                            auto model = getOrLoadModelCached(selObj.modelPath);
-                            if (model) model->Draw(*sceneShader);
-                        } catch (...) {}
-                    }
-
-                    glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-                    glLineWidth(1.0f);
-                    glDepthFunc(GL_LESS);
-                }
-            }
-        }
-    }
-    renderTarget->unbind();
-    renderDraw_calls = localDrawCalls;
-    renderVertex_count = localVertices;
     if (statsPanel) {
-        statsPanel->setVertexCount(renderVertex_count);
-        statsPanel->setDrawCalls(renderDraw_calls);
-        statsPanel->setTriangleCount(localTriangles);
-        statsPanel->setTotalVertexCount(totalVertices);
-        statsPanel->setTotalDrawCalls(totalDrawCalls);
-        statsPanel->setTotalTriangleCount(totalTriangles);
+        statsPanel->setVertexCount(0);
+        statsPanel->setDrawCalls(0);
+        statsPanel->setTriangleCount(0);
+        statsPanel->setTotalVertexCount(0);
+        statsPanel->setTotalDrawCalls(0);
+        statsPanel->setTotalTriangleCount(0);
     }
 }
 
@@ -712,9 +358,41 @@ void ViewportPanel::updateCameraFromInput(float deltaTime) {
         camera->sensitivity = mouseSensitivity;
     }
 
-    // WASD solo cuando el viewport tiene foco y no hay inputs activos
-    if (camera && isViewportFocused && glfwWindow && !ImGui::IsAnyItemActive()) {
-        camera->processInput(glfwWindow, deltaTime);
+    // RUEDA = avanzar/retroceder en la dirección de vista (dolly), no zoom de FOV: cambiar el FOV
+    // deforma la perspectiva y no te acerca a nada. El paso es PROPORCIONAL a lo lejos que estás
+    // del objeto seleccionado (10 % de la distancia por muesca): con paso fijo, acercarse a un prop
+    // desde 20 m tarda una eternidad y acercarse a un planeta desde 16 000 km es imposible. Al
+    // aproximarte los pasos se acortan solos, así que nunca lo atraviesas de una muesca.
+    if (camera && isViewportHovered && !ImGui::IsAnyItemActive()) {
+        const float wheel = io.MouseWheel;
+        if (wheel != 0.0f) {
+            double reference = 10.0;   // sin selección: paso cómodo de escena pequeña
+            if (currentScene && selectedObjectIndex >= 0) {
+                const auto& all = currentScene->getAllObjects();
+                if (selectedObjectIndex < (int)all.size() && all[selectedObjectIndex]) {
+                    const double d = glm::length(all[selectedObjectIndex]->position - camera->position);
+                    if (d > 1e-6) reference = d;
+                }
+            }
+            const double step = reference * 0.10 * (double)wheel;
+            camera->position += Haruka::WorldPos(glm::dvec3(camera->getFront()) * step);
+        }
+    }
+
+    // WASD movement via SDL keyboard state
+    if (camera && isViewportFocused && sdlWindow && !ImGui::IsAnyItemActive()) {
+        const bool* keys = SDL_GetKeyboardState(nullptr);
+        glm::vec3 moveDelta(0.0f);
+        if (keys[SDL_SCANCODE_W]) moveDelta += camera->getFront();
+        if (keys[SDL_SCANCODE_S]) moveDelta -= camera->getFront();
+        if (keys[SDL_SCANCODE_A]) moveDelta -= glm::normalize(glm::cross(camera->getFront(), camera->getUp()));
+        if (keys[SDL_SCANCODE_D]) moveDelta += glm::normalize(glm::cross(camera->getFront(), camera->getUp()));
+        if (keys[SDL_SCANCODE_SPACE]) moveDelta += camera->getUp();
+        if (keys[SDL_SCANCODE_LSHIFT]) moveDelta -= camera->getUp();
+        if (glm::length(moveDelta) > 0.0f) {
+            moveDelta = glm::normalize(moveDelta) * camera->speed * deltaTime;
+            camera->position += Haruka::WorldPos(moveDelta);
+        }
     }
 }
 
@@ -764,6 +442,38 @@ void ViewportPanel::onImGuiRender() {
         ImGui::SameLine(600);
         ImGui::TextDisabled("50x50m | MB3:Rotate | WASD:Move");
     }
+
+    // --- Vista de depuración del planeta (editor → motor) --------------------------------
+    // Colorea el planeta para VER cómo funciona el terreno: elevación, zonas del autor, bioma,
+    // temperatura, humedad y CAPAS (cómo se aplica cada textura). El shader (biome.frag) hace el
+    // resto con uDebug.x. Las capas se listan DINÁMICAS: las que el planeta declare en escena —
+    // el selector tiene en cuenta TODAS las texturas (arena, hierba, roca…) y no una lista fija.
+    {
+        static const char* kBase[] = {"Normal", "Elevación", "Zonas", "Bioma",
+                                      "Temperatura", "Humedad"};
+        std::vector<std::pair<std::string, int>> items;
+        for (int v = 0; v < 6; ++v) items.push_back({kBase[v], v});
+        items.push_back({"Capas (todas)", 6});
+        if (Application* app = MotorInstance::getInstance().getApplication()) {
+            const auto layers = app->getPlanetTerrainLayerNames();
+            for (size_t i = 0; i < layers.size(); ++i)
+                items.push_back({"Capa: " + layers[i], 10 + (int)i});
+        }
+        std::string current;
+        for (const auto& it : items) if (it.second == debugView) { current = it.first; break; }
+        if (current.empty()) current = kBase[0];
+        ImGui::SetNextItemWidth(130);
+        if (ImGui::BeginCombo("Debug##planet", current.c_str())) {
+            for (const auto& it : items) {
+                if (ImGui::Selectable(it.first.c_str(), it.second == debugView)) {
+                    debugView = it.second;
+                    if (Application* app = MotorInstance::getInstance().getApplication())
+                        app->setPlanetDebugView(it.second);
+                }
+            }
+            ImGui::EndCombo();
+        }
+    }
     
     ImGui::Separator();
 
@@ -780,7 +490,7 @@ void ViewportPanel::onImGuiRender() {
     }
 
     ImGui::Image(
-        (void*)(intptr_t)renderTarget->getColorTexture(),
+        (void*)(intptr_t)renderTarget->getColorTextureGL(),
         ImVec2((float)width, (float)height),
         ImVec2(0, 0),
         ImVec2(1, 1)
@@ -799,16 +509,65 @@ void ViewportPanel::onImGuiRender() {
 
     handleAssetDrop();
     handleGizmoInput();
+    handlePlacement();
 
     ImGui::End();
 }
 
-void ViewportPanel::onUpdate(float deltaTime) {    
+void ViewportPanel::focusOnObject(int objectIndex) {
+    if (!camera || !currentScene) return;
+    const auto& all = currentScene->getAllObjects();
+    if (objectIndex < 0 || objectIndex >= (int)all.size() || !all[objectIndex]) return;
+    const Haruka::SceneObject& obj = *all[objectIndex];
+
+    // El TAMAÑO lo decide el motor: aquí un planeta y una caja son el mismo SceneObject, y entre
+    // uno y otra hay siete órdenes de magnitud. Sin motor, el encuadre no se intenta a ojo.
+    Application* app = MotorInstance::getInstance().getApplication();
+    if (!app) return;
+    const double radius = app->getObjectBoundingRadius(obj);
+
+    // Distancia que hace que una esfera de `radius` quepa entera: con el semiángulo θ del cono de
+    // visión, la esfera es tangente al cono a d = r / sin(θ). Se toma el eje MÁS ESTRECHO (en un
+    // viewport apaisado, el vertical) o el objeto se saldría por arriba y abajo. El margen deja
+    // aire alrededor en vez de dejarlo tocando el borde.
+    const double kMargin = 1.6;
+    const double aspect  = (height > 0) ? (double)width / (double)height : 1.0;
+    const double halfFovY = glm::radians((double)camera->zoom) * 0.5;
+    const double halfFovX = std::atan(std::tan(halfFovY) * aspect);
+    const double halfFov  = std::min(halfFovY, halfFovX);
+    const double dist = radius / std::max(std::sin(halfFov), 1e-6) * kMargin;
+
+    // Solo se mueve la POSICIÓN: conservar la orientación hace que el encuadre se sienta como
+    // acercarse, no como que la escena salte a otra orientación. Colocarse a `dist` justo detrás
+    // del objeto sobre el eje de vista lo deja centrado por construcción.
+    const glm::dvec3 front = glm::normalize(glm::dvec3(camera->getFront()));
+    camera->position = obj.position - front * dist;
+
+    // El motor recalcula el near plane por frame desde la altitud, así que encuadrar un planeta
+    // desde 16 000 km no rompe la precisión de profundidad.
+}
+
+void ViewportPanel::onUpdate(float deltaTime) {
     updateCameraFromInput(deltaTime);
+
+    Application* app = MotorInstance::getInstance().getApplication();
+    if (app && camera) {
+        // El motor renderiza con SU cámara interna (_camera); sincronizar la del editor
+        // cada frame para que el viewport muestre la navegación del editor.
+        if (Camera* appCam = app->getCamera()) {
+            appCam->position = camera->position;
+            appCam->orientation = camera->orientation;
+            appCam->zoom = camera->zoom;
+            appCam->aspectRatio = (float)width / (float)height;
+        }
+        // La vista de depuración se re-empuja cada frame: si el motor reinició su PlanetarySystem
+        // (recarga de escena) el modo vuelve a quedar aplicado.
+        if (debugView != 0) app->setPlanetDebugView(debugView);
+    }
 
     if (ownedApplication) {
         ownedApplication->renderFrame();
-    } else if (auto* app = MotorInstance::getInstance().getApplication()) {
+    } else if (app) {
         app->renderFrame();
     }
 
@@ -849,3 +608,199 @@ Model* ViewportPanel::getOrLoadModel(const std::string& path) {
 void ViewportPanel::renderGrid(const glm::mat4& view, const glm::mat4& proj) {}
 
 void ViewportPanel::renderGizmoImGuizmo() {}
+
+// ===========================================================================
+// Colocación de props y herramientas de malla
+// ===========================================================================
+// Modo de colocación del editor: el cursor proyecta sobre el PLANETA un indicador translúcido
+// (círculo o cuadrado) del radio de afectación y un clic ejecuta la acción. Todo el cálculo es en
+// DOBLE precisión: las posiciones de mundo viven a ~1.5e8 y un float pierde ~10 m ahí, suficiente
+// para que un indicador de 50 m baile fuera del punto del ratón.
+void ViewportPanel::beginPlacement(const std::string& modelPath, const std::string& label,
+                                   float radius, bool circle, int action, const std::string& layer) {
+    placementModel  = modelPath;
+    placementLabel  = label;
+    placementRadius = std::max(0.1f, radius);
+    placementCircle = circle;
+    placementAction = action;
+    placementLayer  = layer;
+    placementHasGround = false;
+    placementEnabled   = true;
+}
+
+void ViewportPanel::handlePlacement() {
+    if (!placementEnabled) return;
+    if (!currentScene || !camera) { placementEnabled = false; return; }
+
+    ImGuiIO& io = ImGui::GetIO();
+    if (ImGui::IsKeyPressed(ImGuiKey_Escape) ||
+        ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+        placementEnabled = false;
+        return;
+    }
+
+    Application* app = MotorInstance::getInstance().getApplication();
+    Haruka::PlanetarySystem* ps = app ? app->getPlanetarySystem() : nullptr;
+    if (!ps) { placementEnabled = false; return; }
+
+    glm::dvec3 center; double radius = 0.0;
+    if (!ps->getActivePlanet(center, radius)) { placementHasGround = false; return; }
+
+    // Rayo del ratón (dirección con las matrices de float del viewport, como el picking normal).
+    glm::mat4 projF = glm::perspective(glm::radians(45.0f), (float)width / (float)height,
+                                       0.1f, 1000000000000.0f);
+    glm::mat4 viewF = camera->getViewMatrix();
+    glm::vec3 dirF = getRayFromMouse(projF, viewF);
+    glm::dvec3 origin(camera->position);
+    glm::dvec3 dir = glm::normalize(glm::dvec3(dirF));
+    if (glm::dot(dir, dir) < 1e-12) return;
+
+    // Intersección rayo-esfera con el planeta, en doble.
+    glm::dvec3 oc = origin - center;
+    double b = glm::dot(oc, dir);
+    double c = glm::dot(oc, oc) - radius * radius;
+    double disc = b * b - c;
+    if (disc <= 0.0) { placementHasGround = false; return; }
+    double t = -b - std::sqrt(disc);
+    if (t < 0.0) t = -b + std::sqrt(disc);
+    if (t < 0.0) { placementHasGround = false; return; }
+    glm::dvec3 dirN = glm::normalize(origin + dir * t - center);
+
+    // Ancla al terreno REAL (la superficie que pisa el jugador), no a la esfera de referencia.
+    float elevKm = 0.0f;
+    ps->groundHeightKmAtDir(dirN, elevKm);
+    placementGround = center + dirN * (radius + (double)elevKm * 1000.0);
+    placementHasGround = true;
+
+    drawPlacementIndicator();
+
+    if (isViewportHovered && !io.WantCaptureMouse &&
+        ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+        executePlacement();
+    }
+}
+
+void ViewportPanel::drawPlacementIndicator() {
+    if (!placementHasGround || !camera) return;
+    Application* app = MotorInstance::getInstance().getApplication();
+    Haruka::PlanetarySystem* ps = app ? app->getPlanetarySystem() : nullptr;
+    if (!ps) return;
+    glm::dvec3 center; double radius = 0.0;
+    if (!ps->getActivePlanet(center, radius)) return;
+
+    // Base ortonormal tangente al planeta en el punto anclado.
+    glm::dvec3 up = glm::normalize(placementGround - center);
+    glm::dvec3 ref = std::abs(up.y) < 0.99 ? glm::dvec3(0, 1, 0) : glm::dvec3(1, 0, 0);
+    glm::dvec3 right = glm::normalize(glm::cross(up, ref));
+    glm::dvec3 fwd = glm::cross(right, up);
+
+    // Vista y proyección en DOBLE (el near dinámico de la cámara, no el fijo del picking).
+    glm::dvec3 campos = camera->position;
+    glm::dvec3 cfront(camera->getFront());
+    glm::dvec3 cup(camera->getUp());
+    glm::dmat4 viewD = glm::lookAt(campos, campos + cfront, cup);
+    const double f = 1.0 / std::tan(glm::radians((double)camera->zoom) * 0.5);
+    const double aspect = (height > 0) ? (double)width / (double)height : 1.0;
+    glm::dmat4 projD(0.0);
+    projD[0][0] = f / aspect;
+    projD[1][1] = f;
+    projD[2][3] = -1.0;
+    projD[3][2] = (double)camera->getNearPlane();
+
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    std::vector<ImVec2> pts;
+    const int N = 48;
+    pts.reserve(N);
+    for (int i = 0; i < N; ++i) {
+        const double ang = 2.0 * glm::pi<double>() * (double)i / (double)N;
+        glm::dvec3 off;
+        if (placementCircle) {
+            off = right * (std::cos(ang) * placementRadius)
+                + fwd * (std::sin(ang) * placementRadius);
+        } else {
+            // Cuadrado: lado = 2·radio, alineado con la base tangente del planeta.
+            const double sx = std::cos(ang) >= 0.0 ? 1.0 : -1.0;
+            const double sy = std::sin(ang) >= 0.0 ? 1.0 : -1.0;
+            off = right * (sx * placementRadius) + fwd * (sy * placementRadius);
+        }
+        glm::dvec4 clip = projD * viewD * glm::dvec4(placementGround + off, 1.0);
+        if (clip.w <= 0.0) continue;
+        glm::dvec3 ndc = glm::dvec3(clip) / clip.w;
+        const float sx2 = viewportMin.x + (float)((ndc.x * 0.5 + 0.5) * (viewportMax.x - viewportMin.x));
+        const float sy2 = viewportMin.y + (float)((1.0 - (ndc.y * 0.5 + 0.5)) * (viewportMax.y - viewportMin.y));
+        pts.push_back(ImVec2(sx2, sy2));
+    }
+    if (pts.size() >= 3) {
+        dl->AddConvexPolyFilled(pts.data(), (int)pts.size(), IM_COL32(0, 200, 255, 36));
+        dl->AddPolyline(pts.data(), (int)pts.size(), IM_COL32(0, 200, 255, 200), 0, 2.0f);
+    }
+
+    glm::dvec4 clipC = projD * viewD * glm::dvec4(placementGround, 1.0);
+    if (clipC.w > 0.0) {
+        glm::dvec3 ndc = glm::dvec3(clipC) / clipC.w;
+        const float cx = viewportMin.x + (float)((ndc.x * 0.5 + 0.5) * (viewportMax.x - viewportMin.x));
+        const float cy = viewportMin.y + (float)((1.0 - (ndc.y * 0.5 + 0.5)) * (viewportMax.y - viewportMin.y));
+        const std::string label = placementLabel.empty() ? "Colocar" : placementLabel;
+        dl->AddText(ImVec2(cx + 8, cy - 20), IM_COL32(255, 255, 255, 255), label.c_str());
+    }
+}
+
+void ViewportPanel::executePlacement() {
+    if (!placementHasGround) return;
+    Application* app = MotorInstance::getInstance().getApplication();
+    if (!app) return;
+
+    if (placementAction == 0) {           // Colocar un prop (objeto dinámico con modelo)
+        if (placementModel.empty()) return;
+        auto obj = std::make_shared<Haruka::SceneObject>();
+        int n = currentScene ? (int)currentScene->getObjects().size() : 0;
+        obj->name = "Prop_" + std::to_string(n);
+        obj->type = "Model";
+        obj->objectType = Haruka::classifyObjectType("Model");
+        obj->modelPath = placementModel;
+        obj->position = placementGround;
+        obj->rotation = EditorUtil::eulerToRotation(glm::dvec3(0.0, 0.0, 0.0));
+        obj->scale = glm::dvec3(1.0);
+        if (!obj->properties.is_object()) obj->properties = nlohmann::json::object();
+        obj->properties["layer"] = placementLayer.empty() ? "Props" : placementLayer;
+        obj->properties["prop"] = {{"radius", placementRadius}, {"label", placementLabel}};
+        static std::mt19937 rng{std::random_device{}()};
+        std::uniform_int_distribution<int> seedDist(-100000, 100000);
+        const int treeSeed = seedDist(rng);
+        obj->properties["treeSeed"] = treeSeed;
+
+        // Semilla -> texturas al instante: el material se hornea del grafo de árbol
+        // (estilo anime: nudos + ramas; copa = follaje) sin abrir el editor de nodos.
+        const bool foliage = placementModel.find("leaf") != std::string::npos;
+        auto res = Haruka::Tools::ProcGraph::bakeTreeTextures(
+            treeSeed, foliage, Haruka::AssetPaths::projectTextures(), obj->name, 256);
+        if (res.ok) {
+            auto mat = std::make_shared<Haruka::MaterialComponent>();
+            mat->name = obj->name + "_Material";
+            mat->albedo = glm::vec3(1.0f);
+            mat->textures["albedo"] = res.albedo;
+            mat->textures["normal"] = res.normal;
+            mat->textures["roughness"] = res.roughness;
+            mat->textures["ao"] = res.ao;
+            obj->material = mat;
+        } else {
+            std::cerr << "[viewport] bake tree textures failed for " << obj->name << "\n";
+        }
+
+        if (commandHistory) {
+            commandHistory->execute(std::make_unique<AddObjectCommand>(currentScene, *obj));
+        } else if (currentScene) {
+            currentScene->addLoadedObject(obj);
+        }
+        if (currentScene) {
+            int idx = (int)currentScene->getObjects().size() - 1;
+            selectedObjectIndex = idx;
+        }
+    } else if (placementAction == 1) {    // Levantar terreno (edita la MALLA del planeta)
+        app->editTerrain(placementGround, placementRadius, 20.0, false);
+    } else if (placementAction == 2) {    // Excavar terreno
+        app->editTerrain(placementGround, placementRadius, 20.0, true);
+    } else if (placementAction == 3) {    // Allanar al nivel del mar
+        app->levelTerrain(placementGround, placementRadius, 0.0);
+    }
+}
