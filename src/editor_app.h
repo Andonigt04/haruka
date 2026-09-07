@@ -7,7 +7,6 @@
 #include "core/game_interface.h"
 #include "panels/scene_hierarchy.h"
 #include "panels/inspector.h"
-#include "panels/objects_panel.h"
 #include "panels/project_browser.h"
 #include "panels/material_editor.h"
 #include "panels/node_graph_editor.h"
@@ -47,7 +46,27 @@ public:
     
     friend class MenuBar;
 
+    // ⚠️ CREAR UN OBJETO NO ERA COSA DE UN PANEL, y estaba dentro de uno. Al quitar `ObjectsPanel`
+    // se habría ido con él la única forma de crear un Prop, un Monster, un Spawn Point o un
+    // Character — que se piden desde el MENÚ, no desde el panel. Viven aquí, que es quien tiene la
+    // escena y el historial de deshacer.
+    void createProp();
+    void createMonster();
+    void createSpawnPoint();
+    void createCharacter();
+    void createMesh();
+    void createLight();
+
 private:
+    /// Nombre libre con un prefijo ("Prop_3"): no repite ninguno de la escena.
+    std::string nextObjectName(const std::string& prefix);
+    /// Primitiva con su malla en CPU y su material. `meshType`: "cube" | "sphere" | "capsule".
+    std::shared_ptr<Haruka::SceneObject> makeMeshObject(const std::string& name,
+                                                        const std::string& meshType,
+                                                        const glm::vec3& albedo);
+    /// La añade a la escena (por el historial si lo hay) y la deja seleccionada.
+    void addSceneObject(std::shared_ptr<Haruka::SceneObject> obj);
+
     /** @brief Initializes subsystems, panels, and runtime state. */
     void init();
     /** @brief Shuts down the editor and releases owned resources. */
@@ -70,7 +89,6 @@ private:
     // Panels
     SceneHierarchyPanel sceneHierarchyPanel;
     InspectorPanel inspectorPanel;
-    ObjectsPanel objectsPanel;
     ProjectBrowserPanel projectBrowserPanel;
     ViewportPanel viewportPanel;
     ConsolePanel consolePanel;
@@ -96,7 +114,6 @@ private:
     // Panel visibility
     bool showSceneHierarchy = true;
     bool showInspector = true;
-    bool showObjectsPanel = true;
     bool showProjectBrowser = true;
     bool showViewport = true;
     bool showConsole = true;

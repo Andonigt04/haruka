@@ -4,6 +4,9 @@
 #include "tools/math_types.h"
 #include "editor_util.h"
 
+#include "renderer/motor_instance.h"
+#include "core/application.h"
+#include "game/instanced_object.h"
 #include "renderer/primitive_shapes.h"
 #include "core/components/material_component.h"
 #include "core/components/mesh_renderer_component.h"
@@ -135,8 +138,69 @@ void SceneHierarchyPanel::onImGuiRender() {
             }
         }
     }
-    
+
+    renderPropDebugTree();
+
     ImGui::End();
+}
+
+/** @brief Árbol de DEBUG del scatter de props: agrupa por PROTOTIPO (cada GPUInstancing = un draw
+ *  por tipo). Por instancia: si no se renderizó este frame → GRIS (destruida/rebrotando/fuera del
+ *  tope del buffer). Por prototipo: si el material NO es per-pixel (solo color por vértice) →
+ *  nombre en ROJO con alerta ⚠. Activa el snapshot del motor mientras este panel se dibuja. */
+void SceneHierarchyPanel::renderPropDebugTree() {
+    Application* app = MotorInstance::getInstance().getApplication();
+    if (!app) return;
+    app->setPropDebugEnabled(true);   // el motor llena el snapshot mientras el editor lo muestra
+
+    ImGui::Separator();
+    ImGui::TextDisabled("Props (GPUInstancing)");
+    if (!app->isPropScatterEnabled()) {
+        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "(scatter desactivado: el juego gestiona sus props)");
+        return;
+    }
+    const auto& protos = app->getPropScatterDebug();
+    if (protos.empty()) {
+        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "(sin props: scatter aún no enumerado o sin capas)");
+        return;
+    }
+
+    int protoIdx = 0;
+    for (const auto& p : protos) {
+        // Nombre en ROJO + alerta si el material NO es per-pixel (solo color por vértice).
+        const char* warn = "";
+        ImVec4 color(0.75f, 0.75f, 0.75f, 1.0f);
+        if (!p.hasPerPixel) {
+            warn = " ⚠ sin per-pixel";
+            color = ImVec4(1.0f, 0.3f, 0.3f, 1.0f);
+        }
+        std::string label = p.name.empty() ? "(sin nombre)" : p.name;
+        label += warn;
+        label += "##prop_" + std::to_string(protoIdx++);
+        ImGui::PushStyleColor(ImGuiCol_Text, color);
+        bool open = ImGui::TreeNode(label.c_str());
+        ImGui::PopStyleColor();
+        if (ImGui::IsItemHovered() && !p.hasPerPixel)
+            ImGui::SetTooltip("Sin material per-pixel: se pinta con el color por vértice (tinte), no con texturas.");
+        if (!open) continue;
+
+        ImGui::Text("instancias: %d · dibujadas: %d%s",
+                    p.totalInstances, p.renderedInstances,
+                    p.renderedInstances < p.totalInstances ? " (faltan)" : "");
+        for (const auto& io : p.instances) {
+            std::string sname = io.seed == 0 ? "seed 0" : ("seed " + std::to_string(io.seed));
+            if (io.rendered) {
+                ImGui::BulletText("%s [dibujada]", sname.c_str());
+            } else {
+                const char* why = (io.cullReason == 2) ? "sub-pixel en pantalla (lejos de la cámara)"
+                                  : io.culled ? "fuera del frustum de la cámara"
+                                  : (io.state == (uint32_t)Haruka::InstancedObjectState::Alive)
+                                  ? "fuera del tope del buffer" : "no viva";
+                ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "  - %s [NO renderizada: %s]", sname.c_str(), why);
+            }
+        }
+        ImGui::TreePop();
+    }
 }
 
 void SceneHierarchyPanel::createPrimitive(const std::string& name, const std::string& type) {
@@ -277,11 +341,14 @@ void SceneHierarchyPanel::renderObjectNode(int index) {
     showContextMenu(index);
     
     if (nodeOpen) {
-        if (index >= 0 && index < (int)currentScene->getObjects().size()) {
-            const auto& obj = currentScene->getObjects()[index];
-            
+        // ⚠️ Referencia, NO copia: `getObjects()` duplica la escena entera en cada llamada, y aquí
+        // se llamaba una vez POR NODO del árbol. Con un planeta cargado eso es insostenible.
+        const auto& objs = currentScene->getObjectsMutable();
+        if (index >= 0 && index < (int)objs.size() && objs[index]) {
+            const Haruka::SceneObject& obj = *objs[index];
+
             for (int childIndex : obj.childrenIndices) {
-                if (childIndex >= 0 && childIndex < (int)currentScene->getObjects().size()) {
+                if (childIndex >= 0 && childIndex < (int)objs.size()) {
                     renderObjectNode(childIndex);
                 }
             }
@@ -395,9 +462,13 @@ void SceneHierarchyPanel::createChildObject(int parentIndex, const std::string& 
 }
 
 void SceneHierarchyPanel::duplicateObject(int index) {
-    if (!currentScene || index < 0 || index >= (int)currentScene->getObjects().size()) return;
-    
-    const auto& original = currentScene->getObjects()[index];
+    if (!currentScene) return;
+        // ⚠️ `getObjects()` devuelve POR VALOR: indexar sobre la llamada deja una referencia a un
+        // vector que muere en esa misma línea, y leerla después es memoria basura (bad_alloc al
+        // construir un std::string). Se copia UNA vez a un local y se indexa ahí.
+    const auto& objs = currentScene->getObjectsMutable();
+    if (index < 0 || index >= (int)objs.size() || !objs[index]) return;
+    const Haruka::SceneObject& original = *objs[index];
     auto duplicate = std::make_shared<Haruka::SceneObject>(original);
     duplicate->name = original.name + "_copy";
     duplicate->position += glm::dvec3(1.0f, 0.0f, 0.0f);

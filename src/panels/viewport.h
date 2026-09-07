@@ -19,6 +19,8 @@
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <ImGuizmo.h>
+#include "game/ports/port.h"
+#include "game/prefab/prefab.h"
 
 /**
  * @brief Editor viewport panel responsible for scene rendering and gizmo interaction.
@@ -77,6 +79,24 @@ public:
     void setStatsPanel(StatsPanel* panel) { statsPanel = panel; }
     void setPlayMode(bool play) { playMode = play; }
     void setGizmoMode(int mode) { gizmoMode = mode; }
+
+    /**
+     * @brief PUERTO en edición: el gizmo manipula su transform LOCAL, no el del objeto.
+     *
+     * Se pasa el puntero que posee el PortsPanel (paso 2 de PLAN_PUERTOS.md). Con un puerto activo,
+     * ImGuizmo mueve/gira el PUERTO dentro del espacio del objeto seleccionado, y se dibujan encima
+     * su eje y —si es un raíl— el BARRIDO entre sus límites: la puerta se ve abrirse en el editor,
+     * que es el único sitio donde comprobar que el eje y el cero están bien puestos ANTES de jugar.
+     * `nullptr` = volver a manipular el objeto.
+     */
+    void setPortEdit(Haruka::Port* port) { editPort = port; }
+
+    /** @brief PIEZA de prefabricado en edición: el gizmo mueve la pieza dentro del conjunto.
+     *  Se pasa también el ORIGEN del prefabricado en el mundo, porque sus poses son LOCALES y sin
+     *  ese ancla el gizmo estaría manipulando coordenadas que no significan nada en pantalla. */
+    void setPrefabEdit(Haruka::PrefabPiece* piece, const glm::dvec3& origin) {
+        editPiece = piece; prefabOrigin = origin;
+    }
     void setSelectedObjectIndex(int index) { selectedObjectIndex = index; }
     int getSelectedObjectIndex() const { return selectedObjectIndex; }
 
@@ -150,6 +170,13 @@ private:
     bool isDragging = false;
     glm::vec3 dragStartPos, dragStartRot, dragStartScale;
     int gizmoMode = 0; // 0=move, 1=rotate, 2=scale
+    Haruka::Port* editPort = nullptr;          // puerto en edición (lo posee PortsPanel)
+    Haruka::PrefabPiece* editPiece = nullptr;  // pieza de prefabricado (la posee PrefabPanel)
+    glm::dvec3 prefabOrigin{0.0};
+
+    /// Dibuja eje + barrido del raíl con la draw list de ImGui (proyectando a pantalla): no hace
+    /// falta un renderer de líneas para ver si el mecanismo está bien planteado.
+    void drawPortOverlay(const glm::dmat4& objXform, const glm::mat4& view, const glm::mat4& proj);
     float axisPickRadius = 0.15f;
 
     // OpenGL/ImGui resources

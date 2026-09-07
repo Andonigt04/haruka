@@ -5,7 +5,7 @@ set -e
 HERE="$(cd "$(dirname "$0")" && pwd)"
 VERSION="${VERSION:-0.1}"
 
-BRANCH_NAME="${BRANCH_NAME:-main}" MODULES=""; CLEAN=0; RELEASE=0; REMOTE=0; ENGINE_LOCAL=""
+BRANCH_NAME="${BRANCH_NAME:-main}" MODULES=""; CLEAN=0; RELEASE=0; REMOTE=0; ENGINE_LOCAL=""; RPM=0
 CMAKE_EXTRA=()   # args -D... del IDE (-DPROJECT_NAME, -DHARUKA_ENGINE_LOCAL, …) → se reenvían a cmake
 for arg in "$@"; do
     case "$arg" in
@@ -13,6 +13,7 @@ for arg in "$@"; do
         MODULES=*) MODULES="${arg#MODULES=}" ;;
         ENGINE=*)  ENGINE_LOCAL="${arg#ENGINE=}" ;; # ruta a un motor local concreto
         release)   RELEASE=1 ;;
+        rpm)       RPM=1; RELEASE=1 ;;  # paquete instalable (implica release: empaqueta lo instalado)
         clean)     CLEAN=1 ;;
         remote)    REMOTE=1 ;;      # forzar el motor de GitHub (ignora el ../haruka-cpp local)
         -D*)       CMAKE_EXTRA+=("$arg") ;;
@@ -20,7 +21,13 @@ for arg in "$@"; do
     esac
 done
 
-if [ "$CLEAN" = "1" ]; then rm -rf "$HERE/build" "$HERE/dist"; fi
+# 'rpm' cambia el LAYOUT de instalación (FHS bajo /usr en vez de todo junto en dist/) y ese
+# layout se compila DENTRO del binario (HARUKA_EDITOR_ENGINE_DIR). Mismo motivo que el guard
+# de RELEASE de más abajo: una caché con el layout contrario da un binario que busca el motor
+# donde el paquete no lo pone.
+if [ "$RPM" = "1" ]; then LAYOUT=system; else LAYOUT=portable; fi
+
+if [ "$CLEAN" = "1" ]; then rm -rf "$HERE/build" "$HERE/dist" "$HERE/packages"; fi
 
 # Selección del motor: 'remote' lo fuerza a GitHub; ENGINE=ruta usa un local concreto; por
 # defecto, el CMake del editor autodetecta ../haruka-cpp (local) o cae a GitHub (CI/clon).
@@ -47,12 +54,16 @@ CACHE="$HERE/build/CMakeCache.txt"
 if [ -f "$CACHE" ] && ! grep -qx "RELEASE:BOOL=$WANT_RELEASE" "$CACHE"; then
     echo "==> RELEASE en caché != $WANT_RELEASE → reconfigurando limpio (evita layout de assets cruzado)"
     rm -rf "$HERE/build"
+elif [ -f "$CACHE" ] && ! grep -qx "HARUKA_INSTALL_LAYOUT:STRING=$LAYOUT" "$CACHE"; then
+    echo "==> Layout en caché != $LAYOUT → reconfigurando limpio (rutas de instalación compiladas)"
+    rm -rf "$HERE/build"
 fi
 
 cmake -S "$HERE" -B "$HERE/build" \
       -DBRANCH_NAME="$BRANCH_NAME" \
       -DMODULES="$MODULES" \
       -DRELEASE=$WANT_RELEASE \
+      -DHARUKA_INSTALL_LAYOUT="$LAYOUT" \
       "${ENGINE_ARGS[@]}" "${CMAKE_EXTRA[@]}" >/dev/null
 
 # PARALELISMO ACOTADO POR RAM, no por núcleos. Cada g++ pide ~0.4-0.5 GB de pico (medido):
@@ -75,9 +86,20 @@ echo "==> Compilando con -j$JOBS (nproc=$(nproc 2>/dev/null || echo ?), MemAvail
 
 cmake --build "$HERE/build" -j"$JOBS"
 
-if [ "$RELEASE" = "1" ]; then
+if [ "$RELEASE" = "1" ] && [ "$RPM" = "0" ]; then
     echo "==> Packaging release layout"
     cmake --install "$HERE/build" --prefix "$HERE/dist" >/dev/null
     echo "==> Release at: $HERE/dist"
+fi
+
+if [ "$RPM" = "1" ]; then
+    command -v rpmbuild >/dev/null || { echo "✗ falta rpmbuild (sudo dnf install rpm-build)"; exit 1; }
+    echo "==> Empaquetando .rpm"
+    # -B packages/, NO dist/: cpack deja ahí su staging (_CPack_Packages) además del paquete,
+    # y dist/ es el layout portable que se copia tal cual — no debe llevar dentro un .rpm.
+    ( cd "$HERE/build" && cpack -G RPM -B "$HERE/packages" )
+    echo "==> RPM en: $(ls -1 "$HERE"/packages/*.rpm 2>/dev/null | tail -1)"
+    echo "    Instalar:    sudo dnf install $HERE/packages/*.rpm"
+    echo "    Desinstalar: sudo dnf remove haruka-editor"
 fi
 echo "==> Done."

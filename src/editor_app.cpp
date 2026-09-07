@@ -1,6 +1,8 @@
 #define IMGUI_IMPL_OPENGL_LOADER_GLAD
 
 #include "editor_app.h"
+#include "editor_util.h"   // capas: viven aquí desde que se quitó ObjectsPanel
+#include "engine_sdk.h"       // motor activo: template, build y runtime (resuelto en runtime)
 #include "core/camera.h"
 #include "tools/error_reporter.h"
 #include "core/components/mesh_renderer_component.h"
@@ -99,10 +101,38 @@ void EditorApplication::init() {
         std::cout << "[Editor] assets root: " << assetsRoot << std::endl;
     }
 
+    // Resolver el motor AQUÍ y no en el primer uso: es lo que decide si "Nuevo proyecto" y
+    // "Compilar" van a funcionar, y enterarse al arrancar (con la lista de rutas miradas si
+    // no hay ninguno) ahorra el viaje de crear un proyecto para descubrir que no hay motor.
+    EngineSdk::current();
+
     // ===== ImGui Setup =====
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
+
+    // Layout de paneles en el directorio de config del USUARIO, no en el cwd. ImGui escribe
+    // imgui.ini relativo al cwd, y el editor no hace `cd`: instalado en /usr, arrancado desde
+    // el menú (cwd = $HOME) o desde una carpeta sin permiso de escritura, el layout se perdía
+    // entre sesiones o se dejaba un imgui.ini suelto donde tocara. La cadena es static porque
+    // ImGui guarda el puntero, no copia.
+    static std::string iniPath;
+    {
+        const char* xdg = std::getenv("XDG_CONFIG_HOME");
+        const char* home = std::getenv("HOME");
+        std::filesystem::path dir;
+        if (xdg && *xdg)        dir = std::filesystem::path(xdg) / "haruka-editor";
+        else if (home && *home) dir = std::filesystem::path(home) / ".config" / "haruka-editor";
+        if (!dir.empty()) {
+            std::error_code ec;
+            std::filesystem::create_directories(dir, ec);
+            if (!ec) {
+                iniPath = (dir / "imgui.ini").string();
+                io.IniFilename = iniPath.c_str();
+            }
+        }
+    }
+
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
     io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
@@ -132,16 +162,8 @@ void EditorApplication::init() {
     inspectorPanel.setCommandHistory(&commandHistory);
     inspectorPanel.setOnSceneChanged([this]() { sceneDirty = true; });
     inspectorPanel.setProjectPath(currentProject->getPath());
-    objectsPanel.setScene(currentScene.get());
-    objectsPanel.setCommandHistory(&commandHistory);
-    objectsPanel.setOnSceneChanged([this]() { sceneDirty = true; });
     // Colocación de props/herramientas de malla: el panel pide, el viewport ejecuta.
-    objectsPanel.setOnBeginPlacement([this](const std::string& model, const std::string& label,
-                                            float radius, bool circle, int action,
-                                            const std::string& layer) {
-        viewportPanel.beginPlacement(model, label, radius, circle, action, layer);
-    });
-    materialEditorPanel.setProjectPath(currentProject->getPath());
+        materialEditorPanel.setProjectPath(currentProject->getPath());
     materialEditorPanel.setOnSceneChanged([this]() { sceneDirty = true; });
     nodeGraphEditorPanel.setScene(currentScene.get());
     nodeGraphEditorPanel.setProjectPath(currentProject->getPath());
@@ -192,38 +214,12 @@ void EditorApplication::init() {
         }
     });
 
-    objectsPanel.setOnObjectSelectedByIndex([this](int index) {
-        if (currentScene && index >= 0 && index < (int)currentScene->getObjects().size()) {
-            sceneHierarchyPanel.setSelectedObjectIndex(index);
-            inspectorPanel.setSelectedObjectIndex(index);
-            viewportPanel.setSelectedObjectIndex(index);
-            const auto& all = currentScene->getAllObjects();
-            if (index < (int)all.size()) nodeGraphEditorPanel.setSelectedObject(all[index].get());
-        }
-    });
-
-    objectsPanel.setOnObjectSelectedByName([this](const std::string& name) {
-        if (!name.empty() && currentScene) {
-            auto obj = currentScene->getObject(name);
-            if (obj) {
-                materialEditorPanel.setSelectedObject(obj.get());
-                nodeGraphEditorPanel.setSelectedObject(obj.get());
-            }
-        }
-    });
-
+    
+    
     // DOBLE clic en jerarquía u Objects = llevar la cámara al objeto y encuadrarlo.
     sceneHierarchyPanel.setOnObjectFocused([this](int index) { viewportPanel.focusOnObject(index); });
-    objectsPanel.setOnObjectFocused([this](int index) { viewportPanel.focusOnObject(index); });
 
-    objectsPanel.setOnOpenNodeGraph([this](const std::string& name) {
-        showNodeGraphEditor = true;
-        if (currentScene) {
-            auto obj = currentScene->getObject(name);
-            if (obj) nodeGraphEditorPanel.setSelectedObject(obj.get());
-        }
-    });
-
+    
     // ===== Stream Capture Setup =====
     coutCapture = std::make_unique<StreamCapture>(std::cout, &consolePanel, LogLevel::Info);
     cerrCapture = std::make_unique<StreamCapture>(std::cerr, &consolePanel, LogLevel::Error);
@@ -421,12 +417,30 @@ void EditorApplication::renderUI() {
         // Objects (por capas)
         if (showObjectsPanel) {
             try {
-                objectsPanel.onImGuiRender();
             } catch (const std::exception& e) {
                 HARUKA_EDITOR_ERROR(ErrorCode::EDITOR_INIT_FAILED, "ObjectsPanel crash: " + std::string(e.what()));
             }
         }
         
+        // Puertos autorizados del asset (PLAN_PUERTOS.md paso 2). Se dibuja ANTES del viewport
+        // para que el puntero al puerto activo esté ya fijado cuando el gizmo lo manipule.
+        if (showPortsPanel) {
+            try {
+            } catch (const std::exception& e) {
+                HARUKA_EDITOR_ERROR(ErrorCode::EDITOR_INIT_FAILED, "PortsPanel crash: " + std::string(e.what()));
+            }
+        }
+        // Con el panel cerrado el gizmo vuelve a mover el OBJETO, no un puerto invisible.
+        // El prefabricado se edita alrededor del ORIGEN DE LA ESCENA: sus poses son locales, así que
+        // hace falta un ancla visible contra la que colocarlas.
+        
+        if (showPrefabPanel) {
+            try {
+            } catch (const std::exception& e) {
+                HARUKA_EDITOR_ERROR(ErrorCode::EDITOR_INIT_FAILED, "PrefabPanel crash: " + std::string(e.what()));
+            }
+        }
+
         // Inspector
         if (showInspector) {
             try {
@@ -748,23 +762,21 @@ void EditorApplication::createNewProject(const std::string& name, const std::str
     }
 
     try {
-        // Usar el template del MOTOR como base (fuente única de verdad). El editor se construye
-        // con FetchContent y sabe la ruta del motor en HARUKA_ENGINE_ROOT.
+        // Usar el template del MOTOR como base (fuente única de verdad). Qué motor y dónde
+        // está lo decide EngineSdk en runtime, no la ruta con la que se compiló el editor.
         std::string projectPath = basePath + name;
-        std::string templatePath;
-#ifdef HARUKA_ENGINE_ROOT
-        templatePath = std::string(HARUKA_ENGINE_ROOT) + "/template";
-#else
-        // Fallback legacy: template junto al ejecutable
-        std::filesystem::path editorPath = std::filesystem::current_path();
-        templatePath = editorPath.parent_path().string() + "/template";
-#endif
+        const EngineSdk& engine = EngineSdk::current();
+        const std::string templatePath = engine.templateDir;
 
         // Copiar template recursivamente si existe
-        if (std::filesystem::exists(templatePath)) {
+        if (!templatePath.empty() && std::filesystem::exists(templatePath)) {
             std::filesystem::copy(templatePath, projectPath, std::filesystem::copy_options::recursive);
         } else {
-            // Fallback: crear estructura básica si no existe template
+            // Sin motor (o motor sin template) el proyecto sale SIN CMakeLists ni build.sh, o
+            // sea que no compila: se avisa aquí, con la lista de rutas miradas, en vez de dejar
+            // que el usuario lo descubra al pulsar "Compilar".
+            std::cerr << "⚠ Sin template de motor: el proyecto se crea vacio y no compilara.\n"
+                      << "  Motores buscados en:\n" << EngineSdk::searchPathsDescription();
             std::filesystem::create_directories(projectPath + "/scripts");
             std::filesystem::create_directories(projectPath + "/scenes");
             std::filesystem::create_directories(projectPath + "/assets");
@@ -788,12 +800,7 @@ void EditorApplication::createNewProject(const std::string& name, const std::str
 
             // Reemplazar HARUKA_ENGINE_LOCAL_PLACEHOLDER con la ruta del motor del editor
             const std::string enginePlaceholder = "HARUKA_ENGINE_LOCAL_PLACEHOLDER";
-            const std::string engineRoot =
-#ifdef HARUKA_ENGINE_ROOT
-                std::string(HARUKA_ENGINE_ROOT);
-#else
-                std::string();
-#endif
+            const std::string engineRoot = engine.root;
             pos = 0;
             while ((pos = cmakeContent.find(enginePlaceholder, pos)) != std::string::npos) {
                 cmakeContent.replace(pos, enginePlaceholder.length(), engineRoot);
@@ -869,26 +876,23 @@ void EditorApplication::compileProject() {
     
     std::cout << "Compiling project: " << projectPath << std::endl;
     
-    // Compilar el proyecto. Se pasa el nombre (lib<Nombre>.so) y la ruta del motor del editor
-    // para que el template compile contra el MISMO motor sin redescargarlo.
+    // Compilar el proyecto. Se pasa el nombre (lib<Nombre>.so) y la ruta del motor ACTIVO
+    // para que el proyecto compile contra el MISMO motor sin redescargarlo.
     std::string projectName = currentProject->getConfig().name;
-#ifdef HARUKA_ENGINE_ROOT
-    std::string engineLocal = std::string(HARUKA_ENGINE_ROOT);
-#else
-    std::string engineLocal;
-#endif
+    const EngineSdk& engine = EngineSdk::current();
     std::string cmakeArgs;
     if (!projectName.empty()) {
         cmakeArgs += " -DPROJECT_NAME=" + projectName;
     }
-    if (!engineLocal.empty()) {
-        cmakeArgs += " -DHARUKA_ENGINE_LOCAL=\"" + engineLocal + "\"";
+    if (engine.valid()) {
+        // El nombre de la variable lo declara el motor: otro motor puede llamarla de otra forma.
+        cmakeArgs += " -D" + engine.cmakeEngineVar + "=\"" + engine.root + "\"";
     }
 
     std::string compileCmd;
-    if (std::filesystem::exists(std::filesystem::path(projectPath) / "build.sh")) {
-        // Template moderno: el build.sh configura y compila el layout del juego.
-        compileCmd = "cd \"" + projectPath + "\" && ./build.sh" + cmakeArgs;
+    if (std::filesystem::exists(std::filesystem::path(projectPath) / engine.buildScript)) {
+        // Template moderno: el script de build del motor configura y compila el layout del juego.
+        compileCmd = "cd \"" + projectPath + "\" && ./" + engine.buildScript + cmakeArgs;
     } else {
         // Fallback legacy (proyecto sin build.sh): build inline, pero con el paralelismo
         // ACOTADO POR RAM igual que el build.sh moderno — `-j$(nproc)` tiraba de swap.
@@ -961,16 +965,18 @@ void EditorApplication::bindPanelsToScene() {
     // el panel ya tiene la escena nueva pero sigue con un puntero al objeto muerto.
     sceneHierarchyPanel.setSelectedObjectIndex(-1);
     inspectorPanel.setSelectedObjectIndex(-1);
-    objectsPanel.setSelectedObjectIndex(-1);
     viewportPanel.setSelectedObjectIndex(-1);
     nodeGraphEditorPanel.setSelectedObject(nullptr);
     materialEditorPanel.setSelectedObject(nullptr);
 
     sceneHierarchyPanel.setScene(scene);
     inspectorPanel.setScene(scene);
-    objectsPanel.setScene(scene);
     nodeGraphEditorPanel.setScene(scene);
     projectBrowserPanel.setScene(scene);
+    // ⚠️ ESTOS DOS FALTABAN. Reciben la escena en `init()` y no volvían a recibirla al cargar otra,
+    // así que en cuanto el `unique_ptr` de arriba soltaba la anterior seguían apuntando a memoria
+    // liberada — el mismo use-after-free contra el que avisa el comentario de `loadFile`, en los dos
+    // paneles que la lista se dejó. Y son justo los que se usan para montar: puertos y prefabricados.
     viewportPanel.setScene(scene);   // el último: reinicia la Application del motor sobre la escena
 }
 
@@ -1111,4 +1117,135 @@ void EditorApplication::createSceneObject(const std::string& type) {
     std::transform(meshType.begin(), meshType.end(), meshType.begin(), ::tolower);
     sceneHierarchyPanel.createPrimitive(type, meshType);
     sceneDirty = true;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+// CREAR OBJETOS. Vivía dentro de `ObjectsPanel`, y al quitar ese panel se habría ido con él la
+// única forma de crear un Prop, un Monster, un Spawn Point o un Character — que se piden desde el
+// MENÚ, no desde el panel. Crear un objeto no es cosa de quien lo dibuja: es de quien tiene la
+// escena y el historial de deshacer.
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+
+std::string EditorApplication::nextObjectName(const std::string& prefix) {
+    int n = currentScene ? (int)currentScene->getAllObjects().size() : 0;
+    std::string base = prefix + "_" + std::to_string(n);
+    int i = n;
+    while (currentScene && currentScene->getObject(base)) base = prefix + "_" + std::to_string(++i);
+    return base;
+}
+
+std::shared_ptr<Haruka::SceneObject> EditorApplication::makeMeshObject(const std::string& name,
+                                                                  const std::string& meshType,
+                                                                  const glm::vec3& albedo) {
+    auto obj = std::make_shared<Haruka::SceneObject>();
+    obj->name = name;
+    obj->type = "Mesh";
+    obj->objectType = Haruka::classifyObjectType("Mesh");
+    obj->position = glm::dvec3(0.0);
+    obj->rotation = EditorUtil::eulerToRotation(glm::dvec3(0.0));
+    obj->scale = glm::dvec3(1.0);
+
+    obj->meshRenderer = std::make_shared<MeshRendererComponent>();
+    std::vector<glm::vec3> verts, norms;
+    std::vector<unsigned int> indices;
+
+    if (meshType == "capsule") {
+        PrimitiveShapes::createCapsule(0.5f, 2.0f, 24, 16, verts, norms, indices);
+        obj->properties["meshRenderer"]["meshType"] = "capsule";
+        obj->properties["meshRenderer"]["radius"] = 0.5f;
+        obj->properties["meshRenderer"]["height"] = 2.0f;
+    } else if (meshType == "sphere") {
+        PrimitiveShapes::createSphere(1.0f, 32, 32, verts, norms, indices);
+        obj->properties["meshRenderer"]["meshType"] = "sphere";
+        obj->properties["meshRenderer"]["radius"] = 1.0f;
+        obj->properties["meshRenderer"]["segments"] = 32;
+    } else {
+        PrimitiveShapes::createCube(1.0f, verts, norms, indices);
+        obj->properties["meshRenderer"]["meshType"] = "cube";
+        obj->properties["meshRenderer"]["size"] = 1.0f;
+    }
+
+    obj->meshRenderer->setMesh(verts, norms, std::vector<glm::vec3>(), indices);
+
+    obj->material = std::make_shared<Haruka::MaterialComponent>();
+    obj->material->name = obj->name + "_Material";
+    obj->material->albedo = albedo;
+    obj->color = glm::dvec3(albedo);
+    return obj;
+}
+
+void EditorApplication::addSceneObject(std::shared_ptr<Haruka::SceneObject> obj) {
+    if (!obj || !currentScene) return;
+
+    if (commandHistory) {
+        commandHistory->execute(std::make_unique<AddObjectCommand>(currentScene, *obj));
+    } else {
+        currentScene->addLoadedObject(obj);
+    }
+    sceneDirty = true;
+
+    // Seleccionar el objeto recién creado.
+    int idx = (int)currentScene->getAllObjects().size() - 1;
+    if (idx >= 0) {
+        sceneHierarchyPanel.setSelectedObjectIndex(idx);
+        inspectorPanel.setSelectedObjectIndex(idx);
+        viewportPanel.setSelectedObjectIndex(idx);
+    }
+}
+
+void EditorApplication::createProp() {
+    auto obj = makeMeshObject(nextObjectName("Prop"), "cube", glm::vec3(0.6f, 0.6f, 0.7f));
+    obj->type = "Mesh";
+    EditorUtil::setObjectLayer(*obj, "Props");
+    addSceneObject(obj);
+}
+
+void EditorApplication::createMonster() {
+    auto obj = makeMeshObject(nextObjectName("Monster"), "capsule", glm::vec3(0.7f, 0.3f, 0.3f));
+    // Entidad dinámica: tipo libre (CUSTOM) con atributos editables por proyecto.
+    obj->type = "Monster";
+    obj->objectType = Haruka::classifyObjectType("Monster");
+    EditorUtil::setObjectLayer(*obj, "Monsters");
+    obj->properties["monster"] = {
+        {"health", 100}, {"speed", 3.0}, {"damage", 10},
+        {"attackRange", 2.0}, {"aggroRange", 15.0}, {"radius", 0.5},
+        {"spawnTable", ""}
+    };
+    addSceneObject(obj);
+}
+
+void EditorApplication::createSpawnPoint() {
+    auto obj = makeMeshObject(nextObjectName("SpawnPoint"), "cube", glm::vec3(1.0f, 0.85f, 0.2f));
+    obj->type = "SpawnPoint";
+    obj->scale = glm::dvec3(0.5);
+    EditorUtil::setObjectLayer(*obj, "Spawns");
+    obj->properties["spawn"] = {
+        {"type", "monster"}, {"radius", 5.0}, {"maxEntities", 5},
+        {"cooldown", 30.0}, {"active", true}, {"zoneId", ""}
+    };
+    addSceneObject(obj);
+}
+
+void EditorApplication::createCharacter() {
+    auto obj = makeMeshObject(nextObjectName("Character"), "capsule", glm::vec3(0.3f, 0.7f, 0.9f));
+    obj->type = "Character";
+    obj->objectType = Haruka::classifyObjectType("Character");
+    EditorUtil::setObjectLayer(*obj, "Characters");
+    addSceneObject(obj);
+}
+
+void EditorApplication::createMesh() {
+    auto obj = makeMeshObject(nextObjectName("Mesh"), "cube", glm::vec3(0.8f, 0.8f, 0.8f));
+    EditorUtil::setObjectLayer(*obj, "Default");
+    addSceneObject(obj);
+}
+
+void EditorApplication::createLight() {
+    auto obj = makeMeshObject(nextObjectName("Light"), "sphere", glm::vec3(1.0f, 1.0f, 0.8f));
+    obj->type = "Light";
+    obj->objectType = Haruka::classifyObjectType("Light");
+    obj->intensity = 2.0;
+    obj->color = glm::dvec3(1.0f, 1.0f, 0.8f);
+    EditorUtil::setObjectLayer(*obj, "Lights");
+    addSceneObject(obj);
 }

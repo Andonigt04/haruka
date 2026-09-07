@@ -2,7 +2,6 @@
 
 #include "commands/scene_commands.h"
 #include "editor_util.h"
-#include "panels/objects_panel.h"
 #include "core/components/material_component.h"
 #include "core/application.h"
 #include "renderer/render_target.h"
@@ -10,6 +9,7 @@
 #include "core/components/transform_component.h"
 #include "core/components/mesh_renderer_component.h"
 #include "core/components/script_component.h"
+#include "core/planet/prop_cond.h"                  // parsePropCond: valida el `when` en vivo
 #include <nfd.h>
 #include <algorithm>
 #include <filesystem>
@@ -225,12 +225,12 @@ void InspectorPanel::onImGuiRender() {
 
     // ---- Capa ----
     {
-        std::string curLayer = ObjectsPanel::objectLayer(*obj);
-        const auto& layers = ObjectsPanel::defaultLayers();
+        std::string curLayer = EditorUtil::objectLayer(*obj);
+        const auto& layers = EditorUtil::defaultLayers();
         if (ImGui::BeginCombo("Layer", curLayer.c_str())) {
             for (const auto& l : layers) {
                 if (ImGui::Selectable(l.c_str(), curLayer == l)) {
-                    ObjectsPanel::setObjectLayer(*obj, l);
+                    EditorUtil::setObjectLayer(*obj, l);
                     if (onSceneChanged) onSceneChanged();
                 }
             }
@@ -239,7 +239,7 @@ void InspectorPanel::onImGuiRender() {
         char layerBuf[64] = {0};
         strncpy(layerBuf, curLayer.c_str(), sizeof(layerBuf) - 1);
         if (ImGui::InputText("Layer (custom)", layerBuf, sizeof(layerBuf))) {
-            ObjectsPanel::setObjectLayer(*obj, layerBuf);
+            EditorUtil::setObjectLayer(*obj, layerBuf);
             if (onSceneChanged) onSceneChanged();
         }
     }
@@ -575,6 +575,33 @@ void InspectorPanel::onImGuiRender() {
                 }
             }
 
+            // ÁREAS DE SPAWN de las capas de props: pinta dónde instalaría cada capa (bandas de
+            // clima/forma × densityMap). El índice es la POSICIÓN en `surface.propLayers` — el
+            // mismo valor que lee el shader con `dbg>=40`. Solo se listan capas que instalan mesh.
+            if (sc.contains("propLayers") && sc["propLayers"].is_array()) {
+                if (ImGui::CollapsingHeader("Capas (props / spawn)", ImGuiTreeNodeFlags_DefaultOpen)) {
+                    Application* app = MotorInstance::getInstance().getApplication();
+                    int dbg = app ? app->getPlanetarySystem()->debugView() : 0;
+                    auto setView = [&](int v) { if (app) app->setPlanetDebugView(v); };
+                    ImGui::TextDisabled("Dónde instalaría cada capa de objetos:");
+                    if (ImGui::Selectable("Normal", dbg == 0)) setView(0);
+                    int idx = 0;
+                    for (const auto& p : sc["propLayers"]) {
+                        if (!p.is_object()) continue;
+                        const bool hasMesh = p.contains("mesh") && p["mesh"].is_string() &&
+                                            !p["mesh"].get<std::string>().empty();
+                        if (!hasMesh) continue;   // capa informativa: no instala, no se lista
+                        const std::string nm = p.contains("name") && p["name"].is_string()
+                                             ? p["name"].get<std::string>() : std::string();
+                        const std::string label = "Spawn " + std::to_string(idx) + ": " +
+                                                  (nm.empty() ? "?" : nm);
+                        const int val = 40 + idx;
+                        if (ImGui::Selectable(label.c_str(), dbg == val)) setView(val);
+                        ++idx;
+                    }
+                }
+            }
+
             // ===== MATERIALES: añadir/borrar/editar las capas dinámicamente =====
             // `surface.materials` es TODO lo que el planeta necesita para pintarse: cada entrada es
             // una regla (zona, clima, pendiente) + cómo se ve (albedo, color). Editar aquí y pulsar
@@ -714,6 +741,193 @@ void InspectorPanel::onImGuiRender() {
                     {"name", "hielo"}, {"zone", {240, 240, 250}},
                     {"color", {0.86, 0.89, 0.93}}, {"colorWeight", 1.0},
                     {"grain", 0.15}, {"detail", 0.35}}));
+                if (changed && onSceneChanged) onSceneChanged();
+            }
+
+            // ===== CAPAS DE OBJETOS (props): añadir/borrar/REORDENAR =============
+            // SEPARADAS de las del terreno a propósito. Cada capa instala un OBJETO (árbol,
+            // roca, casa, camino…) y el ORDEN de la lista ES la prioridad de construcción:
+            // la capa [0] instala y reclama su radio; las siguientes respetan lo reclamado.
+            // Vive en `surfaceConfig["propLayers"]` — el motor lo recibe completo dentro del
+            // raw del planeta (ver PropLayerTable en el motor) y lo parsea al regenerar.
+            if (ImGui::CollapsingHeader("Capas de objetos (props)", ImGuiTreeNodeFlags_DefaultOpen)) {
+                if (!sc.contains("propLayers") || !sc["propLayers"].is_array())
+                    sc["propLayers"] = nlohmann::json::array();
+                auto& pl = sc["propLayers"];
+                ImGui::TextDisabled("El ORDEN de arriba a abajo es la prioridad: la 1ª capa instala y reclama primero.");
+                int delIdx = -1, moveFrom = -1, moveTo = -1;
+                int pi = 0;
+                for (auto& layer : pl) {
+                    if (!layer.is_object()) { ++pi; continue; }
+                    const std::string hdr = layer.value("name", std::string()).empty()
+                        ? "Capa " + std::to_string(pi) : layer["name"].get<std::string>();
+                    ImGui::PushID(pi);
+                    // Flechas de REORDENACIÓN (prioridad). Solo tienen sentido hacia el
+                    // vecino: mover hacia arriba/abajo es deslizar en la lista.
+                    if (pi > 0 && ImGui::ArrowButton("##up", ImGuiDir_Up)) { moveFrom = pi; moveTo = pi - 1; }
+                    ImGui::SameLine();
+                    if (pi + 1 < (int)pl.size() && ImGui::ArrowButton("##down", ImGuiDir_Down)) { moveFrom = pi; moveTo = pi + 1; }
+                    ImGui::SameLine();
+                    if (ImGui::CollapsingHeader(hdr.c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
+                        {
+                            std::string nm = layer.value("name", std::string());
+                            char nb[128] = {0};
+                            strncpy(nb, nm.c_str(), sizeof(nb) - 1);
+                            if (ImGui::InputText("Nombre", nb, sizeof(nb))) {
+                                layer["name"] = std::string(nb); changed = true;
+                            }
+                        }
+                        {
+                            std::string ms = layer.value("mesh", std::string());
+                            char mb[128] = {0};
+                            strncpy(mb, ms.c_str(), sizeof(mb) - 1);
+                            if (ImGui::InputText("Instala (mesh)", mb, sizeof(mb))) {
+                                layer["mesh"] = std::string(mb); changed = true;
+                            }
+                            ImGui::SameLine();
+                            ImGui::TextDisabled("árbol=tree, roca=rock, casa=house…");
+                        }
+                        {
+                            float den = layer.value("density", 1.0f);
+                            if (ImGui::SliderFloat("Densidad", &den, 0.0f, 1.0f)) {
+                                layer["density"] = den; changed = true;
+                            }
+                        }
+                        {
+                            // Mapa de distribución (densityMap): cuando existe MANDA sobre las
+                            // bandas, igual que el zoneMap sobre los materiales del terreno —
+                            // pintas dónde crecen los árboles. Vacío = la capa se rige por clima.
+                            std::string dm = layer.value("densityMap", std::string());
+                            char db[512] = {0};
+                            strncpy(db, dm.c_str(), sizeof(db) - 1);
+                            if (ImGui::InputText("Mapa de distribución", db, sizeof(db))) {
+                                layer["densityMap"] = std::string(db); changed = true;
+                            }
+                            ImGui::SameLine();
+                            if (ImGui::SmallButton("...##densityMap")) {
+                                std::string picked;
+                                if (pickTexturePath(projectPath, picked)) {
+                                    layer["densityMap"] = picked; changed = true;
+                                }
+                            }
+                        }
+                        {
+                            // Condición booleana `when`: expresión sobre `layer` (material del
+                            // terreno) y `zone` (zona nombrada). P. ej. "layer != sand || zone ==
+                            // oasis". Se valida EN VIVO con el parser del motor; la sintaxis la
+                            // exige también el SceneValidator al abrir la escena.
+                            std::string wh = layer.value("when", std::string());
+                            char wb[512] = {0};
+                            strncpy(wb, wh.c_str(), sizeof(wb) - 1);
+                            if (ImGui::InputText("Condición (when)", wb, sizeof(wb))) {
+                                layer["when"] = std::string(wb); changed = true;
+                            }
+                            if (!wh.empty()) {
+                                std::string werr;
+                                if (Haruka::Planet::parsePropCond(wh, werr)) {
+                                    ImGui::TextColored(ImVec4(0.4f, 0.9f, 0.4f, 1.0f), "condición válida");
+                                } else {
+                                    ImGui::TextColored(ImVec4(0.95f, 0.4f, 0.35f, 1.0f), "%s", werr.c_str());
+                                }
+                            }
+                        }
+                        {
+                            float smin = layer.value("scaleMin", 0.8f);
+                            float smax = layer.value("scaleMax", 1.3f);
+                            if (ImGui::DragFloat2("Escala min/max", &smin, 0.05f, 0.1f, 10.0f)) {
+                                layer["scaleMin"] = smin; layer["scaleMax"] = smax; changed = true;
+                            }
+                        }
+                        {
+                            float cr = layer.value("claimRadius", 0.0f);
+                            if (ImGui::DragFloat("Radio de exclusión (m)", &cr, 0.1f, 0.0f, 100.0f)) {
+                                layer["claimRadius"] = cr; changed = true;
+                            }
+                        }
+                        {
+                            float hm[2] = {layer.value("humMin", 0.0f), layer.value("humMax", 1.0f)};
+                            if (ImGui::DragFloat2("Humedad min/max", hm, 0.01f, 0.0f, 1.0f)) {
+                                layer["humMin"] = hm[0]; layer["humMax"] = hm[1]; changed = true;
+                            }
+                        }
+                        {
+                            float tp[2] = {layer.value("tempMin", -1000.0f), layer.value("tempMax", 1000.0f)};
+                            if (ImGui::DragFloat2("Temp min/max (°C)", tp, 1.0f, -100.0f, 100.0f)) {
+                                layer["tempMin"] = tp[0]; layer["tempMax"] = tp[1]; changed = true;
+                            }
+                        }
+                        {
+                            float sp[2] = {layer.value("slopeMin", 0.0f), layer.value("slopeMax", 1.0f)};
+                            if (ImGui::DragFloat2("Pendiente min/max", sp, 0.01f, 0.0f, 1.0f)) {
+                                layer["slopeMin"] = sp[0]; layer["slopeMax"] = sp[1]; changed = true;
+                            }
+                        }
+                        {
+                            float fe = layer.value("feather", 0.08f);
+                            if (ImGui::DragFloat("Feather", &fe, 0.01f, 0.0f, 1.0f)) {
+                                layer["feather"] = fe; changed = true;
+                            }
+                        }
+                        if (ImGui::Button("Borrar capa##p")) delIdx = pi;
+                    }
+                    ImGui::PopID();
+                    ++pi;
+                }
+                if (moveFrom >= 0 && moveTo >= 0 && moveTo < (int)pl.size()) {
+                    std::iter_swap(pl.begin() + moveFrom, pl.begin() + moveTo);
+                    changed = true;
+                }
+                if (delIdx >= 0 && delIdx < (int)pl.size()) {
+                    pl.erase(pl.begin() + delIdx);
+                    changed = true;
+                }
+                if (ImGui::Button("+ Añadir capa de objeto")) {
+                    pl.push_back(nlohmann::json::object({
+                        {"name", "capa" + std::to_string(pl.size())},
+                        {"mesh", "tree"},
+                        {"density", 1.0},
+                        {"scaleMin", 0.8}, {"scaleMax", 1.3},
+                        {"claimRadius", 0.0},
+                        {"humMin", 0.0}, {"humMax", 1.0},
+                        {"tempMin", -1000.0}, {"tempMax", 1000.0},
+                        {"slopeMin", 0.0}, {"slopeMax", 1.0},
+                        {"feather", 0.08}
+                    }));
+                    changed = true;
+                }
+                ImGui::SameLine();
+                ImGui::TextDisabled("Presets:");
+                auto propPreset = [&](const nlohmann::json& jp) {
+                    pl.push_back(jp); changed = true;
+                };
+                if (ImGui::SmallButton("Árbol")) propPreset(nlohmann::json::object({
+                    {"name", "tree"}, {"mesh", "tree"},
+                    {"humMin", 0.15}, {"humMax", 1.0},
+                    {"tempMin", -2.0}, {"tempMax", 32.0},
+                    {"slopeMin", 0.0}, {"slopeMax", 0.6},
+                    {"density", 0.9}, {"scaleMin", 0.8}, {"scaleMax", 1.3},
+                    {"claimRadius", 0.3}, {"feather", 0.08}}));
+                if (ImGui::SmallButton("Roca")) propPreset(nlohmann::json::object({
+                    {"name", "rock"}, {"mesh", "rock"},
+                    {"humMin", 0.0}, {"humMax", 1.0},
+                    {"tempMin", -1000.0}, {"tempMax", 1000.0},
+                    {"slopeMin", 0.2}, {"slopeMax", 1.0},
+                    {"density", 0.4}, {"scaleMin", 0.8}, {"scaleMax", 1.2},
+                    {"claimRadius", 0.4}, {"feather", 0.08}}));
+                if (ImGui::SmallButton("Casa")) propPreset(nlohmann::json::object({
+                    {"name", "build"}, {"mesh", "house"},
+                    {"humMin", 0.35}, {"humMax", 0.95},
+                    {"tempMin", -5.0}, {"tempMax", 38.0},
+                    {"slopeMin", 0.0}, {"slopeMax", 0.35},
+                    {"density", 0.2}, {"scaleMin", 0.9}, {"scaleMax", 1.1},
+                    {"claimRadius", 6.0}, {"feather", 0.08}}));
+                if (ImGui::SmallButton("Camino")) propPreset(nlohmann::json::object({
+                    {"name", "path"}, {"mesh", "path"},
+                    {"humMin", 0.30}, {"humMax", 0.98},
+                    {"tempMin", -10.0}, {"tempMax", 35.0},
+                    {"slopeMin", 0.0}, {"slopeMax", 0.45},
+                    {"density", 0.08}, {"scaleMin", 0.9}, {"scaleMax", 1.1},
+                    {"claimRadius", 0.8}, {"feather", 0.08}}));
                 if (changed && onSceneChanged) onSceneChanged();
             }
 

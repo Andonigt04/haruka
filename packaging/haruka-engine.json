@@ -1,0 +1,26 @@
+{
+  "$comment": [
+    "DESCRIPTOR DE MOTOR — contrato entre el IDE y un motor cualquiera.",
+    "Se coloca como 'haruka-engine.json' en la RAIZ del motor. El IDE lo lee al arrancar",
+    "(src/engine_sdk.h) y con eso ya sabe crear proyectos, compilarlos y exportarlos, sin",
+    "tener nada de ese motor compilado dentro.",
+    "Todos los campos son OPCIONALES: lo que falte se queda con el valor por defecto, que",
+    "son las convenciones de haruka-cpp. Las rutas son relativas a la raiz del motor.",
+    "Copia este fichero a la raiz de tu motor y ajusta lo que difiera."
+  ],
+
+  "api": 1,
+  "name": "haruka-cpp",
+  "version": "0.1.0",
+
+  "template": "template",
+
+  "build": {
+    "script": "build.sh",
+    "cmakeEngineVar": "HARUKA_ENGINE_LOCAL"
+  },
+
+  "runtime": {
+    "binary": "build/HarukaEngine"
+  }
+}

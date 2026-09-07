@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Tipo MIME de los proyectos (project.hrk): hace que el gestor de archivos los abra
+     con el editor. Referenciado desde haruka-editor.desktop (MimeType=). -->
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-haruka-project">
+    <comment>Haruka project</comment>
+    <comment xml:lang="es">Proyecto de Haruka</comment>
+    <icon name="haruka-editor"/>
+    <glob pattern="*.hrk"/>
+  </mime-type>
+</mime-info>

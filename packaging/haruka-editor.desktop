@@ -1,0 +1,18 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Haruka Editor
+GenericName=Game Editor
+GenericName[es]=Editor de videojuegos
+Comment=Scene and game editor for the Haruka engine
+Comment[es]=Editor de escenas y juegos para el motor Haruka
+Exec=haruka-editor %f
+Icon=haruka-editor
+Terminal=false
+# Una sola categoría principal (Development): con Graphics además, la entrada sale
+# DUPLICADA en el menú, una por cada categoría. IDE es subcategoría de Development.
+Categories=Development;IDE;
+Keywords=game;engine;editor;3d;haruka;
+StartupNotify=true
+StartupWMClass=Haruka Editor
+MimeType=application/x-haruka-project;

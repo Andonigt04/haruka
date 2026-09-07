@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2b3a55"/>
+      <stop offset="1" stop-color="#12161f"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#6ee7f0"/>
+      <stop offset="1" stop-color="#3b82f6"/>
+    </linearGradient>
+  </defs>
+  <rect x="8" y="8" width="240" height="240" rx="48" fill="url(#bg)"/>
+  <!-- Wireframe de escena: el editor es, ante todo, un viewport. -->
+  <g fill="none" stroke="url(#accent)" stroke-width="10" stroke-linejoin="round">
+    <path d="M128 46 L206 90 L206 166 L128 210 L50 166 L50 90 Z"/>
+    <path d="M128 46 L128 128 L206 90"/>
+    <path d="M128 128 L50 90"/>
+    <path d="M128 128 L128 210"/>
+  </g>
+  <circle cx="128" cy="128" r="16" fill="url(#accent)"/>
+</svg>

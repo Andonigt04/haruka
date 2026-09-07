@@ -44,6 +44,7 @@ private:
     void setProjectPath(const std::string& path) { currentProjectPath = path; }
     
     void renderObjectNode(int index);
+    void renderPropDebugTree();
     void reparentObject(int childIndex, int newParentIndex);
     void createChildObject(int parentIndex, const std::string& primitiveType);
     void duplicateObject(int index);

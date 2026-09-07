@@ -3,6 +3,7 @@
 #include <imgui.h>
 #include <vector>
 #include <deque>
+#include "tools/profiler.h"   // Haruka::Profiler::Node — árbol CPU por etapa
 
 /** @brief Real-time rendering and frame statistics panel. */
 class StatsPanel {
@@ -28,22 +29,24 @@ public:
     void setTotalDrawCalls(int count) { totalDrawCalls = count; }
     /** @brief Sets total triangle count. */
     void setTotalTriangleCount(int count) { totalTriangleCount = count; }
-    /** @brief Sets currently visible terrain chunk count. */
-    void setVisibleChunkCount(int count) { visibleChunkCount = count; }
-    /** @brief Sets currently resident terrain chunk count. */
-    void setResidentChunkCount(int count) { residentChunkCount = count; }
-    /** @brief Sets pending chunk-load queue size. */
-    void setPendingChunkLoads(int count) { pendingChunkLoads = count; }
-    /** @brief Sets pending chunk-eviction queue size. */
-    void setPendingChunkEvictions(int count) { pendingChunkEvictions = count; }
-    /** @brief Sets current resident chunk memory in MB. */
-    void setResidentMemoryMB(int mb) { residentMemoryMB = mb; }
-    /** @brief Sets tracked chunk count in streaming system. */
-    void setTrackedChunkCount(int count) { trackedChunkCount = count; }
-    /** @brief Sets streaming memory budget (MB). */
-    void setMaxMemoryMB(int mb) { maxMemoryMB = mb; }
+    /** @brief Sets terrain geometry breakdown (base mesh, clipmap) + draw calls.
+     *  El desglose de AGUA se retiró: el mar dejó de ser una malla propia del planeta y sus
+     *  contadores (`RenderStats::waterVertices/waterTriangles`) ya no existen en el motor. */
+    void setTerrainStats(int baseVerts, int baseTris, int clipVerts, int clipTris, int drawCalls) {
+        baseVertexCount = baseVerts;   baseTriangleCount = baseTris;
+        clipVertexCount = clipVerts;   clipTriangleCount = clipTris;
+        terrainDrawCalls = drawCalls;
+    }
+
+    /** @brief Árbol CPU del último frame (renderFrameContent, water.draw, …) para el desglose
+     *  "qué etapa tarda más". Se copia: el snapshot del profiler es estable durante el frame. */
+    void setProfilerNodes(const std::vector<Haruka::Profiler::Node>& nodes) { profilerNodes = nodes; }
 
 private:
+    /** @brief Dibuja el árbol del profiler recursivamente (subárbol de `parent`). */
+    void drawProfilerNode(const std::vector<Haruka::Profiler::Node>& nodes, int parent,
+                          float frameMs, int depth);
+
     float fps = 0.0f;
     float frameTime = 0.0f;
     int renderedVertexCount = 0;
@@ -52,13 +55,13 @@ private:
     int totalVertexCount = 0;
     int totalDrawCalls = 0;
     int totalTriangleCount = 0;
-    int visibleChunkCount = 0;
-    int residentChunkCount = 0;
-    int pendingChunkLoads = 0;
-    int pendingChunkEvictions = 0;
-    int residentMemoryMB = 0;
-    int trackedChunkCount = 0;
-    int maxMemoryMB = 0;
+    // Terreno del último frame (el "Chunk Streaming" legacy era de la arquitectura de chunks,
+    // que ya no existe: el planeta es malla base + clipmap + agua).
+    int baseVertexCount = 0,  baseTriangleCount = 0;
+    int clipVertexCount = 0,  clipTriangleCount = 0;
+    int terrainDrawCalls = 0;
+    // Árbol CPU del último frame del hilo de render (ms inclusivos por etapa).
+    std::vector<Haruka::Profiler::Node> profilerNodes;
     
     std::deque<float> fpsHistory;
     std::deque<float> frameTimeHistory;

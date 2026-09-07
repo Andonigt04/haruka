@@ -138,16 +138,16 @@ void MenuBar::renderObjectsMenu() {
 
     // Entidades dinámicas (capas del panel de objetos)
     if (ImGui::MenuItem("Prop")) {
-        editorApp->objectsPanel.createProp();
+        editorApp->createProp();
     }
     if (ImGui::MenuItem("Monster")) {
-        editorApp->objectsPanel.createMonster();
+        editorApp->createMonster();
     }
     if (ImGui::MenuItem("Spawn Point")) {
-        editorApp->objectsPanel.createSpawnPoint();
+        editorApp->createSpawnPoint();
     }
     if (ImGui::MenuItem("Character")) {
-        editorApp->objectsPanel.createCharacter();
+        editorApp->createCharacter();
     }
 
     ImGui::Separator();
@@ -196,7 +196,6 @@ void MenuBar::renderViewMenu() {
     if (!ImGui::BeginMenu("View")) return;
     
     ImGui::MenuItem("Scene Hierarchy", nullptr, &editorApp->showSceneHierarchy);
-    ImGui::MenuItem("Objects", nullptr, &editorApp->showObjectsPanel);
     ImGui::MenuItem("Inspector", nullptr, &editorApp->showInspector);
     ImGui::MenuItem("Project Browser", nullptr, &editorApp->showProjectBrowser);
     ImGui::MenuItem("Viewport", nullptr, &editorApp->showViewport);

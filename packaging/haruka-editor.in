@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Lanzador de /usr/bin. El editor vive fuera del PATH (@PRIVATE_DIR@) porque va con su
+# propia libHarukaEngine.so y sus shaders, y busca los assets JUNTO AL EJECUTABLE
+# (SDL_GetBasePath): moverlo a /usr/bin dejaría el viewport sin un solo shader.
+#
+# Se hace `exec` sobre el binario real, así que /proc/self/exe -> @PRIVATE_DIR@/@EXE_NAME@
+# y los assets se resuelven solos. El motor para compilar proyectos NO se fija aquí: lo
+# resuelve el editor en runtime (ver src/engine_sdk.h). Para forzar uno concreto:
+#     HARUKA_ENGINE_ROOT=/ruta/al/motor haruka-editor
+set -euo pipefail
+exec "@PRIVATE_DIR@/@EXE_NAME@" "$@"

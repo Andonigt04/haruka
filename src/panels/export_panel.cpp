@@ -1,5 +1,6 @@
 #include "export_panel.h"
 #include "editor_app.h"
+#include "engine_sdk.h"   // runtime del motor activo, para copiarlo al export
 
 #include <imgui.h>
 #include <nfd.h>
@@ -268,13 +269,16 @@ bool ExportPanel::prepareExport(EditorApplication* editorApp, std::string& error
     config.exportSettings.description = std::string(description);
 
     if (config.engineBinary.empty()) {
+        // Runtime que se copia junto al juego exportado. Primero el build del propio proyecto
+        // y si no, el que declare el motor activo (EngineSdk); antes había aquí una ruta
+        // absoluta de la máquina de desarrollo, que en cualquier otra apunta a la nada.
         std::string defaultEngineBin = project->getPath() + "/../../build/HarukaEngine";
         if (std::filesystem::exists(defaultEngineBin)) {
             config.engineBinary = std::filesystem::absolute(defaultEngineBin).string();
-        } else if (std::filesystem::exists("/mnt/sdb1/haruka/build/HarukaEngine")) {
-            config.engineBinary = "/mnt/sdb1/haruka/build/HarukaEngine";
+        } else if (const EngineSdk& engine = EngineSdk::current(); !engine.runtimeBinary.empty()) {
+            config.engineBinary = engine.runtimeBinary;
         } else {
-            config.engineBinary = "HarukaEngine";
+            config.engineBinary = "HarukaEngine";   // se busca en el PATH
         }
     }
     project->save();

@@ -72,13 +72,16 @@ void ViewportPanel::setStatsPanelFromApp(class Application* app) {
     statsPanel->setTotalVertexCount(app->getTotalVertices());
     statsPanel->setTotalDrawCalls(app->getTotalDrawCalls());
     statsPanel->setTotalTriangleCount(app->getTotalTriangles());
-    statsPanel->setVisibleChunkCount(0);
-    statsPanel->setResidentChunkCount(0);
-    statsPanel->setPendingChunkLoads(0);
-    statsPanel->setPendingChunkEvictions(0);
-    statsPanel->setResidentMemoryMB(0);
-    statsPanel->setTrackedChunkCount(0);
-    statsPanel->setMaxMemoryMB(0);
+    // El "Chunk Streaming" legacy murió con la arquitectura de chunks: el terreno es malla base +
+    // clipmap + agua. El panel muestra ese desglose real en vez de ceros muertos.
+    const auto ts = app->getTerrainStats();
+    statsPanel->setTerrainStats((int)ts.baseVertices, (int)ts.baseTriangles,
+                                (int)ts.clipVertices, (int)ts.clipTriangles,
+                                ts.drawCalls);
+    // Árbol CPU del último frame (qué etapa tarda más): renderFrameContent, scene.objects.draw,
+    // simple_planet.draw → planet.base/clipmap/water.draw, etc. El imgui corre dentro del frame,
+    // así que el hilo que pregunta es el de render y el árbol es el que se acaba de perfilizar.
+    statsPanel->setProfilerNodes(app->profilerNodes());
 }
 
 void ViewportPanel::registerEditorTargetWithApp() {
@@ -197,6 +200,44 @@ void ViewportPanel::handleGizmoInput() {
             glm::mat4 view = camera->getViewMatrix();
             glm::mat4 proj = glm::perspective(glm::radians(45.0f), (float)width / (float)height, 0.1f, 1000000000000.0f);
 
+            // ── PUERTO en edición: el gizmo manipula EL PUERTO, no el objeto ──────────────────
+            // El puerto vive en el espacio LOCAL del prop, así que se compone con el transform del
+            // objeto para manipularlo en pantalla y se descompone de vuelta a local. Sin esto habría
+            // que teclear posiciones a ciegas, que es justo lo que hace ilegible un marco de
+            // coordenadas equivocado.
+            // PIEZA de prefabricado: el gizmo la mueve en el marco del conjunto. Se compone con el
+            // origen del prefabricado para manipularla en pantalla y se descompone de vuelta a local,
+            // que es como se guarda — el fichero no debe llevar coordenadas de mundo.
+            if (editPiece) {
+                glm::mat4 m = glm::translate(glm::mat4(1.0f), glm::vec3(prefabOrigin + editPiece->pos))
+                            * glm::mat4_cast(glm::quat(editPiece->rot));
+                ImGuizmo::Manipulate(glm::value_ptr(view), glm::value_ptr(proj),
+                                     (ImGuizmo::OPERATION)currentGizmoOperation, ImGuizmo::LOCAL,
+                                     glm::value_ptr(m));
+                if (ImGuizmo::IsUsing()) {
+                    glm::vec3 np, nr, ns;
+                    ImGuizmo::DecomposeMatrixToComponents(glm::value_ptr(m), &np.x, &nr.x, &ns.x);
+                    editPiece->pos = glm::dvec3(np) - prefabOrigin;
+                    editPiece->rot = glm::dquat(glm::quat(glm::radians(nr)));
+                }
+            } else if (editPort) {
+                glm::mat4 portLocal = glm::translate(glm::mat4(1.0f), editPort->position)
+                                    * glm::mat4_cast(editPort->rotation);
+                glm::mat4 portWorldM = objTransform * portLocal;
+                ImGuizmo::Manipulate(
+                    glm::value_ptr(view), glm::value_ptr(proj),
+                    (ImGuizmo::OPERATION)currentGizmoOperation, ImGuizmo::LOCAL,
+                    glm::value_ptr(portWorldM)
+                );
+                if (ImGuizmo::IsUsing()) {
+                    const glm::mat4 back = glm::inverse(objTransform) * portWorldM;
+                    glm::vec3 np, nr, ns;
+                    ImGuizmo::DecomposeMatrixToComponents(glm::value_ptr(back), &np.x, &nr.x, &ns.x);
+                    editPort->position = np;
+                    editPort->rotation = glm::quat(glm::radians(nr));
+                }
+                drawPortOverlay(glm::dmat4(objTransform), view, proj);
+            } else {
             ImGuizmo::Manipulate(
                 glm::value_ptr(view), glm::value_ptr(proj),
                 (ImGuizmo::OPERATION)currentGizmoOperation, ImGuizmo::LOCAL,
@@ -209,6 +250,7 @@ void ViewportPanel::handleGizmoInput() {
                 objPtr->position = glm::dvec3(newPos);
                 objPtr->rotation = EditorUtil::eulerToRotation(glm::dvec3(newRot));
                 objPtr->scale    = glm::dvec3(newScale);
+            }
             }
         }
     }
@@ -334,6 +376,7 @@ void ViewportPanel::renderScene() {
         statsPanel->setTotalVertexCount(0);
         statsPanel->setTotalDrawCalls(0);
         statsPanel->setTotalTriangleCount(0);
+        statsPanel->setTerrainStats(0, 0, 0, 0, 0);
     }
 }
 
@@ -448,6 +491,8 @@ void ViewportPanel::onImGuiRender() {
     // temperatura, humedad y CAPAS (cómo se aplica cada textura). El shader (biome.frag) hace el
     // resto con uDebug.x. Las capas se listan DINÁMICAS: las que el planeta declare en escena —
     // el selector tiene en cuenta TODAS las texturas (arena, hierba, roca…) y no una lista fija.
+    // Las CAPAS DE PROPS se listan después: pintan el ÁREA DE SPAWN de cada capa (dónde
+    // instalaría sus objetos: bandas de clima/forma × densityMap).
     {
         static const char* kBase[] = {"Normal", "Elevación", "Zonas", "Bioma",
                                       "Temperatura", "Humedad"};
@@ -458,6 +503,9 @@ void ViewportPanel::onImGuiRender() {
             const auto layers = app->getPlanetTerrainLayerNames();
             for (size_t i = 0; i < layers.size(); ++i)
                 items.push_back({"Capa: " + layers[i], 10 + (int)i});
+            const auto props = app->getPlanetPropLayerNames();
+            for (size_t i = 0; i < props.size(); ++i)
+                items.push_back({"Spawn: " + props[i], 40 + (int)i});
         }
         std::string current;
         for (const auto& it : items) if (it.second == debugView) { current = it.first; break; }
@@ -803,4 +851,79 @@ void ViewportPanel::executePlacement() {
     } else if (placementAction == 3) {    // Allanar al nivel del mar
         app->levelTerrain(placementGround, placementRadius, 0.0);
     }
+}
+
+// ── Superposición del puerto: eje y barrido del raíl ────────────────────────────────────────────
+// Se dibuja con la draw list de ImGui proyectando los puntos a pantalla. No hace falta un renderer
+// de líneas para responder a la única pregunta que importa aquí: ¿el eje y el cero están bien?
+// El barrido va del límite mínimo al máximo, así que un raíl cuyos topes no encierren al 0 se ve
+// enseguida (el arco no pasa por la propia hoja).
+void ViewportPanel::drawPortOverlay(const glm::dmat4& objXform, const glm::mat4& view,
+                                    const glm::mat4& proj) {
+    if (!editPort) return;
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const float w = viewportMax.x - viewportMin.x, h = viewportMax.y - viewportMin.y;
+    if (w <= 0.0f || h <= 0.0f) return;
+
+    const glm::mat4 vp = proj * view;
+    auto toScreen = [&](const glm::vec3& wp, ImVec2& out) -> bool {
+        const glm::vec4 c = vp * glm::vec4(wp, 1.0f);
+        if (c.w <= 0.0f) return false;                     // detrás de la cámara
+        const glm::vec3 n = glm::vec3(c) / c.w;
+        out = ImVec2(viewportMin.x + (n.x * 0.5f + 0.5f) * w,
+                     viewportMin.y + (1.0f - (n.y * 0.5f + 0.5f)) * h);
+        return true;
+    };
+
+    const glm::mat4 obj  = glm::mat4(objXform);
+    const glm::mat4 port = obj * glm::translate(glm::mat4(1.0f), editPort->position)
+                               * glm::mat4_cast(editPort->rotation);
+    const glm::vec3 o    = glm::vec3(port[3]);
+
+    // +Y local: para un SOCKET es su NORMAL, así que se dibuja siempre — es el convenio que decide
+    // hacia dónde "mira" el puerto y el error más fácil de cometer al autorizarlo.
+    ImVec2 a, b;
+    const glm::vec3 up = glm::vec3(port * glm::vec4(0, 1, 0, 0));
+    if (toScreen(o, a) && toScreen(o + up * 0.5f, b))
+        dl->AddLine(a, b, IM_COL32(120, 255, 140, 255), 2.0f);
+
+    if (!editPort->hasRail) return;
+
+    const glm::vec3 ax = glm::normalize(glm::vec3(port * glm::vec4(editPort->rail.axis, 0.0f)));
+    ImVec2 c0, c1;
+    if (toScreen(o - ax * 0.6f, c0) && toScreen(o + ax * 0.6f, c1))
+        dl->AddLine(c0, c1, IM_COL32(255, 200, 80, 255), 2.0f);
+
+    const float lo = std::min(editPort->rail.limits.x, editPort->rail.limits.y);
+    const float hi = std::max(editPort->rail.limits.x, editPort->rail.limits.y);
+
+    if (editPort->rail.dof == Haruka::RailDof::Slider) {
+        // Deslizadera: el recorrido es un segmento sobre el eje.
+        ImVec2 s0, s1;
+        if (toScreen(o + ax * lo, s0) && toScreen(o + ax * hi, s1))
+            dl->AddLine(s0, s1, IM_COL32(80, 180, 255, 255), 4.0f);
+        return;
+    }
+
+    // Bisagra: el arco que barre la hoja. El radio es una referencia visual (0.6 m), no un dato.
+    glm::vec3 r = glm::vec3(port * glm::vec4(0, 1, 0, 0));
+    r -= ax * glm::dot(r, ax);
+    if (glm::length(r) < 1e-6f) r = glm::vec3(port * glm::vec4(1, 0, 0, 0)) - ax * 0.0f;
+    r = glm::normalize(r) * 0.6f;
+
+    ImVec2 prev; bool havePrev = false;
+    const int kSteps = 24;
+    for (int i = 0; i <= kSteps; ++i) {
+        const float t   = lo + (hi - lo) * (float)i / (float)kSteps;
+        const glm::vec3 pt = o + glm::vec3(glm::rotate(glm::mat4(1.0f), glm::radians(t), ax)
+                                           * glm::vec4(r, 0.0f));
+        ImVec2 sp;
+        if (toScreen(pt, sp)) {
+            if (havePrev) dl->AddLine(prev, sp, IM_COL32(80, 180, 255, 200), 2.0f);
+            prev = sp; havePrev = true;
+        } else havePrev = false;
+    }
+    // El 0 (postura de montaje) marcado aparte: es el origen de los límites.
+    ImVec2 z;
+    if (toScreen(o + r, z)) dl->AddCircleFilled(z, 4.0f, IM_COL32(255, 255, 255, 255));
 }

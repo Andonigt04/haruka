@@ -3,3 +3,5 @@ third_party/*
 !third_party/ImGuizmo
 !third_party/ImGuizmo/**
 build/
+dist/
+packages/
