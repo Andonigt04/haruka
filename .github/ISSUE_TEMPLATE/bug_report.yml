@@ -1,0 +1,40 @@
+name: Bug report
+description: Something in the editor does not work as it should
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. **Security problems go through SECURITY.md, not here.**
+  - type: textarea
+    id: what
+    attributes:
+      label: What happens
+      description: What you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: How to reproduce
+    validations:
+      required: true
+  - type: dropdown
+    id: backend
+    attributes:
+      label: Backend loaded
+      options: [Haruka (in-process), Remote, Remote + mock engine, None, Not sure]
+    validations:
+      required: true
+  - type: input
+    id: build
+    attributes:
+      label: Commit and how it was built
+      placeholder: "e.g. a1b2c3d, ./build.sh / rpm package"
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Editor log
+      render: text

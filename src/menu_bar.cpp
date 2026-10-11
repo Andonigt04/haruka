@@ -11,8 +11,8 @@ void MenuBar::render() {
     
     renderFileMenu();
     renderEditMenu();
-    renderObjectsMenu();
-    renderMaterialMenu();
+    // Menús del motor (Haruka: "Objects", "Material"), entre Edit y View.
+    if (editorApp->backend) editorApp->backend->drawMainMenus();
     renderViewMenu();
     renderPlayControls();
     renderHelpMenu();
@@ -32,16 +32,8 @@ void MenuBar::renderFileMenu() {
     if (ImGui::MenuItem("Open Project", "Ctrl+O")) {
         nfdchar_t* outPath = nullptr;
         nfdresult_t result = NFD_PickFolder(nullptr, &outPath);
-
-        if (result == NFD_OKAY && editorApp->currentProject) {
-            const std::string selectedPath(outPath);
-            editorApp->currentProject->load(selectedPath);
-            editorApp->projectBrowserPanel.setProject(editorApp->currentProject.get());
-            editorApp->projectBrowserPanel.setScene(editorApp->currentScene.get());
-            editorApp->nodeGraphEditorPanel.setProjectPath(editorApp->currentProject->getPath());
-            editorApp->inspectorPanel.setProjectPath(editorApp->currentProject->getPath());
-            editorApp->materialEditorPanel.setProjectPath(editorApp->currentProject->getPath());
-            std::cout << "Project loaded: " << selectedPath << std::endl;
+        if (result == NFD_OKAY) {
+            editorApp->openProject(outPath);
             free(outPath);
         } else if (result == NFD_CANCEL) {
             std::cout << "User cancelled folder selection" << std::endl;
@@ -52,9 +44,10 @@ void MenuBar::renderFileMenu() {
 
     if (ImGui::MenuItem("Save", "Ctrl+S")) {
         if (!editorApp->currentFile.path.empty()) {
-            editorApp->saveFile(editorApp->currentFile.path, editorApp->currentFile.isPrefab);
+            editorApp->saveFile(editorApp->currentFile.path);
         } else {
-            std::snprintf(editorApp->saveAsBuffer, sizeof(editorApp->saveAsBuffer), "scenes/Untitled.scene");
+            const std::string untitled = editorApp->backend ? editorApp->backend->untitledDocument() : std::string{};
+            std::snprintf(editorApp->saveAsBuffer, sizeof(editorApp->saveAsBuffer), "%s", untitled.c_str());
             editorApp->showSaveAsPopup = true;
         }
     }
@@ -68,18 +61,20 @@ void MenuBar::renderFileMenu() {
 
     if (ImGui::MenuItem("Open File", "Ctrl+O")) {
         nfdchar_t* outPath = nullptr;
-        nfdresult_t result = NFD_OpenDialog("scene,prefab", nullptr, &outPath);
-        
+        const std::string filter = editorApp->backend ? editorApp->backend->documentFilter() : std::string{};
+        nfdresult_t result = NFD_OpenDialog(filter.empty() ? nullptr : filter.c_str(), nullptr, &outPath);
+
         if (result == NFD_OKAY) {
-            editorApp->loadFile(outPath);
+            editorApp->openDocument(outPath);
             free(outPath);
         }
     }
 
     ImGui::Separator();
 
-    if (ImGui::MenuItem("Export Game")) {
-        editorApp->exportGame();
+    if (editorApp->backend) {
+        editorApp->backend->drawMenuItems("File");   // Haruka: "Export Game"
+        ImGui::Separator();
     }
 
     if (ImGui::MenuItem("Exit", "Alt+F4")) {
@@ -93,100 +88,16 @@ void MenuBar::renderFileMenu() {
 
 void MenuBar::renderEditMenu() {
     if (!ImGui::BeginMenu("Edit")) return;
-    
-    if (ImGui::MenuItem("Move Gizmo", "W", editorApp->gizmoMode == 0)) editorApp->gizmoMode = 0;
-    if (ImGui::MenuItem("Rotate Gizmo", "E", editorApp->gizmoMode == 1)) editorApp->gizmoMode = 1;
-    if (ImGui::MenuItem("Scale Gizmo", "R", editorApp->gizmoMode == 2)) editorApp->gizmoMode = 2;
-    
-    ImGui::Separator();
-    
+
     if (ImGui::MenuItem("Undo", "Ctrl+Z", false, editorApp->commandHistory.canUndo())) {
         editorApp->commandHistory.undo();
     }
     if (ImGui::MenuItem("Redo", "Ctrl+Y", false, editorApp->commandHistory.canRedo())) {
         editorApp->commandHistory.redo();
     }
-    
-    ImGui::EndMenu();
-}
-
-void MenuBar::renderObjectsMenu() {
-    if (!ImGui::BeginMenu("Objects")) return;
-
-    if (ImGui::MenuItem("Cube")) {
-        if (editorApp->currentScene) {
-            editorApp->createSceneObject("Cube");
-        }
-    }
-    if (ImGui::MenuItem("Sphere")) {
-        if (editorApp->currentScene) {
-            editorApp->createSceneObject("Sphere");
-        }
-    }
-    if (ImGui::MenuItem("Plane")) {
-        if (editorApp->currentScene) {
-            editorApp->createSceneObject("Plane");
-        }
-    }
-    if (ImGui::MenuItem("Capsule")) {
-        if (editorApp->currentScene) {
-            editorApp->createSceneObject("Capsule");
-        }
-    }
-
-    ImGui::Separator();
-
-    // Entidades dinámicas (capas del panel de objetos)
-    if (ImGui::MenuItem("Prop")) {
-        editorApp->createProp();
-    }
-    if (ImGui::MenuItem("Monster")) {
-        editorApp->createMonster();
-    }
-    if (ImGui::MenuItem("Spawn Point")) {
-        editorApp->createSpawnPoint();
-    }
-    if (ImGui::MenuItem("Character")) {
-        editorApp->createCharacter();
-    }
-
-    ImGui::Separator();
-
-    if (ImGui::MenuItem("Light")) {
-        if (editorApp->currentScene) {
-            editorApp->createSceneObject("Light");
-        }
-    }
-    if (ImGui::MenuItem("Point Light")) {
-        if (editorApp->currentScene) {
-            editorApp->createSceneObject("PointLight");
-        }
-    }
-    if (ImGui::MenuItem("Directional Light")) {
-        if (editorApp->currentScene) {
-            editorApp->createSceneObject("DirectionalLight");
-        }
-    }
-
-    ImGui::Separator();
-
-    if (ImGui::MenuItem("Sun")) {
-        if (editorApp->currentScene) {
-            editorApp->createSceneObject("SUN");
-        }
-    }
-
-    ImGui::EndMenu();
-}
-
-void MenuBar::renderMaterialMenu() {
-    if (!ImGui::BeginMenu("Material")) return;
-
-    if (ImGui::MenuItem("Node Graph Editor", nullptr, &editorApp->showNodeGraphEditor)) {}
-    if (ImGui::MenuItem("Material Editor", nullptr, &editorApp->showMaterialEditor)) {}
-    ImGui::Separator();
-    if (ImGui::MenuItem("Bake Textures for Selected")) {
-        editorApp->nodeGraphEditorPanel.bakeSelectedTextures();
+    if (editorApp->backend) {
+        ImGui::Separator();
+        editorApp->backend->drawMenuItems("Edit");   // Haruka: modo del gizmo
     }
 
     ImGui::EndMenu();
@@ -194,26 +105,11 @@ void MenuBar::renderMaterialMenu() {
 
 void MenuBar::renderViewMenu() {
     if (!ImGui::BeginMenu("View")) return;
-    
-    ImGui::MenuItem("Scene Hierarchy", nullptr, &editorApp->showSceneHierarchy);
-    ImGui::MenuItem("Inspector", nullptr, &editorApp->showInspector);
-    ImGui::MenuItem("Project Browser", nullptr, &editorApp->showProjectBrowser);
-    ImGui::MenuItem("Viewport", nullptr, &editorApp->showViewport);
-    ImGui::MenuItem("Console", nullptr, &editorApp->showConsole);
-    ImGui::MenuItem("Performance Stats", nullptr, &editorApp->showStats);
-    ImGui::MenuItem("Material Editor", nullptr, &editorApp->showMaterialEditor);
-    ImGui::MenuItem("Node Graph Editor", nullptr, &editorApp->showNodeGraphEditor);
-    
-    ImGui::Separator();
-    
-    ImGui::MenuItem("Settings", nullptr, &editorApp->showSettings);
-    ImGui::MenuItem("Asset Importer", nullptr, &editorApp->showAssetImporter);
-    ImGui::MenuItem("Search Panel", nullptr, &editorApp->showSearchPanel);
-    ImGui::MenuItem("UI Builder", nullptr, &editorApp->showUIBuilder);
-    
-    ImGui::Separator();
-    ImGui::MenuItem("ImGui Demo", nullptr, &editorApp->showDemoWindow);
-    
+
+    // Una entrada por panel registrado (EditorApplication::registerPanels): un panel nuevo sale
+    // aquí sin tocar este fichero.
+    editorApp->panels.drawViewMenuItems();
+
     ImGui::EndMenu();
 }
 
@@ -227,12 +123,11 @@ void MenuBar::renderPlayControls() {
         ImGui::Text("Compiling...");
     }
 
-    if (ImGui::MenuItem((!editorApp->isPlayMode) ? "Start" : "Stop", "F5", editorApp->isPlayMode)) {
-        if (!editorApp->isPlayMode) {
-            editorApp->enterPlayMode();
-        } else {
-            editorApp->exitPlayMode();
-        }
+    IEngineBackend* be = editorApp->backend.get();
+    const bool playing = be && be->isPlaying();
+    if (ImGui::MenuItem(playing ? "Stop" : "Start", "F5", playing, be && (playing || be->canPlay()))) {
+        if (!playing) be->enterPlay();
+        else          be->exitPlay();
     }
 }
 

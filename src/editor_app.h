@@ -1,217 +1,130 @@
 #pragma once
 
-#include "core/application.h"
-#include "core/project.h"
-#include "core/scene/scene_manager.h"
-#include "core/camera.h"
-#include "core/game_interface.h"
-#include "panels/scene_hierarchy.h"
-#include "panels/inspector.h"
-#include "panels/project_browser.h"
-#include "panels/material_editor.h"
-#include "panels/node_graph_editor.h"
-#include "panels/viewport.h"
-#include "panels/console.h"
-#include "panels/stats.h"
+#include "backend/engine_backend.h"
+#include "backend/backend_loader.h"
 #include "commands/command_history.h"
-#include "panels/settings.h"
+#include "panels/panel_registry.h"
+#include "panels/project_browser.h"
+#include "panels/console.h"
 #include "panels/asset_importer.h"
 #include "panels/search_panel.h"
 #include "panels/ui_builder.h"
-#include "panels/export_panel.h"
+#include "panels/generic_scene_panels.h"
+#include "plugins/plugin_manager.h"
 #include "menu_bar.h"
-#include <imgui.h>
-#include <memory>
-#include <SDL3/SDL.h>
 
-class MenuBar;
+#include <memory>
+#include <string>
+
+struct SDL_Window;
 
 /**
- * @brief Main editor application shell.
+ * @brief El editor GENÉRICO: ventana, ImGui, menús, paneles, plugins y el ciclo de documentos.
  *
- * Owns project/scene state, viewport camera, dockable panels, play-mode state,
- * and project/file workflow actions.
+ * ⚠️ AQUÍ NO ENTRA NINGUNA CABECERA DEL MOTOR (lo comprueba el build: ver
+ * cmake/check_core_engine_free.cmake). Todo lo que sabe de un motor pasa por `IEngineBackend`:
+ * la escena, el viewport, los paneles que entienden de objetos, crear objetos, el play mode. Sin
+ * backend el editor arranca igual, con sus paneles genéricos (HARUKA_EDITOR_NO_BACKEND=1). El
+ * backend es un `.so` que se carga al arrancar (BackendLoader): el núcleo no enlaza ningún motor.
+ *
+ * Lo que sí es del núcleo: qué documento está abierto, si está sucio, el autoguardado y sus copias
+ * de seguridad, el historial de deshacer, y crear/compilar el proyecto con lo que declara el motor
+ * en `haruka-engine.json` (EngineSdk).
  */
 class EditorApplication {
 public:
-    /** @brief Constructs the editor app with default UI state. */
-    EditorApplication();
-    /** @brief Releases editor resources and UI-owned state. */
+    /// Sin argumento, el backend se busca y se carga al arrancar (BackendLoader). Pasar uno sirve
+    /// para pruebas; si no hay ninguno, el editor arranca sin motor.
+    explicit EditorApplication(std::unique_ptr<IEngineBackend> backend = nullptr);
     ~EditorApplication();
-    
+
     /** @brief Runs the editor main loop. */
     void run();
-    /** @brief Returns the currently loaded project, if any. */
-    Haruka::Project* getProject() { return currentProject.get(); }
-    
+
+    /// Las ventanas del editor. Público para que quien añada paneles no tenga que tocar esta clase.
+    PanelRegistry& panelRegistry() { return panels; }
+
     friend class MenuBar;
 
-    // ⚠️ CREAR UN OBJETO NO ERA COSA DE UN PANEL, y estaba dentro de uno. Al quitar `ObjectsPanel`
-    // se habría ido con él la única forma de crear un Prop, un Monster, un Spawn Point o un
-    // Character — que se piden desde el MENÚ, no desde el panel. Viven aquí, que es quien tiene la
-    // escena y el historial de deshacer.
-    void createProp();
-    void createMonster();
-    void createSpawnPoint();
-    void createCharacter();
-    void createMesh();
-    void createLight();
-
 private:
-    /// Nombre libre con un prefijo ("Prop_3"): no repite ninguno de la escena.
-    std::string nextObjectName(const std::string& prefix);
-    /// Primitiva con su malla en CPU y su material. `meshType`: "cube" | "sphere" | "capsule".
-    std::shared_ptr<Haruka::SceneObject> makeMeshObject(const std::string& name,
-                                                        const std::string& meshType,
-                                                        const glm::vec3& albedo);
-    /// La añade a la escena (por el historial si lo hay) y la deja seleccionada.
-    void addSceneObject(std::shared_ptr<Haruka::SceneObject> obj);
-
-    /** @brief Initializes subsystems, panels, and runtime state. */
     void init();
-    /** @brief Shuts down the editor and releases owned resources. */
     void shutdown();
-    /** @brief Updates editor-side logic for the current frame. */
     void update();
-    /** @brief Renders the active viewport/frame. */
     void render();
-    /** @brief Renders all dockable UI panels and menus. */
     void renderUI();
-    
+    /// Paneles del núcleo, en orden de dibujo; el backend mete los suyos en medio (ver init()).
+    void registerCorePanelsBefore();
+    void registerCorePanelsAfter();
+    /// Jerarquía e inspector genéricos si el backend describe su escena (ver scene_model.h).
+    void registerGenericScenePanels();
+
+    /// Da a TODOS los paneles la ruta del proyecto abierto (uno solo: antes eran tres listas a mano).
+    void syncPanelsToProject();
+
+    // Proyecto
+    void openProject(const std::string& root);
+    void createNewProject(const std::string& name, const std::string& basePath);
+    void compileProject();
+    std::string projectRoot() const { return backend ? backend->projectRoot() : std::string{}; }
+
+    // Documentos: el núcleo lleva la ruta, lo sucio y las copias; leer y escribir es del backend.
+    void openDocument(const std::string& path);   // con el aviso de cambios sin guardar
+    void saveFile(const std::string& path);
+    void loadFile(const std::string& path);
+    void createFileBackup(const std::string& path);
+    void cleanOldBackups(const std::string& path);
+    void deleteAllBackups(const std::string& path);
+
+    bool isPlaying() const { return backend && backend->isPlaying(); }
+
+    BackendLoader backendLoader;
+    std::unique_ptr<IEngineBackend> backend;
+    SDL_Window* window = nullptr;
     std::unique_ptr<MenuBar> menuBar;
 
-    // UI state
-    SDL_Window* window;
-    std::unique_ptr<Haruka::Project> currentProject;
-    std::unique_ptr<Haruka::SceneManager> currentScene;
-    std::unique_ptr<Haruka::Core::Camera> viewportCamera;
-    
-    // Panels
-    SceneHierarchyPanel sceneHierarchyPanel;
-    InspectorPanel inspectorPanel;
+    PanelRegistry panels;
+    // DETRÁS de `panels`: se destruye antes y descarga sus paneles de un registro aún vivo.
+    PluginManager plugins{panels};
+    CommandHistory commandHistory;
+
     ProjectBrowserPanel projectBrowserPanel;
-    ViewportPanel viewportPanel;
     ConsolePanel consolePanel;
-    StatsPanel statsPanel;
-    MaterialEditorPanel materialEditorPanel;
-    NodeGraphEditorPanel nodeGraphEditorPanel;
-    SettingsPanel settingsPanel;
     AssetImporter assetImporter;
     SearchPanel searchPanel;
     UIBuilder uiBuilder;
-    ExportPanel exportPanel;
-    
-    // Gizmos
-    int gizmoMode = 0;
-    bool gizmoActive = false;
-    
-    // UI state
-    bool showDemoWindow = false;
+    // Para backends que describen su escena de forma genérica (IEngineBackend::genericScene).
+    GenericHierarchyPanel genericHierarchy;
+    GenericInspectorPanel genericInspector;
+    std::unique_ptr<StreamCapture> coutCapture;
+    std::unique_ptr<StreamCapture> cerrCapture;
+
+    // Diálogos
     bool showNewProjectDialog = false;
     char newProjectNameBuffer[256] = {0};
     char newProjectPathBuffer[512] = {0};
-    
-    // Panel visibility
-    bool showSceneHierarchy = true;
-    bool showInspector = true;
-    bool showProjectBrowser = true;
-    bool showViewport = true;
-    bool showConsole = true;
-    bool showStats = true;
-    bool showMaterialEditor = true;
-    bool showNodeGraphEditor = false;
-    bool showSettings = false;
-    bool showAssetImporter = false;
-    bool showSearchPanel = false;
-    bool showUIBuilder = false;
-    
-    int width = 1600;
-    int height = 900;
-    float deltaTime = 0.0f;
-    float lastFrame = 0.0f;
-
-    // Play mode
-    /** @brief Enters play mode using a temporary runtime scene. */
-    void enterPlayMode();
-    /** @brief Exits play mode and restores editor state. */
-    void exitPlayMode();
-    /** @brief Updates runtime simulation while in play mode. */
-    void updatePlayMode(float deltaTime);
-
-    bool isPlayMode = false;
-    std::unique_ptr<Haruka::SceneManager> playModeScene;
-    Haruka::SceneManager* editorScene = nullptr;
-    float playModeTime = 0.0f;
-
-    std::string playModeBackupPath = "/tmp/haruka_playmode_backup.scene";
-    
-    // Dynamic game interface (single unified callback system)
-    void* gameLibHandle = nullptr;
-    Haruka::GameInterface* gameInterface = nullptr;
-
-    CommandHistory commandHistory;
-    
-    Haruka::WorldPos editorCamPos{};
-    Haruka::Rotation editorCamRot{};
-    std::unique_ptr<StreamCapture> coutCapture;
-    std::unique_ptr<StreamCapture> cerrCapture;
     bool showSaveAsPopup = false;
     char saveAsBuffer[512] = {0};
-    
-    bool sceneDirty = false;
     bool showUnsavedChangesPopup = false;
     std::string pendingSceneToLoad;
 
-    /** @brief Creates a new project at the given base path. */
-    void createNewProject(const std::string& name, const std::string& basePath);
-
-    /** @brief Creates a scene object of a given type. */
-    void createSceneObject(const std::string& type);
-
-    /** @brief Triggers project compilation/export pipeline. */
-    void compileProject();
-    bool isProjectCompiling = false;
-
-    /** @brief Exports the game project with current settings. */
-    void exportGame();
-    /** @brief Opens the export configuration dialog. */
-    void showExportDialog();
-
-    // Auto-save system
-    struct SceneFile {
+    // Documento abierto
+    struct DocumentFile {
         std::string path;
         std::string name;
-        bool isPrefab;
         float lastSaveTime = 0.0f;
     };
-    
-    SceneFile currentFile;
+    DocumentFile currentFile;
+    bool sceneDirty = false;
     float autoSaveInterval = 30.0f;
     float timeSinceLastSave = 0.0f;
     bool autoSaveEnabled = true;
     int maxBackups = 5;
-    
-    /** @brief Saves scene or prefab data to disk. */
-    void saveFile(const std::string& path, bool asPrefab = false);
-    /** @brief Loads scene or prefab data from disk. */
-    void loadFile(const std::string& path);
 
-    /**
-     * @brief Apunta TODOS los paneles a `currentScene` y borra las selecciones.
-     *
-     * Obligatorio en cada sitio que sustituya la escena. Antes cada uno repuntaba su propia lista
-     * —init() los seis, loadFile() tres, createNewProject() cinco— y los que se quedaban fuera
-     * conservaban punteros a la `SceneManager` DESTRUIDA: cargar una escena y abrir el Node Graph
-     * Editor era un SIGSEGV dentro de `getObjectByName` (use-after-free sobre el unordered_map).
-     * Los paneles guardan además `SceneObject*` crudos, así que las selecciones se limpian aquí.
-     */
-    void bindPanelsToScene();
-    /** @brief Creates a backup copy for the given file. */
-    void createFileBackup(const std::string& path);
-    /** @brief Removes old backups beyond retention limit. */
-    void cleanOldBackups(const std::string& path);
-    /** @brief Deletes all backups associated with one file. */
-    void deleteAllBackups(const std::string& path);
-    /** @brief Returns the file classification used by the editor. */
-    std::string getFileType(const std::string& path);
+    bool isProjectCompiling = false;
+
+    int width = 1600;
+    int height = 900;
+    float deltaTime = 0.0f;
+    float lastFrame = 0.0f;
+    double autoQuitAt = 0.0;   // HARUKA_EDITOR_QUIT_AFTER (segundos desde el arranque)
 };

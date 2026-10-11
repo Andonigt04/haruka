@@ -110,6 +110,12 @@ void applyDescriptor(EngineSdk& sdk, const fs::path& file) {
             if (auto b = it->find("binary"); b != it->end() && b->is_string())
                 sdk.runtimeBinary = b->get<std::string>();
         }
+        if (auto it = j.find("editor"); it != j.end() && it->is_object()) {
+            if (auto pl = it->find("plugins"); pl != it->end() && pl->is_string())
+                sdk.editorPluginsDir = pl->get<std::string>();
+            if (auto be = it->find("backend"); be != it->end() && be->is_string())
+                sdk.editorBackend = be->get<std::string>();
+        }
     } catch (const std::exception& e) {
         // Descriptor roto: se sigue con los valores por defecto en vez de dejar al editor
         // sin motor. Se avisa porque el motor sí está, pero se ignora lo que declaraba.
@@ -130,6 +136,7 @@ EngineSdk locate() {
         sdk.name = root.filename().string();
         sdk.templateDir = "template";        // convención por defecto (haruka-cpp)
         sdk.runtimeBinary = "build/HarukaEngine";
+        sdk.editorPluginsDir = "editor-plugins";
 
         if (const fs::path descriptor = root / "haruka-engine.json"; fs::exists(descriptor, ec)) {
             applyDescriptor(sdk, descriptor);
@@ -137,6 +144,8 @@ EngineSdk locate() {
 
         sdk.templateDir   = resolveExisting(root, sdk.templateDir);
         sdk.runtimeBinary = resolveExisting(root, sdk.runtimeBinary);
+        sdk.editorPluginsDir = resolveExisting(root, sdk.editorPluginsDir);
+        sdk.editorBackend    = resolveExisting(root, sdk.editorBackend);
 
         std::cout << "[EngineSdk] motor: " << sdk.name
                   << (sdk.version.empty() ? "" : " " + sdk.version)

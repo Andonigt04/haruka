@@ -1,0 +1,20 @@
+Haruka Editor
+Copyright 2026 Andoni García Torres
+
+This product includes software developed as part of the Haruka Editor project
+(https://github.com/Andonigt04/haruka), created by Andoni García Torres. Its Haruka backend
+uses Haruka Engine (https://github.com/Andonigt04/haruka-cpp), by the same author.
+
+Under section 4(d) of the Apache License 2.0, any redistribution of this work or of a
+derivative work (including forks) must keep this NOTICE file, or reproduce its attribution
+notices, in the places the license describes.
+
+The Apache License 2.0 does not grant permission to use the name "Haruka" or any related
+trademarks (section 6). Forks are welcome; please give them their own name.
+
+Third-party components bundled in third_party/ keep their own licenses, found in each component
+(see also third_party/VENDORED.md):
+  - Dear ImGui (MIT)
+  - ImGuizmo (MIT)
+  - nativefiledialog (zlib)
+  - glad (generated OpenGL loader)

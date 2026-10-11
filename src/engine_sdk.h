@@ -46,6 +46,12 @@ struct EngineSdk {
     std::string cmakeEngineVar = "HARUKA_ENGINE_LOCAL";
     /// Binario del runtime que se copia al exportar, ABSOLUTO. Vacío o inexistente = sin runtime.
     std::string runtimeBinary;
+    /// Plugins de editor que trae el motor (paneles propios), ABSOLUTO. Vacío = no trae.
+    /// Descriptor: "editor": { "plugins": "<dir>" }; por defecto "editor-plugins" si existe.
+    std::string editorPluginsDir;
+    /// Backend del editor para este motor (.so con haruka_editor_backend_create), ABSOLUTO.
+    /// Descriptor: "editor": { "backend": "<ruta>" }. Vacío = se busca junto al editor.
+    std::string editorBackend;
 
     /// @brief True si se localizó un motor utilizable.
     bool valid() const { return !root.empty(); }

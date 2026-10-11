@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cctype>
 #include <fstream>
+#include <map>
 #include <chrono>
 
 namespace fs = std::filesystem;
@@ -13,14 +14,10 @@ ProjectBrowserPanel::ProjectBrowserPanel() {
     lastRefreshTime = steady_clock::now();
 }
 
-void ProjectBrowserPanel::setProject(Haruka::Project* project) {
-    currentProject = project;
-    lastProjectPath = project ? project->getPath() : "";
+void ProjectBrowserPanel::setProjectRoot(const std::string& root) {
+    projectRoot = root;
+    lastProjectPath = root;
     needsRefresh = true;
-}
-
-void ProjectBrowserPanel::setScene(Haruka::SceneManager* scene) {
-    currentScene = scene;
 }
 
 std::string ProjectBrowserPanel::getFileExtension(const std::string& filename) {
@@ -80,13 +77,13 @@ void ProjectBrowserPanel::checkForChanges() {
     
     if (now - lastRefreshTime >= refreshInterval) {
         // Verificar cambios en el sistema de archivos
-        if (!currentProject || currentProject->getPath().empty()) return;
+        if (projectRoot.empty()) return;
         
         try {
             static std::map<std::string, fs::file_time_type> fileTimestamps;
             bool hasChanges = false;
             
-            for (const auto& entry : fs::recursive_directory_iterator(currentProject->getPath())) {
+            for (const auto& entry : fs::recursive_directory_iterator(projectRoot)) {
                 if (fs::is_regular_file(entry)) {
                     auto lastWriteTime = fs::last_write_time(entry);
                     
@@ -335,28 +332,28 @@ void ProjectBrowserPanel::onImGuiRender() {
         return;
     }
 
-    if (!currentProject || currentProject->getPath().empty()) {
+    if (projectRoot.empty()) {
         ImGui::Text("No project loaded");
         ImGui::End();
         return;
     }
 
-    ImGui::Text("Project: %s", currentProject->getPath().c_str());
+    ImGui::Text("Project: %s", projectRoot.c_str());
         
     if (ImGui::Button("New File")) {
         showNewFileDialog = true;
-        newItemParentPath = currentProject->getPath();
+        newItemParentPath = projectRoot;
     }
     ImGui::SameLine();
     if (ImGui::Button("New Folder")) {
         showNewFolderDialog = true;
-        newItemParentPath = currentProject->getPath();
+        newItemParentPath = projectRoot;
     }
     
     ImGui::Separator();
 
     ImGui::BeginChild("FileTree", ImVec2(0, -100), true);
-    std::string projectPath = currentProject->getPath();
+    std::string projectPath = projectRoot;
     renderFileTree(projectPath, "Project Root");
     ImGui::EndChild();
 

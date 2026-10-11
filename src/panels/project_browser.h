@@ -1,7 +1,5 @@
 #pragma once
 
-#include "core/project.h"
-#include "core/scene/scene_manager.h"
 #include <imgui.h>
 #include <memory>
 #include <string>
@@ -26,10 +24,9 @@ public:
     ProjectBrowserPanel();
     ~ProjectBrowserPanel() = default;
 
-    /** @brief Binds the project root used by the browser. */
-    void setProject(Haruka::Project* project);
-    /** @brief Binds the scene for scene-aware file actions. */
-    void setScene(Haruka::SceneManager* scene);
+    /** @brief Raíz del proyecto que se lista (vacía = sin proyecto). Solo la ruta: el navegador
+     *  es del editor genérico y no sabe qué motor hay detrás. */
+    void setProjectRoot(const std::string& root);
     /** @brief Draws the browser UI. */
     void onImGuiRender();
 
@@ -37,8 +34,7 @@ public:
     void setOnFileLoad(std::function<void(const std::string&)> cb) { onFileLoad = std::move(cb); }
 
 private:
-    Haruka::Project* currentProject = nullptr;
-    Haruka::SceneManager* currentScene = nullptr;
+    std::string projectRoot;
     std::string selectedPath;
     std::string selectedExtension;
     std::string draggedPath;
