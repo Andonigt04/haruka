@@ -41,7 +41,12 @@ void WorldPanel::attachWorld() {
         nlohmann::json p;
         p["radiusM"] = d.radiusM; p["depthM"] = d.depthM;
         p["mouth"] = { d.mouth.x, d.mouth.y, d.mouth.z };
-        p["planta"] = d.planta; p["perfil"] = d.perfil; p["draftSeed"] = d.draftSeed;
+        if (!d.layers.empty()) {
+            nlohmann::json layers = nlohmann::json::array();
+            for (const auto& l : d.layers) layers.push_back({ { "ceiling", l.ceiling }, { "floor", l.floor } });
+            p["layers"] = layers;
+        } else { p["planta"] = d.planta; p["perfil"] = d.perfil; }   // legacy format, only if it has no layers
+        p["draftSeed"] = d.draftSeed;
         addSceneEntry("Cave", d.name, d.centerDir, p);
     });
     m_panel.setOnIslandCreated([this](const Haruka::World::Vox::IslandDef& d) {
