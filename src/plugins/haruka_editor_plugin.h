@@ -107,6 +107,18 @@ inline bool harukaImGuiAbiMatches(const HarukaImGuiAbi& a) {
            a.sizeofIO == (int)sizeof(ImGuiIO) && a.sizeofStyle == (int)sizeof(ImGuiStyle) &&
            a.sizeofDrawVert == (int)sizeof(ImDrawVert) && a.sizeofDrawIdx == (int)sizeof(ImDrawIdx);
 }
+#include <cstdio>
+/// Writes what does not match. The version string alone is not enough: two ImGui commits can
+/// both say "1.93.0 WIP" and still differ in the layout of ImGuiIO/ImGuiStyle.
+inline void harukaImGuiAbiDescribeMismatch(const HarukaImGuiAbi* a, char* out, size_t outLen) {
+    if (!a) { std::snprintf(out, outLen, "ImGui mismatch: the editor passed no ImGui ABI"); return; }
+    std::snprintf(out, outLen,
+                  "ImGui mismatch (editor vs this module): version \"%s\" vs \"%s\" (IMGUI_VERSION_NUM here %d), "
+                  "sizeof ImGuiIO %d vs %d, ImGuiStyle %d vs %d, ImDrawVert %d vs %d, ImDrawIdx %d vs %d",
+                  a->version ? a->version : "?", IMGUI_VERSION, IMGUI_VERSION_NUM,
+                  a->sizeofIO, (int)sizeof(ImGuiIO), a->sizeofStyle, (int)sizeof(ImGuiStyle),
+                  a->sizeofDrawVert, (int)sizeof(ImDrawVert), a->sizeofDrawIdx, (int)sizeof(ImDrawIdx));
+}
 /// Comprueba y, si casa, fija el contexto y el asignador del editor. Sirve a plugins y backends.
 inline bool harukaBindImGui(const HarukaImGuiAbi& a) {
     if (!harukaImGuiAbiMatches(a)) return false;

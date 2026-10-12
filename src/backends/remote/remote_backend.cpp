@@ -198,8 +198,7 @@ HARUKA_EDITOR_BACKEND_DECLARE_API();
 HARUKA_EDITOR_PLUGIN_EXPORT IEngineBackend* haruka_editor_backend_create(const HarukaImGuiAbi* imgui,
                                                                        char* error, size_t errorLen) {
     if (!imgui || !harukaBindImGui(*imgui)) {
-        std::snprintf(error, errorLen, "ImGui distinto: el editor trae %s, este backend se compilo con %s",
-                      imgui && imgui->version ? imgui->version : "?", IMGUI_VERSION);
+        harukaImGuiAbiDescribeMismatch(imgui, error, errorLen);
         return nullptr;
     }
     return new RemoteBackend();
